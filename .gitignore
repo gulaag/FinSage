@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Databricks / Local Data
+*.pdf
+*.jsonl
+data/
+raw_filings/
+
+# IDE
+.vscode/
+.idea/
+.DS_Store

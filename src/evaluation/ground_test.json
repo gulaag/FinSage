@@ -1,0 +1,16 @@
+[
+    {
+      "ticker": "AAPL",
+      "year": 2024,
+      "revenue": 391035000000, 
+      "net_income": 93736000000,
+      "risk_factor_keyword": "macroeconomic"
+    },
+    {
+      "ticker": "TSLA",
+      "year": 2024,
+      "revenue": 96773000000,
+      "net_income": 14997000000,
+      "risk_factor_keyword": "lithium-ion"
+    }
+  ]

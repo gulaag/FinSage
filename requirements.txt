@@ -1,0 +1,7 @@
+databricks-sdk
+pyspark
+pypdf
+pdfplumber
+pandas
+requests
+python-dotenv
