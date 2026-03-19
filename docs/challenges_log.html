@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Challenges Log - FinSage</title>
+</head>
+<body>
+    <h1>Challenges Log</h1>
+    <p><em>A running record of the actual technical bottlenecks encountered while building FinSage, the root causes of system failures, and the specific engineering pivots made to resolve them.</em></p>
+
+    <hr>
+
+    <h2>Challenge 1: The Py4J Memory Explosion &amp; Regex Backtracking (Week 2 &amp; 3)</h2>
+    <p>
+        <strong>Status:</strong> <span style="color: green;">Resolved</span><br>
+        <strong>Phase:</strong> Silver-layer parsing (Extracting "Risk Factors" and "MD&amp;A" from raw SEC HTML)
+    </p>
+
+    <h3>The Problem</h3>
+    <p>During the transformation from the Bronze to Silver layer, the pipeline was tasked with parsing raw SEC 10-K and 10-Q filings. These files are deceptively massive—often exceeding 50MB—because companies embed huge Base64 strings for graphics and massive machine-readable XBRL code blocks at the bottom of the HTML document. When attempting to run the section-splitting logic, the Databricks Single-Node cluster would either freeze completely, spin the CPU endlessly, or crash entirely with a Java heap space Out of Memory (OOM) error.</p>
+
+    <h3>The Root Cause</h3>
+    <p>The failure was a combination of three distinct architectural traps:</p>
+    <ul>
+        <li><strong>The Py4J Serialization Bottleneck:</strong> Apache Spark runs natively on the JVM (Java Virtual Machine), but my parsing logic (using BeautifulSoup and Python <code>re</code>) was written in Python. To process the file, Spark had to take a 50MB string, serialize it out of the JVM, and push it through the Py4J bridge into a single Python worker process. Moving gigabytes of data across this bridge suffocated the driver.</li>
+        <li><strong>Catastrophic Regex Backtracking:</strong> I initially tried to use a lazy Python regex (<code>.*?</code>) to strip out the massive <code>&lt;TYPE&gt;GRAPHIC</code> and <code>&lt;XBRL&gt;</code> blocks. However, evaluating a lazy dot-star regex across a 50MB string causes the Python regex engine to enter "catastrophic backtracking"—trying millions of permutations and throwing the CPU into an infinite loop.</li>
+        <li><strong>DOM Tree Memory Bloat:</strong> Feeding a 50MB string of garbage HTML directly into BeautifulSoup forced Python to build a massive Document Object Model (DOM) tree in memory, which instantly exhausted the worker's RAM before the actual text extraction could even begin.</li>
+    </ul>
+
+    <h3>The Solution: The "Native First, Python Last" Architecture</h3>
+    <p>To respect the physical limits of the cluster, I completely redesigned the pipeline to handle the heavy lifting in C++/Java before Python ever touched the data:</p>
+    <ul>
+        <li><strong>Native JVM Truncation (The Machete):</strong> Since the human-readable 10-K is always the very first <code>&lt;DOCUMENT&gt;</code> in the SEC submission, I used Spark's native <code>expr("substring_index(raw_text, '&lt;/DOCUMENT&gt;', 1)")</code>. This runs instantly in Spark's native engine, cleanly severing the bottom 90% of the file (images/XBRL) and reducing a 50MB payload to a ~1MB payload.</li>
+        <li><strong>Native HTML Stripping:</strong> Instead of using BeautifulSoup to strip tags, I used Spark's native <code>regexp_replace(col("main_doc"), "&lt;[^&gt;]+&gt;", " ")</code> to wipe the HTML tags directly in the JVM.</li>
+        <li><strong>Lightweight Python Delegation:</strong> I only passed the resulting flat, clean, 1MB string to the Python UDF. Python simply ran a lightweight regex to find the "Item 1A" and "Item 7" headers and slice the text.</li>
+    </ul>
+
+    <h3>Takeaway</h3>
+    <p><strong>Never force a Python UDF to do heavy string manipulation on massive payloads.</strong> Use Spark SQL's native functions to shrink and clean the data in the JVM first, and reserve Python strictly for complex, lightweight text analysis.</p>
+
+</body>
+</html>

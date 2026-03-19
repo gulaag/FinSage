@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Technical Decisions - FinSage</title>
+</head>
+<body>
+    <h1>Technical Decisions</h1>
+    <p><em>This document captures the strategic "why" behind the FinSage architecture, specifically outlining why certain Medallion and Agent design choices were made over alternative approaches.</em></p>
+
+    <hr>
+
+    <h2>1. Scope: 30 Companies (Depth Over Breadth)</h2>
+    <p><strong>Decision:</strong> The platform is explicitly constrained to 30 Tier-1 companies (yielding ~730 filings total), rather than attempting to scrape the entire Russell 3000 or S&amp;P 500.</p>
+    
+    <h3>The Engineering Rationale:</h3>
+    <ul>
+        <li><strong>Deterministic Validation:</strong> The core of this project is proving numerical precision and extraction accuracy (the "North Star Metric"). With 30 companies, I can manually open an SEC PDF, look at the Balance Sheet, and verify that my pipeline extracted the exact same number. You cannot manually audit an automated pipeline scraping 3,000 companies, which leads to silent failures and "hallucinated" downstream analytics.</li>
+        <li><strong>Evaluation Rigor:</strong> I am building a 100-question evaluation suite to test the RAG Agent. Ensuring those 100 questions have perfectly accurate ground-truth answers requires a tightly controlled dataset.</li>
+        <li><strong>Infrastructure Agility:</strong> Processing 30 companies allows me to iterate on pipeline logic, test new chunking strategies, and run the entire Medallion architecture on a cost-effective Databricks cluster in minutes.</li>
+        <li><strong>Scalability is a Config Change:</strong> Because the foundation is built on Auto Loader, Unity Catalog, and Delta Lake, the architecture is already inherently distributed. Scaling to 300 companies later requires zero code rewrites—it only requires increasing the cluster size and updating the target ticker list.</li>
+    </ul>
+
+    <hr>
+
+    <h2>2. Decoupled Parsing: "Native JVM First, Python Last"</h2>
+    <p><strong>Decision:</strong> Perform all heavy document truncation and initial cleaning using Spark's native SQL functions, and restrict Python UDFs to lightweight section slicing.</p>
+    
+    <h3>The Engineering Rationale:</h3>
+    <p>Initially, I attempted to pass the raw, 50MB binary content from the Bronze layer directly into a Python UDF to be parsed by BeautifulSoup. This caused massive Py4J serialization overhead and crashed the worker nodes.</p>
+    <p>By decoupling the work, I leverage the exact strengths of the Databricks engine:</p>
+    <ul>
+        <li><strong>Spark SQL (JVM):</strong> Handles the brute-force work. <code>substring_index</code> and <code>regexp_replace</code> slice off the massive XBRL/Image data dumps and strip HTML tags instantly across distributed nodes.</li>
+        <li><strong>Python UDF:</strong> Handles the surgical work. It receives a tiny, 1MB string and uses Python's robust <code>re</code> library to identify "Item 1A" and "Item 7" section boundaries.</li>
+    </ul>
+    <p>This architectural pivot reduced processing time per document from minutes (crashing) to milliseconds (stable).</p>
+
+    <hr>
+
+    <h2>3. Error Auditing: The "Never Swallow Failures" Constraint</h2>
+    <p><strong>Decision:</strong> The text-extraction UDF must never crash the pipeline or silently drop records when it encounters a malformed SEC filing. It must route bad data to a dedicated audit table.</p>
+    
+    <h3>The Engineering Rationale:</h3>
+    <p>In real-world data engineering, source data is chaotic. Older SEC filings, amended 8-Ks, or filings from specific sectors often do not contain standard "Item 1A" or "Item 7" string headers.</p>
+    <p>Instead of writing fragile <code>try/except</code> blocks that just skip the file, I designed the UDF to return a complex <code>StructType</code> containing both the sections array and an error string flag.</p>
+    <ul>
+        <li>If a document parses perfectly, the error is null, and the sections are exploded and merged idempotently into the Silver table.</li>
+        <li>If a document fails, the pipeline catches the error string, attaches the <code>file_path</code> and a <code>failed_at</code> timestamp, and writes it directly to <code>main.finsage_bronze.ingestion_errors</code>.</li>
+    </ul>
+    <p>This pattern guarantees high pipeline uptime while giving me a queryable "to-do list" of edge cases to investigate and fix in future sprint cycles, perfectly adhering to the Blueprint 4.1 compliance standards.</p>
+
+</body>
+</html>
