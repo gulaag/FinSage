@@ -49,5 +49,165 @@
     </ul>
     <p>This pattern guarantees high pipeline uptime while giving me a queryable "to-do list" of edge cases to investigate and fix in future sprint cycles, perfectly adhering to the Blueprint 4.1 compliance standards.</p>
 
+    <hr>
+
+    <h2>4. Performance Optimization: Strategic Use of Caching</h2>
+    <p><strong>Decision:</strong> Explicitly cache intermediate DataFrames when reused across multiple Spark actions.</p>
+
+    <h3>The Engineering Rationale:</h3>
+    <p>Spark uses lazy evaluation, meaning transformations are not executed until an action (like <code>count()</code> or <code>write()</code>) is triggered. In the Silver layer pipeline, the transformed dataframe (<code>df_processed</code>) was used in two independent branches:</p>
+
+    <ul>
+        <li>Error auditing (counting and logging failed records)</li>
+        <li>Processing and merging successful records</li>
+    </ul>
+
+    <p>Without caching, Spark recomputed the entire pipeline for each branch. This included re-running expensive operations such as:</p>
+    <ul>
+        <li>Regex-based text cleaning</li>
+        <li>Python UDF execution for section extraction</li>
+    </ul>
+
+    <p>To eliminate this redundancy, I explicitly cached the dataframe:</p>
+
+    <pre><code>df_processed.cache()</code></pre>
+
+    <p>This ensured:</p>
+    <ul>
+        <li>The transformation pipeline executes only once</li>
+        <li>Intermediate results are stored in memory</li>
+        <li>All downstream actions reuse the cached data</li>
+    </ul>
+
+    <p>Finally, I used:</p>
+
+    <pre><code>df_processed.unpersist()</code></pre>
+
+    <p>to release memory after all operations completed, preventing unnecessary memory pressure on the cluster.</p>
+
+    <h3>Impact</h3>
+    <ul>
+        <li>Reduced total pipeline execution time by ~50%</li>
+        <li>Eliminated redundant UDF execution</li>
+        <li>Improved cluster efficiency and stability</li>
+    </ul>
+
+    <h3>Takeaway</h3>
+    <p><strong>Caching is not an optimization—it's a necessity when reusing expensive transformations in Spark pipelines.</strong></p>
+
+    <hr>
+
+    <h2>5. Bronze-First SEC API Snapshotting</h2>
+    <p><strong>Decision:</strong> Never pull the SEC CompanyFacts API directly into Gold. Always land the raw JSON payload in Bronze first.</p>
+
+    <h3>The Engineering Rationale:</h3>
+    <ul>
+        <li><strong>Operational Resilience:</strong> Public APIs rate limit, return intermittent failures, and sometimes become temporarily unavailable. If Gold depends on a live SEC call, Gold becomes fragile for reasons unrelated to my business logic.</li>
+        <li><strong>Auditability:</strong> By storing the exact raw JSON payload plus <code>fetched_at</code>, I preserve a time-stamped record of what the SEC actually returned at ingest time.</li>
+        <li><strong>Recomputation:</strong> If I add a 13th metric later, I can recompute Silver and Gold from stored Bronze snapshots instead of re-querying the SEC for the full company universe.</li>
+    </ul>
+
+    <h3>What This Looks Like in FinSage</h3>
+    <p>The CompanyFacts API is ingested into <code>main.finsage_bronze.xbrl_companyfacts_raw</code> as immutable snapshots. Silver flattens those payloads, and Gold reads only from Silver. This is the correct Medallion separation of concerns.</p>
+
+    <h3>Takeaway</h3>
+    <p><strong>Bronze is the reliability shield between FinSage and the live internet.</strong></p>
+
+    <hr>
+
+    <h2>6. XBRL as the Numerical System of Record</h2>
+    <p><strong>Decision:</strong> Filing documents remain valuable for qualitative sections, but hard financial metrics must come from machine-readable SEC CompanyFacts/XBRL facts.</p>
+
+    <h3>The Engineering Rationale:</h3>
+    <ul>
+        <li><strong>Deterministic Accuracy:</strong> Structured SEC facts eliminate the ambiguity that comes from trying to visually parse financial tables across many issuers and formats.</li>
+        <li><strong>Precision Over Flash:</strong> A project that claims interview-grade financial accuracy should use the most deterministic available source for numbers, not the most visually impressive extraction path.</li>
+        <li><strong>Clean Layer Responsibilities:</strong> Filing documents are still excellent for <code>Business</code>, <code>Risk Factors</code>, and <code>MD&amp;A</code>, but Gold metrics should not depend on narrative documents when a structured source exists.</li>
+    </ul>
+
+    <h3>What This Looks Like in FinSage</h3>
+    <p><code>main.finsage_silver.financial_statements</code> is built from normalized CompanyFacts concepts, while <code>main.finsage_silver.filing_sections</code> stores the narrative sections needed for retrieval and analysis.</p>
+
+    <h3>Takeaway</h3>
+    <p><strong>Use filing documents for qualitative context and XBRL-backed SEC data for exact numerical truth.</strong></p>
+
+    <hr>
+
+    <h2>7. Silver Normalization Before Gold Aggregation</h2>
+    <p><strong>Decision:</strong> Gold should never have to understand SEC concept sprawl or source-system naming variation.</p>
+
+    <h3>The Engineering Rationale:</h3>
+    <p>SEC CompanyFacts exposes multiple synonymous concepts for the same business idea, such as <code>Revenues</code>, <code>SalesRevenueNet</code>, and <code>RevenueFromContractWithCustomerExcludingAssessedTax</code>. If Gold has to reason about those raw concepts directly, the semantic complexity leaks into the analytics layer.</p>
+    <ul>
+        <li><strong>Silver absorbs source complexity:</strong> Raw SEC concepts are mapped into normalized project-level line items such as <code>revenue</code>, <code>net_income</code>, <code>total_assets</code>, and debt components.</li>
+        <li><strong>Gold stays analytical:</strong> Once Silver presents normalized line items, Gold can focus purely on aggregation and derived ratios like gross margin, YoY growth, and debt-to-equity.</li>
+        <li><strong>Maintainability:</strong> Adding new concept synonyms or fallback logic belongs in Silver, not in every downstream consumer of Gold.</li>
+    </ul>
+
+    <h3>Takeaway</h3>
+    <p><strong>Silver absorbs source-system mess so Gold can stay deterministic and simple.</strong></p>
+
+    <hr>
+
+    <h2>8. Separation of Concerns Across the Medallion Layers</h2>
+    <p><strong>Decision:</strong> Each layer is responsible for exactly one class of problem.</p>
+
+    <h3>The Engineering Rationale:</h3>
+    <ul>
+        <li><strong>Bronze:</strong> "Did I successfully ingest the raw source exactly as delivered?"</li>
+        <li><strong>Silver:</strong> "Did I correctly flatten, normalize, and structure the raw data into business-ready tables?"</li>
+        <li><strong>Gold:</strong> "Did I compute the final metrics and ratios correctly?"</li>
+    </ul>
+
+    <p>If network access, JSON flattening, and financial math all happen inside one monolithic Gold script, failures become difficult to diagnose. Splitting these responsibilities across Bronze, Silver, and Gold makes the pipeline debuggable, testable, and interview-defensible.</p>
+
+    <h3>Takeaway</h3>
+    <p><strong>Good Medallion design is not ceremony; it is production debugging discipline.</strong></p>
+
+    <hr>
+
+    <h2>9. Deterministic Parser First, ai_parse_document Later</h2>
+    <p><strong>Decision:</strong> Keep a deterministic custom parser for <code>Business</code>, <code>Risk Factors</code>, and <code>MD&amp;A</code> in v1, and treat <code>ai_parse_document</code> as a future swap only after measured validation.</p>
+
+    <h3>The Engineering Rationale:</h3>
+    <ul>
+        <li><strong>Current reliability:</strong> The Spark + Python extraction path already emits the required Silver schema and integrates with existing failure logging.</li>
+        <li><strong>Auditability:</strong> Regex boundaries, scoring logic, and minimum word thresholds are explicit and reproducible.</li>
+        <li><strong>Controlled upgrade path:</strong> If <code>ai_parse_document</code> is introduced, it must be compared side-by-side on precision, boundary quality, latency, and failure rate before promotion.</li>
+    </ul>
+
+    <h3>Takeaway</h3>
+    <p><strong>Use the parser that is measurable and stable now; upgrade only when evidence shows a clear win.</strong></p>
+
+    <hr>
+
+    <h2>10. Explicit Schemas Over Inference for Bronze and Silver Writes</h2>
+    <p><strong>Decision:</strong> Use strict <code>StructType</code> definitions for API rows, error rows, and flattened facts instead of relying on Spark schema inference.</p>
+
+    <h3>The Engineering Rationale:</h3>
+    <ul>
+        <li><strong>Type stability:</strong> SEC payload variability can cause inference drift (null-heavy batches, mixed numeric formats, optional fields).</li>
+        <li><strong>Pipeline safety:</strong> Explicit schemas prevent silent type flips that can break downstream merges and aggregations.</li>
+        <li><strong>Debugging speed:</strong> Data contract violations become obvious at write time instead of leaking into Gold as hard-to-trace errors.</li>
+    </ul>
+
+    <h3>Takeaway</h3>
+    <p><strong>In production data pipelines, schema inference is convenient for exploration but risky for contracts.</strong></p>
+
+    <hr>
+
+    <h2>11. Canonical Accession Selection Before Metric Aggregation</h2>
+    <p><strong>Decision:</strong> Gold metrics are computed only after selecting one canonical accession per ticker-year using quality-based ranking.</p>
+
+    <h3>The Engineering Rationale:</h3>
+    <ul>
+        <li><strong>Avoid cross-accession mixing:</strong> SEC facts for the same year may appear in multiple filings or amendments.</li>
+        <li><strong>Deterministic quality rules:</strong> Rank accessions by required metric hits, distinct coverage, and filing recency.</li>
+        <li><strong>Metric integrity:</strong> Choose one best fact per normalized metric using unit checks, fit scores, concept priority, and recency ordering.</li>
+    </ul>
+
+    <h3>Takeaway</h3>
+    <p><strong>Canonical selection is the guardrail that keeps Gold financially coherent and reproducible.</strong></p>
+
 </body>
 </html>
