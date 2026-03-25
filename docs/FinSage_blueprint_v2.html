@@ -1,0 +1,2159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FinSage — Revised Project Blueprint (Depth Over Breadth)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --primary: #1a1a2e;
+    --secondary: #16213e;
+    --accent: #0f3460;
+    --highlight: #e94560;
+    --gold: #f5a623;
+    --green: #27ae60;
+    --blue: #2980b9;
+    --purple: #8e44ad;
+    --teal: #00b894;
+    --orange: #e67e22;
+    --red: #e74c3c;
+    --light-bg: #f8f9fa;
+    --card-bg: #ffffff;
+    --text-primary: #1a1a2e;
+    --text-secondary: #555;
+    --border: #e0e0e0;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    color: var(--text-primary);
+    background: var(--light-bg);
+    line-height: 1.7;
+    font-size: 15px;
+  }
+
+  .container {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 40px 50px;
+    background: white;
+    min-height: 100vh;
+  }
+
+  .doc-header {
+    text-align: center;
+    padding: 50px 0 40px;
+    border-bottom: 3px solid var(--primary);
+    margin-bottom: 40px;
+  }
+  .doc-header h1 {
+    font-size: 42px;
+    font-weight: 900;
+    color: var(--primary);
+    letter-spacing: -1px;
+    margin-bottom: 8px;
+  }
+  .doc-header .tagline {
+    font-size: 18px;
+    color: var(--highlight);
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .doc-header .subtitle {
+    font-size: 14px;
+    color: var(--text-secondary);
+    font-weight: 400;
+  }
+  .doc-header .meta {
+    margin-top: 20px;
+    display: flex;
+    justify-content: center;
+    gap: 30px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+  .doc-header .meta span {
+    background: var(--light-bg);
+    padding: 4px 14px;
+    border-radius: 20px;
+    font-weight: 500;
+  }
+
+  .section {
+    margin-bottom: 45px;
+    page-break-inside: avoid;
+  }
+  .section-number {
+    display: inline-block;
+    background: var(--primary);
+    color: white;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    text-align: center;
+    line-height: 36px;
+    font-weight: 700;
+    font-size: 16px;
+    margin-right: 12px;
+    vertical-align: middle;
+  }
+  .section h2 {
+    font-size: 26px;
+    font-weight: 800;
+    color: var(--primary);
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .section h3 {
+    font-size: 19px;
+    font-weight: 700;
+    color: var(--accent);
+    margin: 25px 0 12px;
+  }
+  .section h4 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--purple);
+    margin: 18px 0 8px;
+  }
+
+  .label {
+    display: inline-block;
+    padding: 3px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+  .label-red { background: #fde8e8; color: var(--red); }
+  .label-green { background: #e8f5e9; color: var(--green); }
+  .label-blue { background: #e3f2fd; color: var(--blue); }
+  .label-gold { background: #fff8e1; color: #e6a100; }
+  .label-purple { background: #f3e5f5; color: var(--purple); }
+  .label-teal { background: #e0f2f1; color: #00897b; }
+  .label-orange { background: #fff3e0; color: var(--orange); }
+
+  .callout {
+    padding: 20px 24px;
+    border-radius: 8px;
+    margin: 16px 0;
+    border-left: 5px solid;
+  }
+  .callout-blue {
+    background: #e8f4fd;
+    border-color: var(--blue);
+  }
+  .callout-green {
+    background: #e8f8f0;
+    border-color: var(--green);
+  }
+  .callout-red {
+    background: #fef2f2;
+    border-color: var(--highlight);
+  }
+  .callout-gold {
+    background: #fffbeb;
+    border-color: var(--gold);
+  }
+  .callout-purple {
+    background: #faf5ff;
+    border-color: var(--purple);
+  }
+  .callout-dark {
+    background: #1a1a2e;
+    border-color: var(--highlight);
+    color: #e0e0e0;
+  }
+  .callout strong {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .callout-blue strong { color: var(--blue); }
+  .callout-green strong { color: var(--green); }
+  .callout-red strong { color: var(--highlight); }
+  .callout-gold strong { color: #d4940a; }
+  .callout-purple strong { color: var(--purple); }
+  .callout-dark strong { color: var(--highlight); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  thead th {
+    background: var(--primary);
+    color: white;
+    padding: 12px 16px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  tbody td {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  tbody tr:nth-child(even) {
+    background: #f8f9fa;
+  }
+  tbody tr:hover {
+    background: #eef2ff;
+  }
+
+  pre {
+    background: #1e1e2e;
+    color: #cdd6f4;
+    padding: 20px 24px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    margin: 14px 0;
+  }
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    background: #f0f0f0;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 13px;
+    color: var(--highlight);
+  }
+  pre code {
+    background: none;
+    padding: 0;
+    color: inherit;
+  }
+
+  .arch-box {
+    border: 2px solid;
+    border-radius: 10px;
+    padding: 18px 22px;
+    margin: 12px 0;
+    position: relative;
+  }
+  .arch-box.layer-ingest { border-color: var(--blue); background: #f0f7ff; }
+  .arch-box.layer-process { border-color: var(--green); background: #f0faf4; }
+  .arch-box.layer-intel { border-color: var(--purple); background: #faf5ff; }
+  .arch-box.layer-agent { border-color: var(--highlight); background: #fff5f5; }
+  .arch-box.layer-serve { border-color: var(--gold); background: #fffbf0; }
+  .arch-box.layer-ops { border-color: var(--teal); background: #f0fdfa; }
+
+  .arch-label {
+    position: absolute;
+    top: -12px;
+    left: 20px;
+    padding: 2px 12px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: white;
+  }
+  .arch-label.l-blue { background: var(--blue); }
+  .arch-label.l-green { background: var(--green); }
+  .arch-label.l-purple { background: var(--purple); }
+  .arch-label.l-red { background: var(--highlight); }
+  .arch-label.l-gold { background: var(--gold); }
+  .arch-label.l-teal { background: var(--teal); }
+
+  .arch-arrow {
+    text-align: center;
+    font-size: 22px;
+    color: var(--text-secondary);
+    margin: 4px 0;
+  }
+
+  .week-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin: 20px 0;
+    overflow: hidden;
+  }
+  .week-card-header {
+    padding: 14px 22px;
+    font-weight: 700;
+    font-size: 17px;
+    color: white;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .week-card-header .week-tag {
+    font-size: 12px;
+    background: rgba(255,255,255,0.25);
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-weight: 600;
+  }
+  .week-card-body {
+    padding: 18px 22px;
+  }
+  .w1 .week-card-header { background: #2563eb; }
+  .w2 .week-card-header { background: #7c3aed; }
+  .w3 .week-card-header { background: #059669; }
+  .w4 .week-card-header { background: #d97706; }
+  .w5 .week-card-header { background: #dc2626; }
+  .w6 .week-card-header { background: #0891b2; }
+  .w7 .week-card-header { background: #4f46e5; }
+  .w8 .week-card-header { background: #be185d; }
+  .w9 .week-card-header { background: #15803d; }
+  .w10 .week-card-header { background: #1a1a2e; }
+
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin: 16px 0;
+  }
+  .metric-card {
+    text-align: center;
+    padding: 16px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  .metric-card .metric-value {
+    font-size: 28px;
+    font-weight: 800;
+    display: block;
+  }
+  .metric-card .metric-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+  }
+
+  .tree {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    background: #fafafa;
+    padding: 20px 24px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    line-height: 1.8;
+  }
+  .tree .dir { color: var(--blue); font-weight: 600; }
+  .tree .file { color: var(--text-primary); }
+  .tree .comment { color: #999; font-style: italic; }
+
+  ul, ol {
+    margin: 8px 0 8px 24px;
+  }
+  li {
+    margin-bottom: 6px;
+  }
+  li::marker {
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  .vs-box {
+    display: grid;
+    grid-template-columns: 1fr 60px 1fr;
+    gap: 0;
+    margin: 16px 0;
+    align-items: stretch;
+  }
+  .vs-side {
+    padding: 20px;
+    border-radius: 8px;
+  }
+  .vs-side.vs-left {
+    background: #fef2f2;
+    border: 2px solid #fca5a5;
+  }
+  .vs-side.vs-right {
+    background: #ecfdf5;
+    border: 2px solid #6ee7b7;
+  }
+  .vs-middle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    font-weight: 900;
+    color: var(--text-secondary);
+  }
+  .vs-side h4 {
+    margin-top: 0;
+  }
+
+  .checklist {
+    list-style: none;
+    margin-left: 0;
+    padding: 0;
+  }
+  .checklist li {
+    padding: 8px 0 8px 32px;
+    position: relative;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  .checklist li::before {
+    content: '\2610';
+    position: absolute;
+    left: 4px;
+    font-size: 18px;
+    color: var(--accent);
+  }
+
+  .schema-box {
+    background: #f8f9fa;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 12px 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    line-height: 1.7;
+  }
+  .schema-box .table-name {
+    color: var(--blue);
+    font-weight: 700;
+    font-size: 15px;
+  }
+  .schema-box .col-name { color: var(--primary); font-weight: 600; }
+  .schema-box .col-type { color: var(--purple); }
+  .schema-box .col-comment { color: #999; font-style: italic; }
+
+  hr {
+    border: none;
+    height: 2px;
+    background: linear-gradient(to right, var(--primary), var(--highlight), var(--gold));
+    margin: 50px 0;
+    border-radius: 2px;
+  }
+
+  @media print {
+    .container { padding: 20px; }
+    .section { page-break-inside: avoid; }
+    pre { font-size: 11px; }
+  }
+
+  p { margin-bottom: 10px; }
+
+  .toc {
+    background: #f8f9fa;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px 30px;
+    margin-bottom: 40px;
+  }
+  .toc h3 {
+    margin: 0 0 14px;
+    color: var(--primary);
+    font-size: 18px;
+  }
+  .toc ol {
+    margin: 0;
+    padding-left: 20px;
+  }
+  .toc li {
+    margin-bottom: 5px;
+    font-weight: 500;
+    color: var(--accent);
+  }
+  .toc li a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .toc li a:hover {
+    color: var(--highlight);
+    text-decoration: underline;
+  }
+
+  .highlight-text {
+    background: linear-gradient(120deg, #fff9c4 0%, #fff176 100%);
+    padding: 1px 4px;
+    border-radius: 2px;
+  }
+
+  .badge-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 10px 0;
+  }
+  .badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .badge-dark { background: var(--primary); color: white; }
+  .badge-red { background: var(--highlight); color: white; }
+  .badge-blue { background: var(--blue); color: white; }
+  .badge-green { background: var(--green); color: white; }
+  .badge-purple { background: var(--purple); color: white; }
+  .badge-gold { background: var(--gold); color: white; }
+  .badge-teal { background: var(--teal); color: white; }
+
+  .skill-honest {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 16px 0;
+  }
+  .skill-box {
+    padding: 16px 20px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  .skill-box h4 { margin-top: 0; }
+  .skill-box ul { margin: 8px 0 0 16px; }
+
+  .phase-marker {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: white;
+    margin-right: 8px;
+  }
+
+  .experiment-box {
+    background: #f8f9fa;
+    border: 2px dashed var(--purple);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 12px 0;
+  }
+  .experiment-box h4 {
+    color: var(--purple);
+    margin-top: 0;
+    margin-bottom: 8px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- ============================================ -->
+<!-- HEADER -->
+<!-- ============================================ -->
+<div class="doc-header">
+  <h1>FinSage</h1>
+  <div class="tagline">Depth Over Breadth &mdash; Revised Blueprint v2.0</div>
+  <div class="subtitle">30 companies built extremely well beats 200 companies built superficially. Every metric earned, not pre-written.</div>
+  <div class="meta">
+    <span>Author: Digvijay Singh</span>
+    <span>Duration: 10 Weeks</span>
+    <span>Platform: Databricks</span>
+    <span>Start: March 2026</span>
+  </div>
+  <div class="meta" style="margin-top: 10px;">
+    <span>Databricks Certified Data Engineer Associate</span>
+    <span>Databricks Certified Generative AI Engineer Associate</span>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- WHAT YOU BRING -->
+<!-- ============================================ -->
+<div class="callout callout-green" style="margin-bottom: 30px;">
+  <strong>What I Bring to This Project</strong>
+  <div class="badge-row" style="margin-top: 10px;">
+    <span class="badge badge-dark">Databricks DE Associate</span>
+    <span class="badge badge-red">Databricks Gen AI Associate</span>
+    <span class="badge badge-blue">Python + Flask</span>
+    <span class="badge badge-purple">LLM Integration (Groq/Llama &mdash; Production)</span>
+    <span class="badge badge-green">AWS + Docker + CI/CD</span>
+  </div>
+  <p style="margin-top: 10px;">I know the concepts from both certifications. This project is where I put them into practice. I learn syntax and tooling as I build &mdash; no separate learning phase needed.</p>
+</div>
+
+<!-- ============================================ -->
+<!-- TABLE OF CONTENTS -->
+<!-- ============================================ -->
+<div class="toc">
+  <h3>Table of Contents</h3>
+  <ol>
+    <li><a href="#s1">Strategic Philosophy &mdash; Why Depth Wins</a></li>
+    <li><a href="#s2">Scope Definition &mdash; The 30-Company Rule</a></li>
+    <li><a href="#s3">Architecture &mdash; Simplified &amp; Realistic</a></li>
+    <li><a href="#s4">Data Engineering Excellence &mdash; The Foundation</a></li>
+    <li><a href="#s5">Data Model &mdash; Medallion Schema</a></li>
+    <li><a href="#s6">Retrieval System &mdash; Scientifically Tested</a></li>
+    <li><a href="#s7">Agent System &mdash; Single Orchestrator with Tools</a></li>
+    <li><a href="#s8">Evaluation Strategy &mdash; The Career Differentiator</a></li>
+    <li><a href="#s9">10-Week Step-by-Step Plan</a></li>
+    <li><a href="#s10">Repository Structure</a></li>
+    <li><a href="#s11">Observability &amp; Cost Discipline</a></li>
+    <li><a href="#s12">Cost Estimates</a></li>
+    <li><a href="#s13">Resume &amp; Interview Prep (Earn My Bullets)</a></li>
+    <li><a href="#s14">Risks &amp; Mitigation</a></li>
+    <li><a href="#s15">Scaling Phase &mdash; Only After Core Is Perfect</a></li>
+    <li><a href="#s16">Daily Discipline Protocol</a></li>
+    <li><a href="#s17">First 48 Hours Checklist</a></li>
+  </ol>
+</div>
+
+<hr>
+
+<!-- ============================================ -->
+<!-- SECTION 1: STRATEGIC PHILOSOPHY -->
+<!-- ============================================ -->
+<div class="section" id="s1">
+  <h2><span class="section-number">1</span> Strategic Philosophy &mdash; Why Depth Wins</h2>
+
+  <div class="callout callout-dark">
+    <strong>The Core Principle</strong>
+    <p>I optimize for: <strong>data quality, evaluation rigor, system reliability, observability, and measurable improvement.</strong> Not feature count. Not company count. Not agent count.</p>
+  </div>
+
+  <h3>What Interviewers Actually Ask</h3>
+  <p>When I say "I built a financial intelligence platform on Databricks," every interviewer will probe for depth:</p>
+  <ul>
+    <li><em>"Why 30 companies? What would change at 300?"</em> &mdash; I need a clear answer.</li>
+    <li><em>"How did you handle malformed filings or failed SEC API calls?"</em> &mdash; If I never encountered one, my pipeline wasn't real.</li>
+    <li><em>"What was your precision before and after optimization?"</em> &mdash; If I can't cite measured numbers, it looks fabricated.</li>
+    <li><em>"Show me your evaluation results."</em> &mdash; If I built eval in the last week, it shows.</li>
+  </ul>
+
+  <h3>The Original Blueprint vs. This Revised Plan</h3>
+  <div class="vs-box">
+    <div class="vs-side vs-left">
+      <h4 style="color: var(--red); margin-top: 0;">Original Blueprint (v1)</h4>
+      <ul>
+        <li>200 companies, 50K+ filings</li>
+        <li>4 specialized agents from day 1</li>
+        <li>17 Databricks features listed</li>
+        <li>Pre-written metrics (0.92, 43%)</li>
+        <li>Eval built in Week 7</li>
+        <li>Infrastructure heavy, insight light</li>
+      </ul>
+    </div>
+    <div class="vs-middle">VS</div>
+    <div class="vs-side vs-right">
+      <h4 style="color: var(--green); margin-top: 0;">Revised Blueprint (v2)</h4>
+      <ul>
+        <li>30 companies, ~730 filings</li>
+        <li>Single orchestrator + tools first</li>
+        <li>8 Databricks features used deeply</li>
+        <li>All metrics measured and earned</li>
+        <li>Eval drives development from Week 6</li>
+        <li>Engineering deep, measurably rigorous</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout callout-green">
+    <strong>My Certification Advantage</strong>
+    <p>I hold both the <strong>Databricks Data Engineer Associate</strong> and <strong>Generative AI Engineer Associate</strong> certifications. I already know the concepts. This project turns that knowledge into a built system. Every design decision maps to cert topics: Unity Catalog, Delta Lake, DLT, Auto Loader, RAG, chunking, evaluation, agent frameworks.</p>
+  </div>
+</div>
+
+<hr>
+
+<!-- ============================================ -->
+<!-- SECTION 2: SCOPE DEFINITION -->
+<!-- ============================================ -->
+<div class="section" id="s2">
+  <h2><span class="section-number">2</span> Scope Definition &mdash; The 30-Company Rule</h2>
+
+  <h3>Why 30 Companies</h3>
+  <ul>
+    <li><strong>Large enough</strong> to require distributed processing (Spark, Delta Lake partitioning, Vector Search filtering)</li>
+    <li><strong>Small enough</strong> to debug deeply &mdash; I can manually verify extracted values against source filings and SEC CompanyFacts</li>
+    <li><strong>Realistic</strong> for a 10-week build alongside a full-time job</li>
+    <li><strong>Interview-defensible</strong> &mdash; "I chose 30 to achieve deep quality. My eval suite proves precision. Scaling to 300 is a config change, not an architecture change."</li>
+  </ul>
+
+  <h3>Target Companies (6 Sectors, 5 per Sector)</h3>
+  <table>
+    <thead>
+      <tr><th>Sector</th><th>Companies</th><th>Why This Sector</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="label label-blue">Tech</span></td>
+        <td>AAPL, MSFT, GOOGL, AMZN, NVDA</td>
+        <td>Most recognizable in any interview</td>
+      </tr>
+      <tr>
+        <td><span class="label label-green">Finance</span></td>
+        <td>JPM, GS, BAC, V, MA</td>
+        <td>Financial statements are complex &mdash; stress-tests my parser</td>
+      </tr>
+      <tr>
+        <td><span class="label label-purple">Healthcare</span></td>
+        <td>JNJ, PFE, UNH, ABBV, MRK</td>
+        <td>Heavy regulatory language &mdash; tests risk detection</td>
+      </tr>
+      <tr>
+        <td><span class="label label-gold">Consumer</span></td>
+        <td>WMT, KO, NKE, MCD, SBUX</td>
+        <td>Clean financial tables &mdash; good for validation baseline</td>
+      </tr>
+      <tr>
+        <td><span class="label label-red">EV / Auto</span></td>
+        <td>TSLA, F, GM, RIVN, LCID</td>
+        <td>High-volatility sector &mdash; interesting for comparisons</td>
+      </tr>
+      <tr>
+        <td><span class="label label-teal">Cloud / SaaS</span></td>
+        <td>CRM, SNOW, PLTR, NET, DDOG</td>
+        <td>SaaS metrics (ARR, NRR) &mdash; tests domain extraction</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Data Scope</h3>
+  <p><strong>Scope:</strong> 5 years of 10-K and 10-Q filings for 30 Tier-1 companies.</p>
+  <p><strong>Rationale:</strong> Prioritizing high-density financial data to maximize RAG accuracy and extraction quality. This focus demonstrates senior-level decision-making by prioritizing data signal over noise.</p>
+
+  <h3>Document Scope</h3>
+  <table>
+    <thead>
+      <tr><th>Document Type</th><th>Per Company</th><th>Total (30 companies)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>10-K (Annual)</td><td>5 years</td><td>~150</td></tr>
+      <tr><td>10-Q (Quarterly)</td><td>20 quarters</td><td>~600</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Total: ~730 filings</strong></p>
+  <p>After section-level parsing: <strong>~30,000+ sections and chunks</strong> &mdash; enough to require real distributed processing.</p>
+
+  <h3>Financial Metrics to Extract (Not 100 &mdash; Just 12, Done Right)</h3>
+  <p>Do not try to extract everything. Pick 12 critical metrics and extract them <em>correctly</em> with deterministic validation:</p>
+
+  <table>
+    <thead>
+      <tr><th>#</th><th>Metric</th><th>Source</th><th>Validation</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td>Total Revenue</td><td>Income Statement</td><td>XBRL cross-check</td></tr>
+      <tr><td>2</td><td>Net Income</td><td>Income Statement</td><td>XBRL cross-check</td></tr>
+      <tr><td>3</td><td>Gross Profit</td><td>Income Statement</td><td>Revenue - COGS</td></tr>
+      <tr><td>4</td><td>Operating Income</td><td>Income Statement</td><td>XBRL cross-check</td></tr>
+      <tr><td>5</td><td>Operating Cash Flow</td><td>Cash Flow Statement</td><td>XBRL cross-check</td></tr>
+      <tr><td>6</td><td>Total Assets</td><td>Balance Sheet</td><td>XBRL cross-check</td></tr>
+      <tr><td>7</td><td>Total Liabilities</td><td>Balance Sheet</td><td>Assets - Equity</td></tr>
+      <tr><td>8</td><td>Total Debt</td><td>Balance Sheet</td><td>Short-term + Long-term</td></tr>
+      <tr><td>9</td><td>R&amp;D Expense</td><td>Income Statement</td><td>XBRL cross-check</td></tr>
+      <tr><td>10</td><td>Gross Margin %</td><td>Derived</td><td>Gross Profit / Revenue</td></tr>
+      <tr><td>11</td><td>Revenue YoY Growth %</td><td>Derived</td><td>(Current - Prior) / Prior</td></tr>
+      <tr><td>12</td><td>Debt-to-Equity Ratio</td><td>Derived</td><td>Total Debt / Equity</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-gold">
+    <strong>Why 12 Not 50</strong>
+    <p>12 metrics extracted with 95%+ precision and XBRL validation is far more impressive than 50 metrics at 70% accuracy. An interviewer who asks "how accurate is your extraction?" wants to hear a precise number from me backed by evidence, not "pretty accurate."</p>
+  </div>
+</div>
+
+<hr>
+
+<!-- ============================================ -->
+<!-- SECTION 3: ARCHITECTURE -->
+<!-- ============================================ -->
+<div class="section" id="s3">
+  <h2><span class="section-number">3</span> Architecture &mdash; Simplified &amp; Realistic</h2>
+
+  <h3>3.1 System Architecture</h3>
+
+  <div class="arch-box layer-ingest">
+    <div class="arch-label l-blue">Layer 1 &mdash; Ingestion</div>
+    <p><strong>Source:</strong> SEC EDGAR API (free, no key needed)</p>
+    <div class="badge-row">
+      <span class="badge badge-blue">Auto Loader</span>
+      <span class="badge badge-blue">Unity Catalog Volumes</span>
+      <span class="badge badge-blue">Databricks Workflows</span>
+    </div>
+    <p>Two raw feeds land in Bronze: SEC filing documents are copied to Unity Catalog Volumes for Auto Loader ingestion, and SEC CompanyFacts API payloads are fetched once and stored as immutable JSON snapshots. Scheduled via Databricks Workflows.</p>
+    <p><strong>Engineering problems I must solve:</strong> Idempotent ingestion, SEC rate limiting, API downtime, immutable raw snapshot storage, and ingestion logging with error tracking.</p>
+  </div>
+
+  <div class="arch-arrow">&darr;</div>
+
+  <div class="arch-box layer-process">
+    <div class="arch-label l-green">Layer 2 &mdash; Processing (Medallion Architecture)</div>
+    <div class="badge-row">
+      <span class="badge badge-dark">BRONZE</span>
+      <span class="badge badge-purple">SILVER</span>
+      <span class="badge badge-gold">GOLD</span>
+    </div>
+    <div class="badge-row">
+      <span class="badge badge-green">Delta Lake</span>
+      <span class="badge badge-green">Delta Live Tables</span>
+      <span class="badge badge-green">SEC CompanyFacts API</span>
+    </div>
+    <p><strong>Bronze:</strong> Raw filing bytes + raw SEC API JSON snapshots. <strong>Silver:</strong> Parsed filing sections and normalized XBRL-backed financial statements. <strong>Gold:</strong> 12 computed metrics per company-year, derived ratios, and quality scoring.</p>
+    <p><strong>Engineering problems I must solve:</strong> Line-item normalization across US-GAAP concepts, schema evolution when new fields appear, data quality expectations in DLT, and keeping Gold fully decoupled from live SEC calls.</p>
+  </div>
+
+  <div class="arch-arrow">&darr;</div>
+
+  <div class="arch-box layer-intel">
+    <div class="arch-label l-purple">Layer 3 &mdash; Retrieval Infrastructure</div>
+    <div class="badge-row">
+      <span class="badge badge-purple">Databricks Vector Search</span>
+      <span class="badge badge-purple">Embedding Generation</span>
+    </div>
+    <p>Filing sections and transcript chunks embedded and indexed. Metadata filters by ticker, year, section type. Hybrid search (vector + keyword) for precision.</p>
+    <p><strong>Engineering problems I must solve:</strong> Optimal chunk size (experiment: 256 vs 512 vs 1024). Overlap vs no overlap. Retrieval recall measurement. Hybrid search tuning.</p>
+  </div>
+
+  <div class="arch-arrow">&darr;</div>
+
+  <div class="arch-box layer-agent">
+    <div class="arch-label l-red">Layer 4 &mdash; Agent System (Single Orchestrator + Tools)</div>
+    <div class="badge-row">
+      <span class="badge badge-red">Mosaic AI Agent Framework</span>
+      <span class="badge badge-red">MLflow Tracing</span>
+    </div>
+    <p style="font-weight: 600; text-align: center; margin: 10px 0;">One agent. Four tools. No unnecessary complexity.</p>
+    <table>
+      <thead>
+        <tr><th>Tool</th><th>Function</th><th>Data Source</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="label label-blue">SQL Query Tool</span></td>
+          <td>Generate and execute SQL against Gold tables for financial metrics</td>
+          <td>Gold Delta tables</td>
+        </tr>
+        <tr>
+          <td><span class="label label-purple">Vector Search Tool</span></td>
+          <td>Semantic search over transcripts and filing sections</td>
+          <td>Vector Search index</td>
+        </tr>
+        <tr>
+          <td><span class="label label-gold">Financial Ratio Calculator</span></td>
+          <td>Compute derived metrics, trends, comparisons</td>
+          <td>Gold tables + computation</td>
+        </tr>
+        <tr>
+          <td><span class="label label-teal">Filing Comparison Tool</span></td>
+          <td>Diff risk factors, identify material changes year-over-year</td>
+          <td>Silver filing sections</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="callout callout-gold" style="margin-top: 12px;">
+      <strong>Why Not 4 Agents?</strong>
+      <p>A single orchestrator that chooses which tool to call is simpler to debug, faster to iterate, and produces the same output. If it demonstrably struggles with complex queries, <em>then</em> split &mdash; and document <em>why</em> I split with eval numbers. That decision itself becomes an interview story.</p>
+    </div>
+  </div>
+
+  <div class="arch-arrow">&darr;</div>
+
+  <div class="arch-box layer-serve">
+    <div class="arch-label l-gold">Layer 5 &mdash; Serving</div>
+    <div class="badge-row">
+      <span class="badge badge-gold">Model Serving (REST API)</span>
+      <span class="badge badge-gold">Databricks App (Simple UI)</span>
+    </div>
+    <p>Agent deployed as REST API via Mosaic AI Model Serving. Simple Databricks App for query input, response display, source citations, and trace viewing. No fancy UI &mdash; functional and clean.</p>
+  </div>
+
+  <div class="arch-arrow">&darr;</div>
+
+  <div class="arch-box layer-ops">
+    <div class="arch-label l-teal">Layer 6 &mdash; Observability</div>
+    <div class="badge-row">
+      <span class="badge badge-teal">MLflow Tracking</span>
+      <span class="badge badge-teal">Agent Evaluation</span>
+      <span class="badge badge-teal">Cost Tracking</span>
+    </div>
+    <p>Every query logged. Token usage tracked per tool per query. Latency tracked. Error rate tracked. Evaluation suite of 100 questions run on every major change.</p>
+  </div>
+
+  <h3>3.2 Databricks Features Used (Deeply, Not Superficially)</h3>
+  <table>
+    <thead>
+      <tr><th>#</th><th>Feature</th><th>How I Use It</th><th>What I Learn</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td>Unity Catalog</td><td>Governance for all tables, volumes, models</td><td>Catalog/schema design, permissions, lineage</td></tr>
+      <tr><td>2</td><td>Volumes</td><td>Landing zone for raw filing documents</td><td>Managed vs external volumes, file lifecycle</td></tr>
+      <tr><td>3</td><td>Auto Loader</td><td>Incremental ingestion of new filings</td><td>Schema inference, checkpointing, error handling</td></tr>
+      <tr><td>4</td><td>Delta Lake + DLT</td><td>Medallion pipeline with quality expectations</td><td>DLT syntax, expectations, pipeline monitoring</td></tr>
+      <tr><td>5</td><td>SEC CompanyFacts API</td><td>Machine-readable financial facts for Bronze snapshots and Silver normalization</td><td>API ingestion, schema flattening, deterministic metric sourcing</td></tr>
+      <tr><td>6</td><td>Vector Search</td><td>Semantic search over chunks</td><td>Index creation, sync, metadata filtering</td></tr>
+      <tr><td>7</td><td>Mosaic AI Agent Framework</td><td>Single agent with tool-calling</td><td>Agent definition, tool registration, tracing</td></tr>
+      <tr><td>8</td><td>Mosaic AI Agent Evaluation</td><td>100-question evaluation suite</td><td>LLM-as-judge, custom evaluators, iteration</td></tr>
+      <tr><td>9</td><td>MLflow</td><td>Tracking experiments, tracing, model registry</td><td>End-to-end ML lifecycle on Databricks</td></tr>
+      <tr><td>10</td><td>Model Serving</td><td>Deploy agent as REST API</td><td>Endpoint config, auto-scaling, monitoring</td></tr>
+      <tr><td>11</td><td>Databricks Workflows</td><td>Scheduled ingestion and processing</td><td>Job orchestration, dependencies, alerts</td></tr>
+    </tbody>
+  </table>
+  <p><strong>11 features used with depth</strong> &gt; 17 features mentioned in passing.</p>
+</div>
+
+<hr>
+
+<!-- ============================================ -->
+<!-- SECTION 4: DATA ENGINEERING EXCELLENCE -->
+<!-- ============================================ -->
+<div class="section" id="s4">
+  <h2><span class="section-number">4</span> Data Engineering Excellence &mdash; The Foundation</h2>
+
+  <div class="callout callout-red">
+    <strong>This Section Alone Makes Me Look Production-Ready</strong>
+  <p>Most portfolio projects say "ingest SEC filings." I must solve these engineering problems properly. Each one is an interview answer.</p>
+  </div>
+
+  <h3>4.1 Problems I Must Solve (and Document)</h3>
+
+  <table>
+    <thead>
+      <tr><th>Problem</th><th>What It Means</th><th>My Solution</th><th>Interview Value</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Idempotent Ingestion</strong></td>
+        <td>Re-running the pipeline doesn't create duplicates</td>
+        <td>MERGE INTO with filing_id as key. Checkpoint tracking in Auto Loader.</td>
+        <td>"How do you handle re-runs?" &mdash; critical for production</td>
+      </tr>
+      <tr>
+        <td><strong>Immutable API Snapshotting</strong></td>
+        <td>Gold cannot depend on live SEC endpoints that can fail, rate limit, or silently change</td>
+        <td>Fetch CompanyFacts once, write the exact raw JSON to <code>bronze.xbrl_companyfacts_raw</code>, and recompute Silver/Gold from owned data.</td>
+        <td>"How does your pipeline survive source instability?"</td>
+      </tr>
+      <tr>
+        <td><strong>Schema Evolution</strong></td>
+        <td>New filing types or metadata fields appear over time</td>
+        <td>Delta Lake schema evolution (<code>mergeSchema</code>). Auto Loader schema hints.</td>
+        <td>"How does your pipeline handle changing data?"</td>
+      </tr>
+      <tr>
+        <td><strong>Line-Item Normalization</strong></td>
+        <td>"Net revenues" vs "Total Revenue" vs "Net sales" across companies</td>
+        <td>Normalization mapping table. Fuzzy matching + manual overrides for top 30 companies.</td>
+        <td>"How did you handle inconsistency across sources?"</td>
+      </tr>
+      <tr>
+        <td><strong>Deterministic Chunking</strong></td>
+        <td>Same document always produces the same chunks</td>
+        <td>Section-aware chunking. Chunk ID = hash(filing_id + section + offset). No randomness.</td>
+        <td>"Are your embeddings reproducible?"</td>
+      </tr>
+      <tr>
+        <td><strong>XBRL System of Record</strong></td>
+        <td>Numerical metrics must come from deterministic machine-readable facts, not fragile document parsing</td>
+        <td>Normalize CompanyFacts into <code>silver.financial_statements</code>, then compute Gold metrics from that table.</td>
+        <td>"How do you guarantee numerical correctness?"</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>4.2 Ingestion Pipeline Design</h3>
+  <pre><code>SEC EDGAR
+    |
+    +---> Filing documents (10-K / 10-Q HTML submissions)
+    |       |
+    |       v
+    |   Unity Catalog Volume
+    |       |
+    |       v
+    |   Auto Loader
+    |       |
+    |       v
+    |   Bronze Delta Table: finsage.bronze.filings
+    |       - raw bytes + file metadata
+    |       - append-only
+    |
+    +---> SEC CompanyFacts API
+            |
+            v
+        Python requests job (rate-limited, retried, logged)
+            |
+            v
+        Bronze Delta Table: finsage.bronze.xbrl_companyfacts_raw
+            - exact raw JSON payload
+            - append-only snapshots with fetched_at
+            |
+            v
+        Silver: finsage.silver.financial_statements
+            - flattened + normalized XBRL facts
+
+Bronze filings
+    |
+    v
+Silver: finsage.silver.filing_sections
+    - Business / Risk Factors / MD&amp;A
+
+Silver financial_statements + Silver filing_sections
+    |
+    v
+Gold: finsage.gold.company_metrics
+      finsage.gold.risk_indicators</code></pre>
+
+  <h3>4.3 Data Quality Expectations (DLT)</h3>
+  <p>These run inside my Delta Live Tables pipeline. They catch bad data before it reaches Gold.</p>
+  <pre><code>@dlt.expect("valid_revenue", "revenue > 0")
+@dlt.expect("valid_fiscal_year", "fiscal_year BETWEEN 2020 AND 2026")
+@dlt.expect_or_drop("has_ticker", "ticker IS NOT NULL")
+@dlt.expect_or_fail("unique_filing", "filing_id IS NOT NULL")</code></pre>
+
+  <div class="callout callout-green">
+    <strong>DE Associate Cert &rarr; Practice</strong>
+    <p>Delta Lake, Auto Loader, DLT, Unity Catalog, data quality expectations &mdash; I studied all of these for the cert. This section is where I use them for real. When an interviewer asks about my certification, I point here.</p>
+  </div>
+
+  <h3>4.4 Financial Extraction Strategy &mdash; Decide This Now</h3>
+
+  <div class="callout callout-red">
+    <strong>Hard Rule: The LLM Never Extracts Numbers</strong>
+  <p>If I rely on an LLM to pull "revenue = $391B" from a filing document, numerical precision will collapse. LLMs approximate. Financial data must be exact. The extraction stack is layered:</p>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>Layer</th><th>What</th><th>Used For</th><th>Why</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="label label-green">Layer 1</span></td>
+        <td><strong>XBRL (Primary)</strong></td>
+        <td>All 12 target financial metrics (revenue, net income, total assets, etc.)</td>
+        <td>Machine-readable structured data filed with the SEC. Exact numbers. No parsing ambiguity. This is my ground truth source.</td>
+      </tr>
+      <tr>
+        <td><span class="label label-blue">Layer 2</span></td>
+        <td><strong>Document Parsing (Secondary)</strong></td>
+        <td>Tables and data NOT in XBRL: segment breakdowns, supplemental tables, footnotes</td>
+        <td>Use only for qualitative context, supplemental tables, or future edge cases where XBRL does not cover the requirement.</td>
+      </tr>
+      <tr>
+        <td><span class="label label-gold">Layer 3</span></td>
+        <td><strong>Normalization Mapping (Deterministic)</strong></td>
+        <td>"Net sales" &rarr; "revenue", "Cost of sales" &rarr; "cost_of_revenue"</td>
+        <td>A lookup table, not an LLM call. Regex + exact matching. Manually verified for 30 companies.</td>
+      </tr>
+      <tr>
+        <td><span class="label label-purple">Layer 4</span></td>
+        <td><strong>LLM (Reasoning Only)</strong></td>
+        <td>Risk factor summarization, management tone analysis, multi-source synthesis</td>
+        <td>The LLM reasons over already-extracted data. It never pulls raw numbers from documents.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p><strong>Cross-validation:</strong> The current production path treats XBRL-backed CompanyFacts as the numerical system of record. If I later add document-extracted table values, they must be compared against <code>silver.financial_statements</code>; any mismatch is logged and the XBRL-backed value wins.</p>
+
+  <p>This decision affects my entire architecture. Write it into <code>docs/technical_decisions.md</code> on day one.</p>
+</div>
+
+<hr>
+
+<!-- ============================================ -->
+<!-- SECTION 5: DATA MODEL -->
+<!-- ============================================ -->
+<div class="section" id="s5">
+  <h2><span class="section-number">5</span> Data Model &mdash; Medallion Schema</h2>
+
+  <h3>5.1 Bronze Layer <span class="label label-blue">Raw Data &mdash; Append-Only</span></h3>
+  <div class="schema-box">
+    <span class="table-name">finsage.bronze.filings</span><br>
+    ├── <span class="col-name">filing_id</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; PK, e.g., "AAPL-10-Q-2024-0000320193-24-000006"</span><br>
+    ├── <span class="col-name">ticker</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">filing_type</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; 10-K, 10-Q</span><br>
+    ├── <span class="col-name">accession_number</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">fiscal_year</span>: <span class="col-type">INT</span><br>
+    ├── <span class="col-name">file_path</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">content</span>: <span class="col-type">BINARY</span> <span class="col-comment">&mdash; raw filing payload, untouched</span><br>
+    ├── <span class="col-name">file_size_bytes</span>: <span class="col-type">LONG</span><br>
+    ├── <span class="col-name">ingestion_status</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; success, failed, retrying</span><br>
+    └── <span class="col-name">ingested_at</span>: <span class="col-type">TIMESTAMP</span>
+  </div>
+
+  <div class="schema-box">
+    <span class="table-name">finsage.bronze.xbrl_companyfacts_raw</span><br>
+    ├── <span class="col-name">snapshot_id</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">ticker</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">cik</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">entity_name</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">source_url</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">raw_json</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; exact CompanyFacts payload from SEC</span><br>
+    ├── <span class="col-name">api_status</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">http_status_code</span>: <span class="col-type">INT</span><br>
+    ├── <span class="col-name">error_message</span>: <span class="col-type">STRING</span><br>
+    └── <span class="col-name">fetched_at</span>: <span class="col-type">TIMESTAMP</span>
+  </div>
+
+  <div class="schema-box">
+    <span class="table-name">finsage.bronze.transcripts</span><br>
+    ├── <span class="col-name">transcript_id</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">ticker</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">event_date</span>: <span class="col-type">DATE</span><br>
+    ├── <span class="col-name">fiscal_year / fiscal_quarter</span>: <span class="col-type">INT</span><br>
+    ├── <span class="col-name">raw_text</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">source_url</span>: <span class="col-type">STRING</span><br>
+    └── <span class="col-name">ingested_at</span>: <span class="col-type">TIMESTAMP</span>
+  </div>
+
+  <div class="schema-box">
+    <span class="table-name">finsage.bronze.ingestion_errors</span> <span class="col-comment">&mdash; Every failure logged, not swallowed</span><br>
+    ├── <span class="col-name">error_id</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">source_system</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">source_url</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">file_path</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">error_type</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; parse_failure, download_timeout, request_exception, malformed_filing</span><br>
+    ├── <span class="col-name">error_message</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">retry_count</span>: <span class="col-type">INT</span><br>
+    └── <span class="col-name">failed_at</span>: <span class="col-type">TIMESTAMP</span>
+  </div>
+
+  <h3>5.2 Silver Layer <span class="label label-purple">Cleaned &amp; Structured</span></h3>
+  <div class="schema-box">
+    <span class="table-name">finsage.silver.financial_statements</span><br>
+    ├── <span class="col-name">statement_id</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">filing_id</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; aligned to filing/accession business key</span><br>
+    ├── <span class="col-name">ticker</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">company_name / cik</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">fiscal_year / fiscal_quarter / fiscal_period</span>: <span class="col-type">INT / STRING</span><br>
+    ├── <span class="col-name">filing_type</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">statement_type</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; income_statement, balance_sheet, cash_flow</span><br>
+    ├── <span class="col-name">raw_line_item</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; original US-GAAP concept</span><br>
+    ├── <span class="col-name">normalized_line_item</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; revenue, net_income, total_assets, etc.</span><br>
+    ├── <span class="col-name">value</span>: <span class="col-type">DOUBLE</span><br>
+    ├── <span class="col-name">unit</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; USD_millions, percentage</span><br>
+    ├── <span class="col-name">filing_date / period_start / period_end / accession / frame</span><br>
+    ├── <span class="col-name">source_url / source_fetched_at</span><br>
+    ├── <span class="col-name">extraction_confidence</span>: <span class="col-type">DOUBLE</span><br>
+    ├── <span class="col-name">xbrl_validated</span>: <span class="col-type">BOOLEAN</span> <span class="col-comment">&mdash; cross-checked against XBRL?</span><br>
+    ├── <span class="col-name">xbrl_match</span>: <span class="col-type">BOOLEAN</span> <span class="col-comment">&mdash; did it match?</span><br>
+    └── <span class="col-name">parsed_at</span>: <span class="col-type">TIMESTAMP</span>
+  </div>
+
+  <div class="schema-box">
+    <span class="table-name">finsage.silver.filing_sections</span><br>
+    ├── <span class="col-name">section_id / filing_id / ticker / fiscal_year</span><br>
+    ├── <span class="col-name">section_name</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; "Business", "Risk Factors", "MD&amp;A"</span><br>
+    ├── <span class="col-name">section_text</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">word_count</span>: <span class="col-type">INT</span><br>
+    └── <span class="col-name">parsed_at</span>: <span class="col-type">TIMESTAMP</span>
+  </div>
+
+  <div class="schema-box">
+    <span class="table-name">finsage.silver.transcript_segments</span><br>
+    ├── <span class="col-name">segment_id / transcript_id / ticker</span><br>
+    ├── <span class="col-name">speaker_name</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">speaker_role</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; CEO, CFO, Analyst</span><br>
+    ├── <span class="col-name">segment_type</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; prepared_remarks, qa_answer</span><br>
+    ├── <span class="col-name">text</span>: <span class="col-type">STRING</span><br>
+    └── <span class="col-name">segment_order / word_count</span>
+  </div>
+
+  <h3>5.3 Gold Layer <span class="label label-gold">12 Metrics, Validated</span></h3>
+  <div class="schema-box">
+    <span class="table-name">finsage.gold.company_metrics</span><br>
+    ├── <span class="col-name">ticker / company_name / fiscal_year / fiscal_quarter</span><br>
+    ├── <span class="col-name">revenue</span>: <span class="col-type">DOUBLE</span><br>
+    ├── <span class="col-name">net_income</span>: <span class="col-type">DOUBLE</span><br>
+    ├── <span class="col-name">gross_profit</span>: <span class="col-type">DOUBLE</span><br>
+    ├── <span class="col-name">operating_income</span>: <span class="col-type">DOUBLE</span><br>
+    ├── <span class="col-name">operating_cash_flow</span>: <span class="col-type">DOUBLE</span><br>
+    ├── <span class="col-name">total_assets</span>: <span class="col-type">DOUBLE</span><br>
+    ├── <span class="col-name">total_liabilities</span>: <span class="col-type">DOUBLE</span><br>
+    ├── <span class="col-name">total_debt</span>: <span class="col-type">DOUBLE</span><br>
+    ├── <span class="col-name">rd_expense</span>: <span class="col-type">DOUBLE</span><br>
+    ├── <span class="col-name">gross_margin_pct</span>: <span class="col-type">DOUBLE</span> <span class="col-comment">&mdash; derived</span><br>
+    ├── <span class="col-name">revenue_yoy_growth_pct</span>: <span class="col-type">DOUBLE</span> <span class="col-comment">&mdash; derived</span><br>
+    ├── <span class="col-name">debt_to_equity</span>: <span class="col-type">DOUBLE</span> <span class="col-comment">&mdash; derived</span><br>
+    ├── <span class="col-name">data_quality_score</span>: <span class="col-type">DOUBLE</span> <span class="col-comment">&mdash; share of 9 base metrics present and XBRL-backed</span><br>
+    └── <span class="col-name">updated_at</span>: <span class="col-type">TIMESTAMP</span>
+  </div>
+
+  <div class="schema-box">
+    <span class="table-name">finsage.gold.risk_indicators</span><br>
+    ├── <span class="col-name">ticker / fiscal_year</span><br>
+    ├── <span class="col-name">risk_factor_count</span>: <span class="col-type">INT</span><br>
+    ├── <span class="col-name">risk_factor_word_count</span>: <span class="col-type">INT</span> <span class="col-comment">&mdash; growing risk sections = more risk</span><br>
+    ├── <span class="col-name">new_risk_factors</span>: <span class="col-type">ARRAY&lt;STRING&gt;</span> <span class="col-comment">&mdash; risks added vs prior year</span><br>
+    ├── <span class="col-name">removed_risk_factors</span>: <span class="col-type">ARRAY&lt;STRING&gt;</span><br>
+    └── <span class="col-name">computed_at</span>: <span class="col-type">TIMESTAMP</span>
+  </div>
+</div>
+
+<hr>
+
+<!-- ============================================ -->
+<!-- SECTION 6: RETRIEVAL SYSTEM -->
+<!-- ============================================ -->
+<div class="section" id="s6">
+  <h2><span class="section-number">6</span> Retrieval System &mdash; Scientifically Tested</h2>
+
+  <div class="callout callout-purple">
+    <strong>Gen AI Associate Cert &rarr; Practice</strong>
+    <p>RAG architecture, chunking strategies, vector search, evaluation &mdash; I studied all of these for the cert. This section is where I use them for real and run actual experiments to find what works best.</p>
+  </div>
+
+  <h3>6.1 Chunking Experiment (I Must Run This)</h3>
+  <p>Do not guess the right chunk size. Experiment, measure, and document results.</p>
+
+  <div class="experiment-box">
+    <h4>Experiment: Optimal Chunk Size</h4>
+    <table>
+      <thead>
+        <tr><th>Config</th><th>Chunk Size</th><th>Overlap</th><th>Measure: Retrieval Recall</th><th>Measure: Latency</th><th>Measure: Cost</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>A</td><td>256 tokens</td><td>0</td><td><em>[run experiment]</em></td><td><em>[run experiment]</em></td><td><em>[run experiment]</em></td></tr>
+        <tr><td>B</td><td>256 tokens</td><td>50</td><td><em>[run experiment]</em></td><td><em>[run experiment]</em></td><td><em>[run experiment]</em></td></tr>
+        <tr><td>C</td><td>512 tokens</td><td>0</td><td><em>[run experiment]</em></td><td><em>[run experiment]</em></td><td><em>[run experiment]</em></td></tr>
+        <tr><td>D</td><td>512 tokens</td><td>50</td><td><em>[run experiment]</em></td><td><em>[run experiment]</em></td><td><em>[run experiment]</em></td></tr>
+        <tr><td>E</td><td>1024 tokens</td><td>0</td><td><em>[run experiment]</em></td><td><em>[run experiment]</em></td><td><em>[run experiment]</em></td></tr>
+        <tr><td>F</td><td>1024 tokens</td><td>100</td><td><em>[run experiment]</em></td><td><em>[run experiment]</em></td><td><em>[run experiment]</em></td></tr>
+      </tbody>
+    </table>
+    <p><strong>How to measure retrieval recall:</strong> Create 20 test questions where I know which document section contains the answer. For each config, check if the correct section appears in top-5 retrieved results. Recall = correct / total.</p>
+  </div>
+
+  <h3>6.2 Hybrid Search Experiment</h3>
+  <div class="experiment-box">
+    <h4>Experiment: Search Strategy</h4>
+    <table>
+      <thead>
+        <tr><th>Strategy</th><th>Method</th><th>Measure: Precision@5</th><th>Best For</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Pure Vector</td><td>Databricks Vector Search only</td><td><em>[run experiment]</em></td><td>Semantic questions ("management tone on profitability")</td></tr>
+        <tr><td>Keyword (BM25)</td><td>SQL LIKE / full-text search</td><td><em>[run experiment]</em></td><td>Exact lookups ("AAPL revenue 2024")</td></tr>
+        <tr><td>Hybrid</td><td>Vector + keyword, re-rank</td><td><em>[run experiment]</em></td><td>Complex queries combining both</td></tr>
+      </tbody>
+    </table>
+    <p>Document which strategy wins for which query type. My agent's tool selection can use this insight.</p>
+  </div>
+
+  <h3>6.3 Citation Enforcement</h3>
+  <p>Every answer must cite its source. This makes my system enterprise-grade.</p>
+  <ul>
+    <li><strong>Source citation extraction:</strong> Every retrieved chunk carries its <code>filing_id</code>, <code>section_name</code>, and page reference</li>
+    <li><strong>Answer grounding verification:</strong> Check that claims in the response are supported by cited chunks</li>
+    <li><strong>Confidence scoring:</strong> Lower confidence when fewer sources found, or when sources disagree</li>
+  </ul>
+
+  <div class="callout callout-green">
+    <strong>Why This Matters</strong>
+    <p>This shows I understand Information Retrieval theory. When an interviewer asks "how does your search work?", saying "I tested 6 chunking configurations and hybrid search outperformed pure vector by [X]% on financial queries" is elite-level.</p>
+  </div>
+</div>
+
+<hr>
+
+<!-- ============================================ -->
+<!-- SECTION 7: AGENT SYSTEM -->
+<!-- ============================================ -->
+<div class="section" id="s7">
+  <h2><span class="section-number">7</span> Agent System &mdash; Single Orchestrator with Tools</h2>
+
+  <div class="callout callout-dark">
+    <strong>Hard Constraint &mdash; No Ambiguity</strong>
+    <p style="font-size: 16px; font-weight: 700; text-align: center; margin: 8px 0;">V1 = One agent. Four tools. No agent-to-agent communication.</p>
+    <p>Splitting into multiple agents is only considered if evaluation data shows tool selection accuracy drops below 80% on complex queries. Any split must be justified by measured numbers, not intuition. Write this into <code>docs/technical_decisions.md</code>:</p>
+    <p style="font-style: italic; margin-top: 8px;">"V1 uses a single orchestrator agent with 4 tools. Splitting into multiple agents is only considered if eval metrics show tool selection accuracy drops below 80% on Tier 3+ queries. Any split must be justified by measured data."</p>
+  </div>
+
+  <h3>7.1 Architecture: V1</h3>
+  <pre><code>User Query
+    |
+    v
+Orchestrator Agent (Mosaic AI Agent Framework)
+    |
+    |--- understands the question
+    |--- decides which tool(s) to call
+    |--- may call multiple tools sequentially
+    |--- synthesizes results into a response with citations
+    |
+    +---> [Tool 1] SQL Query Tool
+    |       - Generates SQL against gold.company_metrics
+    |       - Executes and returns structured results
+    |       - Used for: "What was Apple's revenue in 2024?"
+    |
+    +---> [Tool 2] Vector Search Tool
+    |       - Searches transcript chunks and filing sections
+    |       - Returns top-k results with metadata
+    |       - Used for: "What did Tesla's CEO say about margins?"
+    |
+    +---> [Tool 3] Financial Ratio Calculator
+    |       - Computes CAGR, margin trends, peer comparisons
+    |       - Used for: "Compare gross margin trend TSLA vs F"
+    |
+    +---> [Tool 4] Filing Comparison Tool
+            - Diffs risk factor sections year-over-year
+            - Used for: "Any new risk factors for JPM in 2025?"</code></pre>
+
+  <h3>7.2 Example Query Flow</h3>
+  <div class="callout callout-dark">
+    <strong>Example</strong>
+    <pre style="background: transparent; color: inherit; padding: 10px 0;"><code>User: "Compare Tesla and Ford's gross margin trends over 
+       the last 3 years. Which is better positioned?"
+
+Orchestrator Reasoning:
+  1. This needs financial metrics --> SQL Query Tool
+     "SELECT ticker, fiscal_year, gross_margin_pct 
+      FROM gold.company_metrics 
+      WHERE ticker IN ('TSLA', 'F') 
+      AND fiscal_year BETWEEN 2022 AND 2024"
+
+  2. This needs qualitative context --> Vector Search Tool
+     "Tesla Ford gross margin profitability strategy"
+     (retrieves relevant earnings call segments)
+
+  3. This needs comparison --> Financial Ratio Calculator
+     compute_trend(TSLA.gross_margin, F.gross_margin)
+
+  4. Synthesize --> Response with citations
+     "Tesla's gross margin: [X]% -> [Y]% -> [Z]% (2022-2024)
+      Ford's gross margin: [A]% -> [B]% -> [C]% (2022-2024)
+      Source: TSLA-10K-2024, F-10K-2024
+      Tesla CEO noted '...' (TSLA Q4 2024 Earnings Call)
+      Assessment: [reasoning]
+      Confidence: [score based on source quality]"</code></pre>
+  </div>
+
+  <h3>7.3 When to Split into Multiple Agents (V2 &mdash; Optional)</h3>
+  <p>Only split if I observe these specific problems with the single orchestrator:</p>
+  <ul>
+    <li>Context window overflow on complex multi-part queries</li>
+    <li>Tool selection accuracy dropping below 80% (measured by eval suite)</li>
+    <li>Response quality degrading when combining quantitative + qualitative analysis</li>
+  </ul>
+  <p><strong>If I split, I document why.</strong> "I split because my eval showed tool selection accuracy dropped from 91% to 73% on Tier 3 queries when the orchestrator had to handle all 4 tools" &mdash; that is a better interview story than "I built 4 agents because it seemed cool."</p>
+</div>
+
+<hr>
+
+<!-- ============================================ -->
+<!-- SECTION 8: EVALUATION STRATEGY -->
+<!-- ============================================ -->
+<div class="section" id="s8">
+  <h2><span class="section-number">8</span> Evaluation Strategy &mdash; The Career Differentiator</h2>
+
+  <div class="callout callout-red">
+    <strong>This Is the Single Most Important Section</strong>
+    <p>Every other portfolio project on GitHub has a README that says "built a RAG system." Almost none have a rigorous evaluation suite with documented improvement iterations. This is what separates me from 1000 other applicants.</p>
+  </div>
+
+  <div class="callout callout-dark">
+    <strong>North Star Metric</strong>
+    <p style="font-size: 18px; font-weight: 700; text-align: center; margin: 12px 0;">Numerical Precision &ge; 92% on the benchmark set</p>
+    <p>The percentage of financial number queries where the agent returns the correct value (within &plusmn;1% tolerance), with a valid source citation. If the numbers are wrong, nothing else matters.</p>
+    <p style="margin-top: 10px;"><strong>Supporting metrics (ranked by importance):</strong></p>
+    <ol>
+      <li><strong>Numerical precision</strong> &mdash; north star, drives all decisions</li>
+      <li><strong>Citation accuracy</strong> &mdash; does it point to the right source?</li>
+      <li><strong>Faithfulness</strong> &mdash; are non-numeric claims grounded in sources?</li>
+      <li><strong>Tool selection accuracy</strong> &mdash; does it pick the right tool?</li>
+      <li><strong>Latency</strong> &mdash; how fast?</li>
+      <li><strong>Cost per query</strong> &mdash; how cheap?</li>
+    </ol>
+    <p style="margin-top: 10px;">Every optimization decision should be measured against: <em>"does this improve numerical precision?"</em> If it doesn't, it's not a priority.</p>
+  </div>
+
+  <h3>8.1 Ground Truth Dataset &mdash; 100 Questions, 5 Categories</h3>
+  <table>
+    <thead>
+      <tr><th>Category</th><th>Count</th><th>Example</th><th>What It Tests</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="label label-green">Numerical Lookup</span></td>
+        <td>25</td>
+        <td>"What was Apple's total revenue in FY 2024?"</td>
+        <td>SQL tool accuracy, extraction precision</td>
+      </tr>
+      <tr>
+        <td><span class="label label-blue">Risk Summary</span></td>
+        <td>20</td>
+        <td>"What are the top 3 risk factors for JPMorgan in their latest 10-K?"</td>
+        <td>Vector search relevance, summarization quality</td>
+      </tr>
+      <tr>
+        <td><span class="label label-gold">Year-over-Year</span></td>
+        <td>20</td>
+        <td>"How did Tesla's gross margin change from 2022 to 2024?"</td>
+        <td>Multi-row SQL, trend computation</td>
+      </tr>
+      <tr>
+        <td><span class="label label-purple">Multi-Company</span></td>
+        <td>20</td>
+        <td>"Compare R&D spending as % of revenue: MSFT vs GOOGL vs AMZN"</td>
+        <td>Multi-tool orchestration, comparison logic</td>
+      </tr>
+      <tr>
+        <td><span class="label label-red">Citation Validation</span></td>
+        <td>15</td>
+        <td>"What did Nvidia's CFO say about data center revenue? Cite the source."</td>
+        <td>Source grounding, citation accuracy</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Each question must have a manually verified ground truth answer.</strong> This is tedious. It is also what makes it valuable.</p>
+
+  <h3>8.2 Question Schema &mdash; Lock This Before Building</h3>
+  <p>I design this format before I write a single line of pipeline code. I write 10 sample questions across categories in Week 1. The format tells me what my system needs to be capable of.</p>
+
+  <div class="schema-box">
+    <span class="table-name">ground_truth.json &mdash; Each Entry</span><br>
+    ├── <span class="col-name">question_id</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; e.g., "NQ-001", "RS-015", "MC-008"</span><br>
+    ├── <span class="col-name">category</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; numerical_lookup | risk_summary | yoy_comparison | multi_company | citation_validation</span><br>
+    ├── <span class="col-name">question</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; the natural language question</span><br>
+    ├── <span class="col-name">expected_answer</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; manually verified correct answer</span><br>
+    ├── <span class="col-name">expected_source</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; e.g., "AAPL-10K-2024, Income Statement"</span><br>
+    ├── <span class="col-name">tolerance</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; "&plusmn;1%" for numbers, "semantic_match" for text</span><br>
+    ├── <span class="col-name">expected_tools</span>: <span class="col-type">ARRAY</span> <span class="col-comment">&mdash; ["sql_query_tool"] or ["vector_search_tool", "ratio_calculator"]</span><br>
+    └── <span class="col-name">difficulty</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; easy | medium | hard</span>
+  </div>
+
+  <p><strong>Example entry:</strong></p>
+  <pre><code>{
+  "question_id": "NQ-001",
+  "category": "numerical_lookup",
+  "question": "What was Apple's total revenue in FY 2024?",
+  "expected_answer": "$391.035 billion",
+  "expected_source": "AAPL-10K-2024, Income Statement",
+  "tolerance": "+-1%",
+  "expected_tools": ["sql_query_tool"],
+  "difficulty": "easy"
+}</code></pre>
+
+  <h3>8.3 Metrics I Track</h3>
+  <table>
+    <thead>
+      <tr><th>Metric</th><th>What It Measures</th><th>How to Compute</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Numerical Exact Match</strong></td>
+        <td>Is the extracted number correct?</td>
+        <td>Compare agent answer vs ground truth (tolerance: &plusmn;1%)</td>
+      </tr>
+      <tr>
+        <td><strong>Faithfulness</strong></td>
+        <td>Are claims supported by retrieved sources?</td>
+        <td>LLM-as-judge (Mosaic AI Agent Evaluation)</td>
+      </tr>
+      <tr>
+        <td><strong>Citation Precision</strong></td>
+        <td>Do cited sources actually contain the claimed info?</td>
+        <td>Manual spot-check + LLM-as-judge</td>
+      </tr>
+      <tr>
+        <td><strong>Hallucination Rate</strong></td>
+        <td>% of responses containing unsupported claims</td>
+        <td>1 - Faithfulness</td>
+      </tr>
+      <tr>
+        <td><strong>Tool Selection Accuracy</strong></td>
+        <td>Did the agent pick the right tool?</td>
+        <td>Compare selected tool vs expected tool per question</td>
+      </tr>
+      <tr>
+        <td><strong>Response Latency</strong></td>
+        <td>End-to-end time</td>
+        <td>P50, P95 from MLflow traces</td>
+      </tr>
+      <tr>
+        <td><strong>Token Cost per Query</strong></td>
+        <td>Average token consumption</td>
+        <td>Sum input + output tokens, multiply by rate</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>8.4 Iteration Log Template</h3>
+  <p>I fill this in as I iterate. These numbers are my headline resume stories.</p>
+
+  <div class="callout callout-green">
+    <strong>Document Every Change</strong>
+    <pre style="background: transparent; color: inherit; padding: 10px 0;"><code>V0 (Baseline - first working version):
+  Numerical Precision: [measure]
+  Faithfulness:        [measure]
+  Citation Precision:  [measure]
+  Latency P50:         [measure]
+  Cost per query:      [measure]
+  Issues observed:     [describe failure modes]
+
+Changes for V1:
+  - [what I changed and why]
+
+V1:
+  Numerical Precision: [measure] ([+/- X] from V0)
+  Faithfulness:        [measure] ([+/- X] from V0)
+  ...
+
+Changes for V2:
+  - [what I changed and why]
+
+V2:
+  ...
+
+Changes for V3:
+  - [what I changed and why]
+
+V3 (Final):
+  All metrics, all changes documented.</code></pre>
+  </div>
+
+  <div class="callout callout-gold">
+    <strong>What This Sounds Like in an Interview</strong>
+    <p>"When I first ran my evaluation suite, numerical precision was [V0 number]. I traced the failures &mdash; [root cause]. I changed [specific thing] and precision improved to [V1 number]. Then I [another change] and it reached [V3 number]. Every iteration is tracked in MLflow."</p>
+    <p>This is impossible to fake. This is what gets me hired.</p>
+  </div>
+</div>
+
+<hr>
+
+<!-- ============================================ -->
+<!-- SECTION 9: 10-WEEK PLAN -->
+<!-- ============================================ -->
+<div class="section" id="s9">
+  <h2><span class="section-number">9</span> 10-Week Step-by-Step Plan</h2>
+
+  <p>Each week is broken into numbered steps. I do them in order. I check them off as I go.</p>
+
+  <div class="week-card w1">
+    <div class="week-card-header">
+      <span>Week 1 &mdash; Repo + Databricks Setup + First Data Download</span>
+      <span class="week-tag">SETUP</span>
+    </div>
+    <div class="week-card-body">
+      <ol>
+        <li>Create GitHub repo <code>finsage</code>. Push the folder structure from Section 10.</li>
+        <li>Confirm I can use my Arsaga Partners Databricks partner workspace for this project. If not, apply for a personal Databricks trial.</li>
+        <li>In Databricks, run: <code>CREATE CATALOG finsage</code></li>
+        <li>Run: <code>CREATE SCHEMA finsage.bronze</code>, <code>finsage.silver</code>, <code>finsage.gold</code></li>
+        <li>Create a Volume: <code>CREATE VOLUME finsage.bronze.raw_filings</code></li>
+        <li>Write <code>edgar_downloader.py</code> to pull SEC filing submissions for my 30 companies and save the raw filing documents into a Unity Catalog Volume.</li>
+        <li>Test it on Apple (AAPL). Verify the filing payloads land in the expected folder structure.</li>
+        <li>Scale it to 10-K + 10-Q filings for all 30 companies.</li>
+        <li>Verify the filing bytes are stored raw, without parsing or metric logic at ingest time.</li>
+        <li>Commit and push.</li>
+      </ol>
+      <p><strong>Done when:</strong> Raw filing documents are sitting in my Databricks Volume with deterministic folder structure. Repo exists with structure.</p>
+    </div>
+  </div>
+
+  <div class="week-card w2">
+    <div class="week-card-header">
+      <span>Week 2 &mdash; Auto Loader + Bronze Table</span>
+      <span class="week-tag">INGESTION</span>
+    </div>
+    <div class="week-card-body">
+      <ol>
+        <li>Write an Auto Loader job that watches my Volume for new filing documents.</li>
+        <li>Write only raw bytes + metadata to <code>finsage.bronze.filings</code>. No parsing and no metric extraction in Bronze.</li>
+        <li>Write a separate SEC API ingestion job that fetches CompanyFacts JSON and appends the exact payload to <code>finsage.bronze.xbrl_companyfacts_raw</code>.</li>
+        <li>Add error handling: if a filing payload is malformed or an API call fails, log it to <code>finsage.bronze.ingestion_errors</code> instead of crashing.</li>
+        <li>Add retry logic with backoff for SEC download/API failures.</li>
+        <li>Test idempotency: run the pipeline twice. Bronze stays append-only without duplicate business keys.</li>
+        <li>Scale to the full 30-company universe and capture both filing documents and CompanyFacts snapshots.</li>
+        <li>Commit and push.</li>
+      </ol>
+      <p><strong>Done when:</strong> Bronze contains raw filing payloads plus raw CompanyFacts JSON snapshots. Auto Loader processes new files automatically. Errors are logged, not swallowed.</p>
+    </div>
+  </div>
+
+  <div class="week-card w3">
+    <div class="week-card-header">
+      <span>Week 3 &mdash; Build Silver Tables</span>
+      <span class="week-tag">EXTRACTION</span>
+    </div>
+    <div class="week-card-body">
+      <ol>
+        <li>Flatten <code>bronze.xbrl_companyfacts_raw</code> into row-wise facts and normalize only the concepts required for the 12 target metrics.</li>
+        <li>Build a normalization mapping from SEC US-GAAP concepts into project-level line items such as <code>revenue</code>, <code>net_income</code>, <code>total_assets</code>, and debt components.</li>
+        <li>Write the normalized results to <code>finsage.silver.financial_statements</code>.</li>
+        <li>Split the filing documents into <code>Business</code>, <code>Risk Factors</code>, and <code>MD&amp;A</code>. Write them to <code>finsage.silver.filing_sections</code>.</li>
+        <li>Make section extraction failure-tolerant: log malformed filings to <code>finsage.bronze.ingestion_errors</code> and continue processing.</li>
+        <li>Run the pipeline across all Bronze filings and all Bronze CompanyFacts snapshots.</li>
+        <li>Commit and push.</li>
+      </ol>
+      <p><strong>Done when:</strong> Silver tables populated. I can query <code>SELECT ticker, fiscal_year, value FROM silver.financial_statements WHERE normalized_line_item = 'revenue'</code> and get real numbers. Gold no longer depends on live SEC calls.</p>
+    </div>
+  </div>
+
+  <div class="week-card w4">
+    <div class="week-card-header">
+      <span>Week 4 &mdash; Gold Layer + DLT Pipeline + Transcripts</span>
+      <span class="week-tag">ANALYTICS</span>
+    </div>
+    <div class="week-card-body">
+      <ol>
+        <li>Write a DLT pipeline that reads from Bronze, transforms to Silver, aggregates to Gold. Use <code>@dlt.table</code> and <code>@dlt.expect</code> decorators.</li>
+        <li>In the Gold table, compute all 12 metrics per company per year from <code>silver.financial_statements</code>: revenue, net income, gross profit, operating income, operating cash flow, total assets, total liabilities, total debt, R&amp;D expense, gross margin %, revenue YoY growth %, debt-to-equity.</li>
+        <li>Add data quality expectations: <code>@dlt.expect("valid_revenue", "revenue > 0")</code>, etc.</li>
+        <li>Build <code>finsage.gold.risk_indicators</code>: count risk factors per filing, detect new/removed risk factors year-over-year.</li>
+        <li>Download earnings transcripts for my 30 companies (Motley Fool or EDGAR attachments). Segment by speaker and role (CEO, CFO, Analyst). Write to <code>finsage.silver.transcript_segments</code>.</li>
+        <li>Create a Databricks Workflow that runs my DLT pipeline on a schedule.</li>
+        <li>Verify Gold table: <code>SELECT * FROM finsage.gold.company_metrics WHERE ticker = 'AAPL'</code> should return 5 years of clean metrics.</li>
+        <li>Commit and push.</li>
+      </ol>
+      <p><strong>Done when:</strong> DLT pipeline runs end-to-end. Gold table has 12 metrics for 30 companies &times; 5 years, all sourced from Bronze-owned SEC data via Silver normalization. Data quality expectations enforce rules. Transcripts segmented.</p>
+      <div class="callout callout-green" style="margin-top: 10px;">
+        <strong>Checkpoint &mdash; I Now Have a Full Data Engineering Project</strong>
+        <p>Bronze &rarr; Silver &rarr; Gold. DLT pipeline. Quality expectations. XBRL validation. Error handling. This alone proves my DE Associate cert in practice. Verify everything works before moving on.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="week-card w5">
+    <div class="week-card-header">
+      <span>Week 5 &mdash; Embeddings + Vector Search + Retrieval Experiments</span>
+      <span class="week-tag">SEARCH</span>
+    </div>
+    <div class="week-card-body">
+      <ol>
+        <li>Write a chunker that splits filing sections and transcript segments into chunks. Use section-aware splitting (don't cut mid-table or mid-paragraph). Give each chunk a deterministic ID: <code>hash(filing_id + section + offset)</code>.</li>
+        <li>Run the chunking experiment from Section 6: test 256 / 512 / 1024 token sizes, with and without overlap. Fill in the experiment table.</li>
+        <li>Generate embeddings for all chunks using <code>databricks-gte-large-en</code> via the Foundation Model API.</li>
+        <li>Create a Vector Search Delta Sync index on my chunks table.</li>
+        <li>Write a retrieval function: takes a query string, optional filters (ticker, year, section_type), returns top-k chunks with metadata.</li>
+        <li>Run the search experiment from Section 6: compare pure vector vs keyword (SQL LIKE) vs hybrid. Measure Precision@5 using 20 hand-picked test queries.</li>
+        <li>Pick the best chunking config and search strategy based on my results.</li>
+        <li>Save experiment results in a notebook. Commit and push.</li>
+      </ol>
+      <p><strong>Done when:</strong> Vector Search index is live. I can query it and get relevant financial document chunks back. I have measured data showing which chunking/search config works best.</p>
+    </div>
+  </div>
+
+  <div class="week-card w6">
+    <div class="week-card-header">
+      <span>Week 6 &mdash; Build the Agent + Start Eval Questions</span>
+      <span class="week-tag">AGENT</span>
+    </div>
+    <div class="week-card-body">
+      <ol>
+        <li>Write <code>sql_query_tool.py</code>: takes a natural language question, generates SQL against <code>gold.company_metrics</code>, executes it, returns results.</li>
+        <li>Write <code>vector_search_tool.py</code>: takes a query, calls my retrieval function, returns top chunks with source metadata.</li>
+        <li>Write <code>ratio_calculator.py</code>: takes tickers + metrics + date range, computes trends/comparisons from Gold table.</li>
+        <li>Write <code>filing_comparison_tool.py</code>: takes a ticker + 2 years, diffs risk factor sections, returns new/removed factors.</li>
+        <li>Register all 4 tools with the Mosaic AI Agent Framework.</li>
+        <li>Write the orchestrator system prompt. Tell it: what each tool does, when to use which, always cite sources, include confidence scores.</li>
+        <li>Build the single orchestrator agent using Mosaic AI Agent Framework.</li>
+        <li>Enable MLflow Tracing so every tool call and response is logged.</li>
+        <li>Test with 20 queries: "What was AAPL revenue in 2024?", "Compare TSLA vs F gross margin", "What risks did JPM disclose?", etc.</li>
+        <li>Start writing ground truth questions. Write 30 this week (10 numerical, 10 comparison, 10 qualitative). Manually verify the correct answer for each.</li>
+        <li>Commit and push.</li>
+      </ol>
+      <p><strong>Done when:</strong> I can ask the agent a financial question and get a response with citations. MLflow shows the trace of which tools were called. 30 ground truth questions written.</p>
+    </div>
+  </div>
+
+  <div class="week-card w7">
+    <div class="week-card-header">
+      <span>Week 7 &mdash; Full Evaluation Suite + V0 Baseline + First Fixes</span>
+      <span class="week-tag">EVALUATION</span>
+    </div>
+    <div class="week-card-body">
+      <ol>
+        <li>Write 70 more ground truth questions (total: 100). Spread across all 5 categories from Section 8. Manually verify every answer.</li>
+        <li>Set up Mosaic AI Agent Evaluation. Configure LLM-as-judge for faithfulness and relevance.</li>
+        <li>Write a custom evaluator for numerical precision: compare agent's number vs ground truth, allow &plusmn;1% tolerance.</li>
+        <li>Run the full 100-question eval suite against my agent. Record all metrics: numerical precision, faithfulness, citation precision, tool selection accuracy, latency, cost per query.</li>
+        <li>This is my <strong>V0 baseline</strong>. Log everything in MLflow.</li>
+        <li>Analyze failures: which questions did the agent get wrong? Why? Group by category. Find patterns.</li>
+        <li>Fix the most common failure mode. (Examples: wrong tool selected &rarr; improve system prompt. Wrong number &rarr; check extraction pipeline. No citation &rarr; enforce in prompt.)</li>
+        <li>Re-run the eval suite. This is <strong>V1</strong>. Document what changed and by how much.</li>
+        <li>Commit iteration log and push.</li>
+      </ol>
+      <p><strong>Done when:</strong> 100-question eval suite exists. V0 and V1 metrics are in MLflow. I can point to a specific improvement and say why it happened.</p>
+    </div>
+  </div>
+
+  <div class="week-card w8">
+    <div class="week-card-header">
+      <span>Week 8 &mdash; Iterate: V2 + V3 + Cost Optimization</span>
+      <span class="week-tag">ITERATE</span>
+    </div>
+    <div class="week-card-body">
+      <ol>
+        <li>Look at V1 failures. Fix the next biggest issue. Re-run eval. This is <strong>V2</strong>.</li>
+        <li>Look at V2 failures. Fix. Re-run. This is <strong>V3</strong>.</li>
+        <li>Measure token usage per tool call from MLflow traces. Find which tool uses the most tokens.</li>
+        <li>Implement cost reduction: shorten context passed to the LLM (only send relevant chunks, not everything). Cache results for repeated sub-queries.</li>
+        <li>Measure cost per query before and after optimization.</li>
+        <li>If my eval shows the single agent struggling (tool selection accuracy &lt;80% on complex queries), consider splitting into multiple agents. If I split, I document exactly why with the eval numbers that justified it.</li>
+        <li>Update the iteration log with V2 and V3 metrics.</li>
+        <li>Commit and push.</li>
+      </ol>
+      <p><strong>Done when:</strong> V3 metrics recorded. Cost per query measured and reduced. Iteration log shows V0 &rarr; V1 &rarr; V2 &rarr; V3 with what changed at each step.</p>
+    </div>
+  </div>
+
+  <div class="week-card w9">
+    <div class="week-card-header">
+      <span>Week 9 &mdash; Deploy + Monitoring Dashboard</span>
+      <span class="week-tag">PRODUCTION</span>
+    </div>
+    <div class="week-card-body">
+      <ol>
+        <li>Register my agent in MLflow Model Registry. Tag it as "Production".</li>
+        <li>Deploy it to a Mosaic AI Model Serving endpoint. Test the REST API with <code>curl</code>.</li>
+        <li>Build a Databricks App (Streamlit): text input for the query, display the response, show cited sources, show the MLflow trace link.</li>
+        <li>Add query logging: every query + response + latency + token count saved to a Delta table.</li>
+        <li>Build a simple SQL dashboard: latency P50/P95, cost per query over time, error rate, tool call distribution.</li>
+        <li>Add basic rate limiting and error handling on the endpoint.</li>
+        <li>Run 10 queries through the full deployed flow (UI &rarr; endpoint &rarr; response). Verify everything works end-to-end.</li>
+        <li>Commit and push.</li>
+      </ol>
+      <p><strong>Done when:</strong> Anyone with the URL can type a question and get back a cited financial answer. Dashboard shows system health. Logs capture everything.</p>
+    </div>
+  </div>
+
+  <div class="week-card w10">
+    <div class="week-card-header">
+      <span>Week 10 &mdash; README + Demo Video + Interview Prep</span>
+      <span class="week-tag">SHIP IT</span>
+    </div>
+    <div class="week-card-body">
+      <ol>
+        <li>Write the README: project description, architecture diagram, setup instructions, link to demo video, evaluation results summary.</li>
+        <li>Record a 5-minute screen recording: show a query going in, the response coming back with citations, the MLflow trace, the monitoring dashboard.</li>
+        <li>Write <code>docs/technical_decisions.md</code>: why 30 companies, why single agent, why this chunk size, why these 12 metrics.</li>
+        <li>Write <code>docs/evaluation_report.md</code>: V0 &rarr; V3 metrics, failure analysis, what I changed at each step.</li>
+        <li>Clean up code: add docstrings to public functions, add type hints, remove dead code and commented-out experiments.</li>
+        <li>Run final eval suite one last time. Record final numbers.</li>
+        <li>Fill in the resume bullet templates from Section 13 with my actual measured numbers.</li>
+        <li>Write 2 LinkedIn posts: one launch announcement, one deep-dive on my evaluation journey.</li>
+        <li>Practice the 30-second elevator pitch and the 3-minute architecture walkthrough out loud.</li>
+        <li>Push everything. Pin the repo on my GitHub profile.</li>
+      </ol>
+      <p><strong>Done when:</strong> A stranger can visit my repo, read the README, watch the video, look at eval results, and understand exactly what I built and how well it works.</p>
+    </div>
+  </div>
+</div>
+
+<hr>
+
+<!-- ============================================ -->
+<!-- SECTION 10: REPOSITORY STRUCTURE -->
+<!-- ============================================ -->
+<div class="section" id="s10">
+  <h2><span class="section-number">10</span> Repository Structure</h2>
+
+  <div class="tree">
+    <span class="dir">finsage/</span><br>
+    ├── README.md<br>
+    ├── LICENSE<br>
+    ├── requirements.txt<br>
+    ├── pyproject.toml<br>
+    ├── Makefile<br>
+    ├── <span class="dir">.github/workflows/</span><br>
+    │&nbsp;&nbsp; └── ci.yml <span class="comment">&mdash; lint + unit tests on PR</span><br>
+    ├── <span class="dir">databricks/</span><br>
+    │&nbsp;&nbsp; ├── <span class="dir">workflows/</span> <span class="comment">&mdash; job definitions (YAML)</span><br>
+    │&nbsp;&nbsp; └── <span class="dir">notebooks/</span><br>
+    │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ├── 01_setup_catalog.py <span class="comment">&mdash; Unity Catalog setup</span><br>
+    │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ├── 02_exploration.py <span class="comment">&mdash; data exploration</span><br>
+    │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ├── 03_chunking_experiment.py <span class="comment">&mdash; DOCUMENTED experiment</span><br>
+    │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ├── 04_search_experiment.py <span class="comment">&mdash; DOCUMENTED experiment</span><br>
+    │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; └── 05_evaluation_analysis.py <span class="comment">&mdash; eval result analysis</span><br>
+    ├── <span class="dir">src/</span><br>
+    │&nbsp;&nbsp; ├── <span class="dir">ingestion/</span><br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── edgar_downloader.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── transcript_downloader.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── auto_loader.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; └── schemas.py<br>
+    │&nbsp;&nbsp; ├── <span class="dir">processing/</span><br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── document_parser.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── table_extractor.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── line_item_normalizer.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── xbrl_validator.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── chunker.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; └── dlt_pipeline.py<br>
+    │&nbsp;&nbsp; ├── <span class="dir">retrieval/</span><br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── embedding_generator.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── vector_search_setup.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; └── retriever.py<br>
+    │&nbsp;&nbsp; ├── <span class="dir">agent/</span><br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── orchestrator.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── <span class="dir">tools/</span><br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; │&nbsp;&nbsp; ├── sql_query_tool.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; │&nbsp;&nbsp; ├── vector_search_tool.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; │&nbsp;&nbsp; ├── ratio_calculator.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; │&nbsp;&nbsp; └── filing_comparison_tool.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; └── <span class="dir">prompts/</span><br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; └── orchestrator_system.txt<br>
+    │&nbsp;&nbsp; ├── <span class="dir">evaluation/</span><br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── ground_truth.json <span class="comment">&mdash; 100 questions + answers</span><br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── evaluator.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── numerical_precision.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; └── iteration_log.md <span class="comment">&mdash; V0 &rarr; V3 documented</span><br>
+    │&nbsp;&nbsp; ├── <span class="dir">serving/</span><br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; └── deploy.py<br>
+    │&nbsp;&nbsp; ├── <span class="dir">monitoring/</span><br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── cost_tracker.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── latency_tracker.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; └── dashboard.py<br>
+    │&nbsp;&nbsp; └── <span class="dir">app/</span><br>
+    │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; └── app.py <span class="comment">&mdash; Databricks App (simple, functional)</span><br>
+    ├── <span class="dir">tests/</span><br>
+    │&nbsp;&nbsp; ├── <span class="dir">unit/</span><br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── test_normalizer.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── test_chunker.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── test_xbrl_validator.py<br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; └── test_ratio_calculator.py<br>
+    │&nbsp;&nbsp; └── conftest.py<br>
+    ├── <span class="dir">docs/</span><br>
+    │&nbsp;&nbsp; ├── architecture.md<br>
+    │&nbsp;&nbsp; ├── technical_decisions.md<br>
+    │&nbsp;&nbsp; ├── evaluation_report.md<br>
+    │&nbsp;&nbsp; └── <span class="dir">progress/</span> <span class="comment">&mdash; weekly progress logs</span><br>
+    └── <span class="dir">assets/</span><br>
+    &nbsp;&nbsp;&nbsp; ├── architecture_diagram.png<br>
+    &nbsp;&nbsp;&nbsp; └── screenshots/
+  </div>
+
+  <p style="margin-top: 12px;"><strong>~50-60 files.</strong> Every file has a purpose. No empty placeholder files.</p>
+</div>
+
+<hr>
+
+<!-- ============================================ -->
+<!-- SECTION 11: OBSERVABILITY -->
+<!-- ============================================ -->
+<div class="section" id="s11">
+  <h2><span class="section-number">11</span> Observability &amp; Cost Discipline</h2>
+
+  <h3>What I Must Track</h3>
+  <table>
+    <thead>
+      <tr><th>Metric</th><th>How</th><th>Interview Line</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Token usage per query</td>
+        <td>MLflow Tracing &mdash; log input/output token counts per tool call</td>
+        <td>"I discovered [X]% of tokens went to [tool]. I reduced by [Y]% via [method]."</td>
+      </tr>
+      <tr>
+        <td>Latency (P50 / P95)</td>
+        <td>Timestamp diff from query received to response sent</td>
+        <td>"P50 was [X]s. I reduced to [Y]s by [method]."</td>
+      </tr>
+      <tr>
+        <td>Error rate</td>
+        <td>Count of failed queries / total queries</td>
+        <td>"Error rate was [X]%. Root cause was [Y]. Fix reduced to [Z]%."</td>
+      </tr>
+      <tr>
+        <td>Tool call distribution</td>
+        <td>Count which tools get called and how often</td>
+        <td>"SQL tool used in [X]% of queries, vector search in [Y]%."</td>
+      </tr>
+      <tr>
+        <td>Cost per query</td>
+        <td>Tokens &times; rate per model</td>
+        <td>"Average cost: $[X] per query. Reduced from $[Y] via caching."</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-teal" style="background: #e0f2f1; border-color: var(--teal);">
+    <strong style="color: var(--teal);">The Dashboard Statement</strong>
+    <p>If I can say in an interview: "I built a monitoring dashboard that shows latency, cost, and error rates. I noticed [specific insight] which led me to [specific optimization]" &mdash; I sound like an engineer who runs production systems, not someone who built a demo.</p>
+  </div>
+</div>
+
+<hr>
+
+<!-- ============================================ -->
+<!-- SECTION 12: COST ESTIMATES -->
+<!-- ============================================ -->
+<div class="section" id="s12">
+  <h2><span class="section-number">12</span> Cost Estimates</h2>
+
+  <table>
+    <thead><tr><th>Resource</th><th>How I Access It</th><th>Cost</th></tr></thead>
+    <tbody>
+      <tr><td>Databricks Workspace</td><td>Arsaga Partners is a Databricks partner &mdash; I have a partner workspace with full features (Unity Catalog, DLT, Vector Search, Model Serving, Agent Framework, Foundation Models)</td><td style="color: var(--green); font-weight: 700;">$0</td></tr>
+      <tr><td>Cloud (AWS/Azure)</td><td>Underlying infra is provisioned through the partner workspace &mdash; no separate cloud account needed</td><td style="color: var(--green); font-weight: 700;">$0</td></tr>
+      <tr><td>SEC EDGAR API</td><td>Completely free, no API key needed (10 req/sec limit)</td><td style="color: var(--green); font-weight: 700;">$0</td></tr>
+      <tr><td>Embeddings</td><td><code>databricks-gte-large-en</code> via Foundation Model API &mdash; included in workspace</td><td style="color: var(--green); font-weight: 700;">$0</td></tr>
+      <tr><td>Agent Inference</td><td>Databricks Foundation Models &mdash; included in workspace</td><td style="color: var(--green); font-weight: 700;">$0</td></tr>
+      <tr><td>Groq API</td><td>Free tier &mdash; Llama models with generous rate limits, used for dev iteration and LLM-as-judge</td><td style="color: var(--green); font-weight: 700;">$0</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-green">
+    <strong>Total Project Cost: $0</strong>
+    <p>Partner workspace gives me the full Databricks platform. Groq free tier handles dev iteration and evaluation judging. EDGAR is free. No money out of pocket.</p>
+  </div>
+
+  <div class="callout callout-gold">
+    <strong>One Thing to Check</strong>
+    <p>Verify with my company whether personal/portfolio projects on the partner workspace are allowed. Most Databricks partners encourage it (it showcases the platform), but confirm upfront so there are no surprises.</p>
+  </div>
+</div>
+
+<hr>
+
+<!-- ============================================ -->
+<!-- SECTION 13: RESUME & INTERVIEW -->
+<!-- ============================================ -->
+<div class="section" id="s13">
+  <h2><span class="section-number">13</span> Resume &amp; Interview Prep (Earn My Bullets)</h2>
+
+  <div class="callout callout-red">
+    <strong>Do Not Write Resume Bullets Before Building</strong>
+    <p>The original blueprint pre-wrote "0.92 faithfulness" and "43% cost reduction" as if guaranteed. That is dishonest if I haven't measured it. Below are <strong>templates</strong> with placeholders. I fill them in with my actual measured numbers after I build.</p>
+  </div>
+
+  <h3>Resume Bullet Templates</h3>
+
+  <div class="callout callout-blue">
+    <strong>Bullet 1 &mdash; Data Engineering</strong>
+    Built a financial intelligence platform on Databricks, ingesting [X] SEC filings for 30 companies into a Delta Lakehouse (Bronze/Silver/Gold) using Auto Loader and Delta Live Tables, with [Y]% numerical extraction accuracy validated against XBRL data.
+  </div>
+
+  <div class="callout callout-blue">
+    <strong>Bullet 2 &mdash; Evaluation &amp; Improvement</strong>
+    Implemented a 100-question evaluation suite using Mosaic AI Agent Evaluation, improving faithfulness from [V0] to [V3] and numerical precision from [V0] to [V3] through [N] documented iterations of prompt engineering, chunking optimization, and retrieval tuning.
+  </div>
+
+  <div class="callout callout-blue">
+    <strong>Bullet 3 &mdash; Cost &amp; Performance</strong>
+    Reduced per-query token cost by [X]% ($[V0] &rarr; $[V3]) through [specific methods I used], achieving P95 latency of [Y] seconds on the deployed Mosaic AI Model Serving endpoint.
+  </div>
+
+  <h3>Interview Talking Points</h3>
+  <table>
+    <thead>
+      <tr><th style="width: 35%;">Question</th><th>My Answer Framework</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>"Walk me through the architecture."</strong></td>
+        <td>Start from EDGAR ingestion, go through medallion architecture, retrieval layer, agent with tools, serving. 3-minute walkthrough. Practice until fluid.</td>
+      </tr>
+      <tr>
+        <td><strong>"Why only 30 companies?"</strong></td>
+        <td>"I chose depth over breadth. 30 companies gave me enough scale to require Spark, but small enough to manually validate extraction accuracy and build a rigorous evaluation suite. Scaling to 300 is a configuration change &mdash; the architecture doesn't change."</td>
+      </tr>
+      <tr>
+        <td><strong>"Why one agent instead of four?"</strong></td>
+        <td>"I started with a single orchestrator because I wanted to nail tool selection accuracy first. My eval showed [X]% accuracy with one agent. If I split, I'd need inter-agent communication, which adds latency and debugging complexity without improving quality for my 100-question test set. [If I did split]: I eventually split because [specific measured reason]."</td>
+      </tr>
+      <tr>
+        <td><strong>"How did you ensure data quality?"</strong></td>
+        <td>"Three layers: DLT expectations catch schema violations, XBRL cross-validation catches extraction errors, and my 100-question eval suite catches end-to-end failures. I can show you the accuracy progression across [N] versions."</td>
+      </tr>
+      <tr>
+        <td><strong>"How did you choose your chunking strategy?"</strong></td>
+        <td>"I ran experiments. Tested 6 configurations &mdash; 256/512/1024 tokens with and without overlap. Measured retrieval recall on 20 test queries. [Config X] won with [Y]% recall. The experiment notebook is in my repo."</td>
+      </tr>
+      <tr>
+        <td><strong>"What was the hardest problem?"</strong></td>
+        <td>"Line-item normalization. Apple calls it 'Net sales', Microsoft calls it 'Revenue', Google calls it 'Revenues'. I built a normalization mapping and fuzzy matching system. For 30 companies it was manageable with manual verification &mdash; at 300 companies I'd need to build ML-based entity resolution."</td>
+      </tr>
+      <tr>
+        <td><strong>"What would you do differently?"</strong></td>
+        <td>"Build the evaluation suite even earlier. I started in Week 7 &mdash; in hindsight, having even 20 test questions by Week 5 would have guided my chunking and prompt decisions earlier."</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>The 30-Second Elevator Pitch</h3>
+  <div class="callout callout-dark">
+    <strong>Practice This Until It's Muscle Memory</strong>
+    <p>"I hold both Databricks Data Engineer and Gen AI certifications. To prove those aren't just paper, I built FinSage &mdash; a financial research system on Databricks that ingests SEC filings into a Delta Lakehouse, extracts financial metrics with XBRL-validated accuracy, and deploys an AI agent that answers complex financial questions with cited sources. The key differentiator: I built a 100-question evaluation suite and documented [N] iterations improving faithfulness from [V0] to [V3]. Every metric is measured, not claimed."</p>
+  </div>
+</div>
+
+<hr>
+
+<!-- ============================================ -->
+<!-- SECTION 14: RISKS -->
+<!-- ============================================ -->
+<div class="section" id="s14">
+  <h2><span class="section-number">14</span> Risks &amp; Mitigation</h2>
+
+  <table>
+    <thead>
+      <tr><th>Risk</th><th>Prob.</th><th>Impact</th><th>Mitigation</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Company policy restricts personal projects on partner workspace</td>
+        <td><span class="label label-gold">Med</span></td>
+        <td><span class="label label-red">High</span></td>
+        <td>I ask my manager before starting. Frame it as "building a Databricks showcase project that demonstrates the platform." If not allowed, apply for a personal Databricks trial with extended access citing my 2 certs.</td>
+      </tr>
+      <tr>
+        <td>Document parsing accuracy on qualitative sections and supplemental tables</td>
+        <td><span class="label label-gold">Med</span></td>
+        <td><span class="label label-gold">Med</span></td>
+        <td>XBRL cross-validation is my safety net. Document accuracy honestly. 92% is more credible than claiming 100%.</td>
+      </tr>
+      <tr>
+        <td>Scope creep ("let me just add one more feature...")</td>
+        <td><span class="label label-red">High</span></td>
+        <td><span class="label label-red">High</span></td>
+        <td>Core scope is: ingestion + medallion + 1 agent + evaluation. Everything else is stretch. Re-read this blueprint every Sunday.</td>
+      </tr>
+      <tr>
+        <td>Evaluation ground truth takes too long to create</td>
+        <td><span class="label label-gold">Med</span></td>
+        <td><span class="label label-gold">Med</span></td>
+        <td>Start with 30 questions in Week 6, expand to 100 by Week 7. Focus on numerical questions first (easiest to verify).</td>
+      </tr>
+      <tr>
+        <td>Getting stuck on financial domain concepts</td>
+        <td><span class="label label-green">Low</span></td>
+        <td><span class="label label-green">Low</span></td>
+        <td>I'm focused on engineering, not doing financial analysis. Use Investopedia for ratio definitions. The LLM handles reasoning &mdash; I handle infrastructure.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<hr>
+
+<!-- ============================================ -->
+<!-- SECTION 15: SCALING PHASE -->
+<!-- ============================================ -->
+<div class="section" id="s15">
+  <h2><span class="section-number">15</span> Scaling Phase &mdash; Only After Core Is Perfect</h2>
+
+  <div class="callout callout-gold">
+    <strong>Do Not Read This Section Until Week 10 Is Complete</strong>
+    <p>Seriously. The temptation to scale early is how projects fail. Build 30 companies perfectly first.</p>
+  </div>
+
+  <h3>When My V1 Is Strong, Then Scale To:</h3>
+  <ul>
+    <li>100 companies (add more sectors: energy, real estate, industrials)</li>
+    <li>More filing types (proxy statements, S-1 for IPOs)</li>
+    <li>More metrics (expand from 12 to 25)</li>
+    <li>Multi-agent split (if eval data justifies it)</li>
+  </ul>
+
+  <h3>What I Measure When Scaling</h3>
+  <table>
+    <thead>
+      <tr><th>Question</th><th>If Yes: Good</th><th>If No: Fix Before Scaling More</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Does precision hold at 100 companies?</td>
+        <td>My normalization generalizes</td>
+        <td>Normalization mapping needs expansion</td>
+      </tr>
+      <tr>
+        <td>Does latency stay under target?</td>
+        <td>My indexing and caching work</td>
+        <td>Need better partitioning or caching</td>
+      </tr>
+      <tr>
+        <td>Does cost scale linearly?</td>
+        <td>Architecture is efficient</td>
+        <td>Something is recomputing unnecessarily</td>
+      </tr>
+      <tr>
+        <td>Does eval pass rate hold?</td>
+        <td>System is robust</td>
+        <td>New companies introduce edge cases</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p><strong>Now I'm thinking like a systems engineer.</strong> "I scaled from 30 to 100 companies and precision dropped from [X]% to [Y]%. Root cause was [Z]. I fixed it by [method] and precision recovered to [W]%." That is a senior engineer's answer.</p>
+</div>
+
+<hr>
+
+<!-- ============================================ -->
+<!-- SECTION 16: DAILY DISCIPLINE -->
+<!-- ============================================ -->
+<div class="section" id="s16">
+  <h2><span class="section-number">16</span> Daily Discipline Protocol</h2>
+
+  <div class="callout callout-blue">
+    <strong>Every Working Day</strong>
+    <ul class="checklist">
+      <li>1 commit minimum (keep GitHub contribution graph green)</li>
+      <li>Update progress log (what worked, what didn't, what's next)</li>
+      <li>Time-box: 2-3 focused hours on weekdays, 4-6 hours on weekends</li>
+      <li>If stuck for &gt;45 minutes, write down the problem and move to something else</li>
+    </ul>
+  </div>
+
+  <div class="callout callout-purple">
+    <strong>Every Sunday</strong>
+    <ul class="checklist">
+      <li>Write weekly summary in <code>docs/progress/week_N.md</code></li>
+      <li>Re-read this blueprint &mdash; am I on track? Am I scope-creeping?</li>
+      <li>Record 1-minute screen recording of current state</li>
+      <li>Review cost tracking &mdash; am I within budget?</li>
+    </ul>
+  </div>
+
+  <div class="callout callout-green">
+    <strong>Every 2 Weeks</strong>
+    <ul class="checklist">
+      <li>Share a small LinkedIn update (build audience gradually)</li>
+      <li>Re-evaluate timeline &mdash; do I need to cut scope or can I add stretch goals?</li>
+    </ul>
+  </div>
+</div>
+
+<hr>
+
+<!-- ============================================ -->
+<!-- SECTION 17: FIRST 48 HOURS -->
+<!-- ============================================ -->
+<div class="section" id="s17">
+  <h2><span class="section-number">17</span> First 48 Hours</h2>
+
+  <p>I do these in order. I stop when I'm done. This is just Week 1 steps 1-8 in a condensed form for my first weekend.</p>
+
+  <ol>
+    <li><code>git init finsage</code> &rarr; push to GitHub with the folder structure from Section 10.</li>
+    <li>Open Databricks partner workspace. Confirm access to Unity Catalog, DLT, Vector Search, Model Serving.</li>
+    <li>Run <code>CREATE CATALOG finsage; CREATE SCHEMA finsage.bronze;</code> etc.</li>
+    <li>Go to <code>sec.gov/cgi-bin/browse-edgar</code>. Find Apple's CIK number and inspect one filing submission plus its CompanyFacts endpoint manually.</li>
+    <li>Write <code>edgar_downloader.py</code>. Download 10 AAPL filings programmatically.</li>
+    <li>Upload those 10 raw filing documents to my Databricks Volume.</li>
+    <li>Open a notebook. Read one filing payload, confirm the path structure, and write the raw bytes + metadata to a Delta table.</li>
+    <li>Add Gen AI Associate certification to my resume.</li>
+    <li>Commit. Push.</li>
+  </ol>
+
+  <p style="font-weight: 700; margin-top: 16px;">After 48 hours I should have: a repo, a Databricks workspace, a few downloaded filings, and my first Delta table row. That's the foundation. Week 1 continues from there.</p>
+</div>
+
+<hr>
+
+<!-- FOOTER -->
+<div style="text-align: center; padding: 30px 0; color: var(--text-secondary); font-size: 13px;">
+  <p><strong>FinSage Project Blueprint v2.0 &mdash; Depth Over Breadth</strong></p>
+  <p>Author: Digvijay Singh &nbsp;|&nbsp; Revised: March 4, 2026 &nbsp;|&nbsp; Platform: Databricks</p>
+  <p>Certifications: Data Engineer Associate &nbsp;|&nbsp; Generative AI Engineer Associate</p>
+  <p style="margin-top: 10px; font-style: italic;">30 companies built with rigor beats 200 companies built with haste. Every number I cite in an interview must come from a measurement I actually ran.</p>
+</div>
+
+</div>
+</body>
+</html>

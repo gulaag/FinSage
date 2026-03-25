@@ -35,8 +35,177 @@
         <li><strong>Lightweight Python Delegation:</strong> I only passed the resulting flat, clean, 1MB string to the Python UDF. Python simply ran a lightweight regex to find the "Item 1A" and "Item 7" headers and slice the text.</li>
     </ul>
 
+    <h3>Why This Challenge Matters Beyond Parsing</h3>
+    <p>This original failure also taught two of the later architectural lessons explicitly:</p>
+    <ul>
+        <li><strong>Python-first full filing parsing fails at production scale.</strong> The cluster could not survive shipping massive raw payloads across the Py4J boundary.</li>
+        <li><strong>Regex-heavy cleanup over giant filings is not production-safe.</strong> The backtracking behavior made the approach both fragile and computationally expensive.</li>
+    </ul>
+
     <h3>Takeaway</h3>
     <p><strong>Never force a Python UDF to do heavy string manipulation on massive payloads.</strong> Use Spark SQL's native functions to shrink and clean the data in the JVM first, and reserve Python strictly for complex, lightweight text analysis.</p>
 
+    <hr>
+
+    <h2>Challenge 2: Redundant Re-Execution Due to Spark Lazy Evaluation (Week 4)</h2>
+    <p>
+        <strong>Status:</strong> <span style="color: green;">Resolved</span><br>
+        <strong>Phase:</strong> Silver-layer branching (Error auditing + Successful section merge)
+    </p>
+
+    <h3>The Problem</h3>
+    <p>After stabilizing the parsing pipeline, I observed that overall execution time was unexpectedly high despite handling only ~730 filings. The pipeline would slow down significantly during the error logging (<code>count()</code>) and again during the final merge step.</p>
+
+    <h3>The Root Cause</h3>
+    <p>This was caused by Spark's <strong>lazy evaluation model</strong>. The transformed dataframe (<code>df_processed</code>) was being reused in two separate downstream actions:</p>
+    <ul>
+        <li>Counting and logging failed records (<code>df_errors.count()</code>)</li>
+        <li>Filtering and merging successful records into the Silver table</li>
+    </ul>
+
+    <p>Since no intermediate persistence was defined, Spark recomputed the entire transformation pipeline twice. This included:</p>
+    <ul>
+        <li>Reading all Bronze files again</li>
+        <li>Re-running all string cleaning transformations</li>
+        <li>Re-executing the Python UDF for section extraction (most expensive step)</li>
+    </ul>
+
+    <p>This effectively doubled compute time and cluster resource usage.</p>
+
+    <h3>The Solution: Strategic DataFrame Caching</h3>
+    <p>I introduced an explicit <code>.cache()</code> immediately after constructing the transformed dataframe:</p>
+
+    <pre><code>df_processed.cache()</code></pre>
+
+    <p>This forced Spark to:</p>
+    <ul>
+        <li>Execute the full pipeline only once</li>
+        <li>Store the resulting dataframe in memory</li>
+        <li>Reuse the cached result for both error logging and merge operations</li>
+    </ul>
+
+    <p>Additionally, I explicitly released memory after usage:</p>
+
+    <pre><code>df_processed.unpersist()</code></pre>
+
+    <h3>Takeaway</h3>
+    <p><strong>In Spark, multiple actions on the same dataframe can silently trigger full recomputation.</strong> Explicit caching is critical when expensive transformations (like Python UDFs) are reused across multiple downstream operations.</p>
+
+    <hr>
+
+    <h2>Challenge 3: PDF-First Metric Extraction Was the Wrong Primary Path</h2>
+    <p>
+        <strong>Status:</strong> <span style="color: green;">Resolved</span><br>
+        <strong>Phase:</strong> Metric extraction architecture
+    </p>
+
+    <h3>The Failed Approach</h3>
+    <p>I initially treated filing documents as the primary source for financial metrics, with the idea that document parsing would pull revenue, net income, debt, and the other target metrics directly from the filings themselves.</p>
+
+    <h3>The Root Cause</h3>
+    <ul>
+        <li>Document parsing is useful for narrative sections and exploratory table work, but it is not the most deterministic production source for company-level financial metrics.</li>
+        <li>Labels vary by company and statement layout, so equivalent concepts appear under different names and formats.</li>
+        <li>The blueprint requires auditable, recomputable metrics with minimal ambiguity, which is better served by the SEC's machine-readable CompanyFacts/XBRL data.</li>
+    </ul>
+
+    <h3>The Solution</h3>
+    <p>I changed the role of the filing documents. They remain important for <code>Business</code>, <code>Risk Factors</code>, and <code>MD&amp;A</code>, but the 12 numerical metrics now come from Bronze-stored SEC CompanyFacts JSON that is normalized in Silver and aggregated in Gold.</p>
+
+    <h3>Takeaway</h3>
+    <p><strong>Use filing documents for narrative intelligence; use XBRL-backed SEC data for hard financial numbers.</strong></p>
+
+    <hr>
+
+    <h2>Challenge 4: Pulling the SEC API Directly into Gold Broke the Medallion Contract</h2>
+    <p>
+        <strong>Status:</strong> <span style="color: green;">Resolved</span><br>
+        <strong>Phase:</strong> Bronze/Silver/Gold architecture
+    </p>
+
+    <h3>The Failed Approach</h3>
+    <p>Because the SEC CompanyFacts API already returns clean structured JSON, it was tempting to call the API and write those numbers straight into Gold.</p>
+
+    <h3>The Root Cause</h3>
+    <ul>
+        <li>Gold became dependent on a live external system that can rate limit, go down, or change over time.</li>
+        <li>There was no immutable record of what the SEC actually returned at a given timestamp.</li>
+        <li>If I later expanded from 12 metrics to 13 or more, I would have to call the SEC again for the entire company universe instead of recomputing from owned data.</li>
+    </ul>
+
+    <h3>The Solution</h3>
+    <p>I moved the API payload into <code>main.finsage_bronze.xbrl_companyfacts_raw</code> as an append-only raw snapshot table. Silver now flattens and normalizes those raw snapshots, and Gold computes metrics only from Silver.</p>
+
+    <h3>Takeaway</h3>
+    <p><strong>Bronze is not busywork; it is the reliability, auditability, and recomputation layer that protects Gold from the live internet.</strong></p>
+
+    <hr>
+
+    <h2>Challenge 5: SEC API Pulls Failed on "Small" Protocol Details</h2>
+    <p>
+        <strong>Status:</strong> <span style="color: green;">Resolved</span><br>
+        <strong>Phase:</strong> Bronze CompanyFacts ingestion
+    </p>
+
+    <h3>The Problem</h3>
+    <p>CompanyFacts extraction looked correct in logic, but requests still failed intermittently for specific tickers.</p>
+
+    <h3>The Root Cause</h3>
+    <ul>
+        <li>The SEC endpoint is strict about request identity. A properly formatted <code>User-Agent</code> is required for stable access.</li>
+        <li>CompanyFacts URLs require CIK values padded to exactly 10 digits. Unpadded CIKs produce avoidable request failures.</li>
+    </ul>
+
+    <h3>The Solution</h3>
+    <p>I standardized request construction in Bronze ingestion: explicit <code>User-Agent</code> header, deterministic <code>zfill(10)</code> for CIKs, and failure logging to <code>main.finsage_bronze.ingestion_errors</code> for retry visibility.</p>
+
+    <h3>Takeaway</h3>
+    <p><strong>API reliability depends on protocol correctness as much as network stability. Header and identifier formatting are part of the data contract.</strong></p>
+
+    <hr>
+
+    <h2>Challenge 6: Section Extraction False Positives from TOC and Flattened HTML</h2>
+    <p>
+        <strong>Status:</strong> <span style="color: green;">Resolved</span><br>
+        <strong>Phase:</strong> Silver narrative extraction (<code>filing_sections</code>)
+    </p>
+
+    <h3>The Problem</h3>
+    <p>Some filings produced missing or low-quality <code>Business</code>, <code>Risk Factors</code>, or <code>MD&amp;A</code> sections even when those sections existed in the source documents.</p>
+
+    <h3>The Root Cause</h3>
+    <ul>
+        <li>Flattening all HTML into one whitespace-heavy blob increased false matches against table-of-contents lines.</li>
+        <li>Simple first-match regex selection was too fragile for issuer-specific heading variations.</li>
+    </ul>
+
+    <h3>The Solution</h3>
+    <p>I switched to a hardened extractor: preserve line breaks during Spark cleanup, anchor <code>Item</code> matches at line starts, score multiple start/end candidates, reject short blocks with section-specific minimum word thresholds, and log partial failures to <code>ingestion_errors</code> instead of crashing.</p>
+
+    <h3>Takeaway</h3>
+    <p><strong>For SEC section parsing, structure-aware extraction beats naive regex slicing. Boundary quality is an engineering problem, not just a parsing problem.</strong></p>
+
+    <hr>
+
+    <h2>Challenge 7: Fiscal-Year Drift and Duplicate Facts Corrupting Gold Metrics</h2>
+    <p>
+        <strong>Status:</strong> <span style="color: green;">Resolved</span><br>
+        <strong>Phase:</strong> Gold metric construction from Silver facts
+    </p>
+
+    <h3>The Problem</h3>
+    <p>Early Gold outputs mixed incompatible facts: multiple accessions for the same ticker-year, non-USD entries, and period mismatches that could leak into annual metrics.</p>
+
+    <h3>The Root Cause</h3>
+    <ul>
+        <li>CompanyFacts can emit multiple valid-looking records for the same concept and fiscal year across amendments and filing revisions.</li>
+        <li>Without canonical selection rules, Gold may combine facts from different accessions and time windows.</li>
+    </ul>
+
+    <h3>The Solution</h3>
+    <p>I added deterministic ranking: strict annual/instant fit scoring, USD filtering, required-metric coverage scoring per accession, canonical accession selection per ticker-year, then best-fact selection per metric by concept priority and recency.</p>
+
+    <h3>Takeaway</h3>
+    <p><strong>Gold must be opinionated about fact selection. Deterministic ranking logic is required to make financial outputs stable and interview-defensible.</strong></p>
 </body>
 </html>

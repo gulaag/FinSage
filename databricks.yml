@@ -1,0 +1,112 @@
+bundle:
+  name: finsage_pipeline
+
+# ---------------------------------------------------------------------------
+# Variables — override per-target or via CLI: --var key=value
+# ---------------------------------------------------------------------------
+variables:
+  cluster_spark_version:
+    default: "14.3.x-scala2.12"
+  cluster_node_type:
+    default: "i3.xlarge"
+
+# ---------------------------------------------------------------------------
+# Shared job cluster definition reused by both targets
+# ---------------------------------------------------------------------------
+resources:
+  jobs:
+    finsage_daily_run:
+      name: finsage_daily_run
+      description: >
+        FinSage end-to-end Medallion pipeline:
+        schema setup → bronze ingestion → silver decoding → gold metrics → vector chunking.
+
+      # Default job cluster shared by all tasks
+      job_clusters:
+        - job_cluster_key: finsage_cluster
+          new_cluster:
+            spark_version: ${var.cluster_spark_version}
+            node_type_id:  ${var.cluster_node_type}
+            num_workers:   2
+            spark_conf:
+              spark.databricks.delta.preview.enabled: "true"
+            custom_tags:
+              project: finsage
+              managed_by: dab
+
+      # -----------------------------------------------------------------------
+      # Tasks — sequential execution enforced via depends_on
+      # -----------------------------------------------------------------------
+      tasks:
+        - task_key: schema_setup
+          description: "Create Medallion schemas, volumes, and download-log table."
+          job_cluster_key: finsage_cluster
+          notebook_task:
+            notebook_path: ./databricks/notebooks/01_schema_setup.py
+            source: WORKSPACE
+
+        - task_key: bronze_autoloader
+          description: "Auto Loader stream + SEC CompanyFacts API ingestion into Bronze."
+          depends_on:
+            - task_key: schema_setup
+          job_cluster_key: finsage_cluster
+          notebook_task:
+            notebook_path: ./databricks/notebooks/02_bronze_autoloader.py
+            source: WORKSPACE
+
+        - task_key: silver_decoder
+          description: "XBRL JSON flattening + 10-K section extraction into Silver."
+          depends_on:
+            - task_key: bronze_autoloader
+          job_cluster_key: finsage_cluster
+          notebook_task:
+            notebook_path: ./databricks/notebooks/03_silver_decoder.py
+            source: WORKSPACE
+
+        - task_key: gold_metrics
+          description: "Canonical metric aggregation, YoY growth, and data-quality scoring."
+          depends_on:
+            - task_key: silver_decoder
+          job_cluster_key: finsage_cluster
+          notebook_task:
+            notebook_path: ./databricks/notebooks/04_gold_metrics.py
+            source: WORKSPACE
+
+        - task_key: vector_chunker
+          description: "Token-based chunking and Databricks Vector Search index provisioning."
+          depends_on:
+            - task_key: gold_metrics
+          job_cluster_key: finsage_cluster
+          notebook_task:
+            notebook_path: ./databricks/notebooks/05_vector_chunker.py
+            source: WORKSPACE
+
+      # Daily schedule: 06:00 UTC
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"
+        timezone_id: UTC
+        pause_status: UNPAUSED
+
+      email_notifications:
+        on_failure:
+          - digvijay@arsaga.jp
+
+# ---------------------------------------------------------------------------
+# Targets
+# ---------------------------------------------------------------------------
+targets:
+  # Dev — deployed to a personal /Users/<user> folder; runs in development mode
+  # so job names are prefixed and cluster policies are relaxed.
+  dev:
+    default: true
+    mode: development
+    workspace:
+      host: ${workspace.host}
+
+  # Prod — deployed to a shared /Shared/finsage folder; no prefix on job names.
+  prod:
+    mode: production
+    workspace:
+      host: ${workspace.host}
+    variables:
+      cluster_node_type: "i3.2xlarge"   # larger nodes for production workloads
