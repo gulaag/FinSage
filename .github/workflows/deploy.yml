@@ -57,8 +57,10 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     env:
-      DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST }}
-      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      # Enterprise Security: Enforcing OAuth M2M Authentication via Service Principal. Legacy PATs are disabled.
+      DATABRICKS_CLIENT_ID:     ${{ secrets.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
 
     steps:
       - name: Checkout repository
@@ -82,8 +84,10 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     env:
-      DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST }}
-      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      # Enterprise Security: Enforcing OAuth M2M Authentication via Service Principal. Legacy PATs are disabled.
+      DATABRICKS_CLIENT_ID:     ${{ secrets.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
 
     steps:
       - name: Checkout repository
