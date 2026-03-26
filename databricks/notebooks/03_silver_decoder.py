@@ -10,6 +10,22 @@
 
 # COMMAND ----------
 
+# ── Runtime Parameters ────────────────────────────────────────────────────────
+dbutils.widgets.text("catalog",       "main",       "Unity Catalog catalog")
+dbutils.widgets.text("env",           "dev",        "Environment (dev/prod)")
+dbutils.widgets.text("start_date",    "2020-01-01", "Earliest filing date")
+dbutils.widgets.text("ticker_filter", "",           "Comma-separated tickers (empty=all)")
+
+CATALOG       = dbutils.widgets.get("catalog")
+ENV           = dbutils.widgets.get("env")
+START_DATE    = dbutils.widgets.get("start_date")
+TICKER_FILTER = dbutils.widgets.get("ticker_filter")
+TICKER_SUBSET = [t.strip() for t in TICKER_FILTER.split(",") if t.strip()] if TICKER_FILTER else []
+
+print(f"[CONFIG] catalog={CATALOG} | env={ENV} | start_date={START_DATE} | tickers={TICKER_SUBSET or 'ALL'}")
+
+# COMMAND ----------
+
 # MAGIC %sql
 # MAGIC DROP TABLE IF EXISTS main.finsage_silver.filing_sections;
 # MAGIC DROP TABLE IF EXISTS main.finsage_silver.financial_statements;
@@ -32,10 +48,15 @@ from delta.tables import DeltaTable
 import json
 
 # ---------------------------------------------------------------------------
-# Canonical XBRL concept → normalized metric name mapping.
-# This dict is the single source of truth; unit-tested in test_normalizer.py.
+# Import TARGET_CONCEPT_MAP from the shared constants module.
+# When the finsage wheel is installed on the cluster:
+#   from finsage.constants import TARGET_CONCEPT_MAP, STATEMENT_TYPE_MAP
+# For interactive Databricks sessions without the wheel, fall back to inline.
 # ---------------------------------------------------------------------------
-TARGET_CONCEPT_MAP = {
+try:
+    from finsage.constants import TARGET_CONCEPT_MAP, STATEMENT_TYPE_MAP
+except ImportError:
+    TARGET_CONCEPT_MAP = {
     "Revenues":                                                    "revenue",
     "SalesRevenueNet":                                             "revenue",
     "RevenueFromContractWithCustomerExcludingAssessedTax":         "revenue",
@@ -63,12 +84,11 @@ TARGET_CONCEPT_MAP = {
     "DebtInstrumentCarryingAmount":                                "long_term_debt",
     "ResearchAndDevelopmentExpense":                               "rd_expense",
     "ResearchAndDevelopmentExcludingAcquiredInProcessCost":        "rd_expense",
-}
-
-STATEMENT_TYPE_MAP = {k: "financial_metric" for k in TARGET_CONCEPT_MAP.values()}
+    }
+    STATEMENT_TYPE_MAP = {k: "financial_metric" for k in TARGET_CONCEPT_MAP.values()}
 
 bronze_api = (
-    spark.table("main.finsage_bronze.xbrl_companyfacts_raw")
+    spark.table(f"{CATALOG}.finsage_bronze.xbrl_companyfacts_raw")
     .filter(col("api_status") == "success")
 )
 
@@ -205,7 +225,7 @@ if df_json_errors.count() > 0:
 
 df_financials_latest = df_financials_latest.filter(col("raw_line_item") != "ERROR")
 
-silver_table = "main.finsage_silver.financial_statements"
+silver_table = f"{CATALOG}.finsage_silver.financial_statements"
 if spark.catalog.tableExists(silver_table):
     DeltaTable.forName(spark, silver_table).alias("t").merge(
         df_financials_latest.alias("s"), "t.statement_id = s.statement_id"
@@ -315,7 +335,7 @@ split_udf = udf(
 )
 
 df_bronze_clean = (
-    spark.table("main.finsage_bronze.filings")
+    spark.table(f"{CATALOG}.finsage_bronze.filings")
     .filter(col("filing_type") == "10-K")  # quarterly filings have no Item 1/7 sections
     .withColumn("rn", row_number().over(
         Window.partitionBy("filing_id").orderBy(col("ingested_at").desc())
@@ -372,7 +392,7 @@ df_final_sections = (
 )
 
 df_final_sections.write.format("delta").mode("overwrite").option("overwriteSchema", "true") \
-    .saveAsTable("main.finsage_silver.filing_sections")
+    .saveAsTable(f"{CATALOG}.finsage_silver.filing_sections")
 print("Silver filing_sections table overwritten successfully.")
 df_processed.unpersist()
 

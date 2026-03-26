@@ -7,6 +7,22 @@
 
 # COMMAND ----------
 
+# ── Runtime Parameters ────────────────────────────────────────────────────────
+dbutils.widgets.text("catalog",       "main",       "Unity Catalog catalog")
+dbutils.widgets.text("env",           "dev",        "Environment (dev/prod)")
+dbutils.widgets.text("start_date",    "2020-01-01", "Earliest filing date")
+dbutils.widgets.text("ticker_filter", "",           "Comma-separated tickers (empty=all)")
+
+CATALOG       = dbutils.widgets.get("catalog")
+ENV           = dbutils.widgets.get("env")
+START_DATE    = dbutils.widgets.get("start_date")
+TICKER_FILTER = dbutils.widgets.get("ticker_filter")
+TICKER_SUBSET = [t.strip() for t in TICKER_FILTER.split(",") if t.strip()] if TICKER_FILTER else []
+
+print(f"[CONFIG] catalog={CATALOG} | env={ENV} | start_date={START_DATE} | tickers={TICKER_SUBSET or 'ALL'}")
+
+# COMMAND ----------
+
 # MAGIC %pip install langchain
 
 # COMMAND ----------
@@ -30,8 +46,8 @@ from pyspark.sql import types as T
 from delta.tables import DeltaTable
 
 # --- Configuration ---
-SOURCE_TABLE          = "main.finsage_silver.filing_sections"
-TARGET_TABLE          = "main.finsage_gold.filing_section_chunks"
+SOURCE_TABLE          = f"{CATALOG}.finsage_silver.filing_sections"
+TARGET_TABLE          = f"{CATALOG}.finsage_gold.filing_section_chunks"
 EMBEDDING_MODEL       = "text-embedding-3-large"
 CHUNK_TOKENS          = 512
 CHUNK_OVERLAP_TOKENS  = 64
@@ -435,6 +451,41 @@ INDEX_NAME = "main.finsage_gold.filing_chunks_index"
 
 def search_financial_filings(query: str, num_results: int = 3):
     print(f"Searching for: '{query}'")
+    try:
+        index   = vsc.get_index(endpoint_name="finsage_vs_endpoint", index_name=INDEX_NAME)
+        results = index.similarity_search(
+            query_text=query,
+            columns_to_return=["ticker", "fiscal_year", "section_name", "chunk_text"],
+            num_results=num_results,
+        )
+        docs = results.get("result", {}).get("data_array", [])
+        if not docs:
+            return "No results found."
+        return "\n---\n".join(
+            f"[{d[0]} | {d[1]} | {d[2]}]\n{d[3]}" for d in docs
+        )
+    except Exception as e:
+        return f"Search failed: {str(e)}"
+
+print(search_financial_filings("What did Apple say about supply chain or manufacturing risks?"))
+
+# COMMAND ----------
+
+# Commented: describe the index in full JSON for debugging
+# import json
+# idx  = vsc.get_index(endpoint_name="finsage_vs_endpoint", index_name="main.finsage_gold.filing_chunks_index")
+# desc = idx.describe()
+# print(json.dumps(desc, indent=2, default=str))
+
+# COMMAND ----------
+
+from databricks.vector_search.client import VectorSearchClient
+
+vsc        = VectorSearchClient(disable_notice=True)
+INDEX_NAME = "main.finsage_gold.filing_chunks_index"
+
+def search_financial_filings(query: str, num_results: int = 3):
+    print(f"Searching for: '{query}'")
     index   = vsc.get_index(endpoint_name="finsage_vs_endpoint", index_name=INDEX_NAME)
     results = index.similarity_search(
         query_text=query,
@@ -449,11 +500,3 @@ def search_financial_filings(query: str, num_results: int = 3):
     )
 
 print(search_financial_filings("What did Apple say about supply chain or manufacturing risks?"))
-
-# COMMAND ----------
-
-# Commented: describe the index in full JSON for debugging
-# import json
-# idx  = vsc.get_index(endpoint_name="finsage_vs_endpoint", index_name="main.finsage_gold.filing_chunks_index")
-# desc = idx.describe()
-# print(json.dumps(desc, indent=2, default=str))
