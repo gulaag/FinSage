@@ -187,3 +187,14 @@ targets:
       catalog:           "main"
       cluster_node_type: "i3.2xlarge"   # Larger nodes for production workloads.
       notification_email: "digvijay@arsaga.jp"  # Replace with a team distribution list.
+    resources:
+      jobs:
+        finsage_daily_run:
+          # MANUAL INTERVENTION REQUIRED (Ops handoff):
+          # Once the Ops team creates the 'finsage-service-principal' in the Databricks
+          # Admin Console, replace the placeholder below with its numeric Application ID
+          # (e.g. "2801219485612345") and uncomment these lines.
+          # This decouples prod job execution from a human identity, as required for enterprise.
+          #
+          # run_as:
+          #   service_principal_name: "<SP numeric application ID — NOT the display name>"
