@@ -8,14 +8,30 @@
 
 # COMMAND ----------
 
+# ── Runtime Parameters ────────────────────────────────────────────────────────
+dbutils.widgets.text("catalog",       "main",       "Unity Catalog catalog")
+dbutils.widgets.text("env",           "dev",        "Environment (dev/prod)")
+dbutils.widgets.text("start_date",    "2020-01-01", "Earliest filing date")
+dbutils.widgets.text("ticker_filter", "",           "Comma-separated tickers (empty=all)")
+
+CATALOG       = dbutils.widgets.get("catalog")
+ENV           = dbutils.widgets.get("env")
+START_DATE    = dbutils.widgets.get("start_date")
+TICKER_FILTER = dbutils.widgets.get("ticker_filter")
+TICKER_SUBSET = [t.strip() for t in TICKER_FILTER.split(",") if t.strip()] if TICKER_FILTER else []
+
+print(f"[CONFIG] catalog={CATALOG} | env={ENV} | start_date={START_DATE} | tickers={TICKER_SUBSET or 'ALL'}")
+
+# COMMAND ----------
+
 # Set RESET_PIPELINE = True ONLY when you need a full re-ingestion from scratch.
 RESET_PIPELINE = False
 if RESET_PIPELINE:
     print("Nuking tables and checkpoints...")
-    spark.sql("DROP TABLE IF EXISTS main.finsage_bronze.filings")
-    spark.sql("DROP TABLE IF EXISTS main.finsage_bronze.ingestion_errors")
-    spark.sql("DROP TABLE IF EXISTS main.finsage_bronze.xbrl_companyfacts_raw")
-    dbutils.fs.rm("/Volumes/main/finsage_bronze/checkpoints", recurse=True)
+    spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.finsage_bronze.filings")
+    spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.finsage_bronze.ingestion_errors")
+    spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.finsage_bronze.xbrl_companyfacts_raw")
+    dbutils.fs.rm(f"/Volumes/{CATALOG}/finsage_bronze/checkpoints", recurse=True)
     print("Reset complete. Ready for fresh ingestion.")
 
 # COMMAND ----------
@@ -69,11 +85,11 @@ if RESET_PIPELINE:
 
 from pyspark.sql.functions import col, current_timestamp, split, lit, concat, concat_ws
 
-volume_path      = "/Volumes/main/finsage_bronze/raw_filings/sec-edgar-filings/"
-checkpoint_path  = "/Volumes/main/finsage_bronze/checkpoints/bronze_final_v1"
-schema_location  = "/Volumes/main/finsage_bronze/checkpoints/schema_v1"
-bad_records_path = "/Volumes/main/finsage_bronze/checkpoints/bad_records"
-target_table     = "main.finsage_bronze.filings"
+volume_path      = f"/Volumes/{CATALOG}/finsage_bronze/raw_filings/sec-edgar-filings/"
+checkpoint_path  = f"/Volumes/{CATALOG}/finsage_bronze/checkpoints/bronze_final_v1"
+schema_location  = f"/Volumes/{CATALOG}/finsage_bronze/checkpoints/schema_v1"
+bad_records_path = f"/Volumes/{CATALOG}/finsage_bronze/checkpoints/bad_records"
+target_table     = f"{CATALOG}.finsage_bronze.filings"
 
 df_bronze = (
     spark.readStream
@@ -172,7 +188,7 @@ from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 USER_AGENT = "Digvijay Singh (digvijay@arsaga.jp)"
 HEADERS    = {"User-Agent": USER_AGENT}
 
-TICKERS = [
+_ALL_TICKERS = [
     "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA",
     "JPM",  "GS",   "BAC",   "V",    "MA",
     "JNJ",  "PFE",  "UNH",   "ABBV", "MRK",
@@ -180,6 +196,7 @@ TICKERS = [
     "TSLA", "F",    "GM",    "RIVN", "LCID",
     "CRM",  "SNOW", "PLTR",  "NET",  "DDOG",
 ]
+TICKERS = TICKER_SUBSET if TICKER_SUBSET else _ALL_TICKERS
 
 session    = requests.Session()
 api_rows   = []
@@ -298,14 +315,14 @@ if api_rows:
         spark.createDataFrame(api_rows, schema=api_schema)
         .withColumn("fetched_at", current_timestamp())
         .write.format("delta").mode("append")
-        .saveAsTable("main.finsage_bronze.xbrl_companyfacts_raw")
+        .saveAsTable(f"{CATALOG}.finsage_bronze.xbrl_companyfacts_raw")
     )
 if error_rows:
     (
         spark.createDataFrame(error_rows, schema=error_schema)
         .withColumn("failed_at", current_timestamp())
         .write.format("delta").mode("append")
-        .saveAsTable("main.finsage_bronze.ingestion_errors")
+        .saveAsTable(f"{CATALOG}.finsage_bronze.ingestion_errors")
     )
 
 print(f"\nBronze API snapshots appended : {len(api_rows)}")

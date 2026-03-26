@@ -1,54 +1,22 @@
 """
-Unit tests for the TARGET_CONCEPT_MAP normalization logic defined in
-databricks/notebooks/03_silver_decoder.py.
+Unit tests for the TARGET_CONCEPT_MAP normalisation logic.
 
-These tests run entirely in plain Python — no Spark session required —
-making them fast enough to execute on every pull request in CI.
+The canonical map lives in src/finsage/constants.py.  These tests import
+from that single source of truth — no duplication, no drift risk.
+
+Tests run entirely in plain Python (no Spark session) so they execute in
+< 1 second on every pull request in CI.
 """
 
 import pytest
-from typing import Optional
-# ---------------------------------------------------------------------------
-# Inline the canonical map so the test has no Spark / Databricks dependency.
-# This mirrors the dict in 03_silver_decoder.py exactly; if you update that
-# dict you must update this one too (or factor it into a shared constants.py).
-# ---------------------------------------------------------------------------
-TARGET_CONCEPT_MAP = {
-    "Revenues":                                                    "revenue",
-    "SalesRevenueNet":                                             "revenue",
-    "RevenueFromContractWithCustomerExcludingAssessedTax":         "revenue",
-    "RevenuesNetOfInterestExpense":                                "revenue",
-    "TotalRevenuesAndOtherIncome":                                 "revenue",
-    "NetIncomeLoss":                                               "net_income",
-    "ProfitLoss":                                                  "net_income",
-    "NetIncomeLossAvailableToCommonStockholdersBasic":             "net_income",
-    "GrossProfit":                                                 "gross_profit",
-    "OperatingIncomeLoss":                                         "operating_income",
-    "NetCashProvidedByUsedInOperatingActivities":                  "operating_cash_flow",
-    "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations": "operating_cash_flow",
-    "Assets":                                                      "total_assets",
-    "Liabilities":                                                 "total_liabilities",
-    "StockholdersEquity":                                          "equity",
-    "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest": "equity",
-    "LongTermDebtCurrent":                                         "short_term_debt",
-    "ShortTermBorrowings":                                         "short_term_debt",
-    "ShortTermDebt":                                               "short_term_debt",
-    "CommercialPaper":                                             "short_term_debt",
-    "LongTermDebt":                                                "long_term_debt",
-    "LongTermDebtNoncurrent":                                      "long_term_debt",
-    "LongTermDebtAndCapitalLeaseObligations":                      "long_term_debt",
-    "LongTermBorrowings":                                          "long_term_debt",
-    "DebtInstrumentCarryingAmount":                                "long_term_debt",
-    "ResearchAndDevelopmentExpense":                               "rd_expense",
-    "ResearchAndDevelopmentExcludingAcquiredInProcessCost":        "rd_expense",
-}
+from finsage.constants import TARGET_CONCEPT_MAP, VALID_NORMALIZED_METRICS
 
 
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
-def normalize(concept: str) -> Optional[str]:
-    """Return the normalized metric name for a raw XBRL concept, or None."""
+def normalize(concept: str) -> str | None:
+    """Return the normalised metric name for a raw XBRL concept, or None."""
     return TARGET_CONCEPT_MAP.get(concept)
 
 
@@ -158,7 +126,7 @@ class TestUnmappedConcepts:
         assert normalize("") is None
 
     def test_case_sensitive_mismatch_returns_none(self):
-        # The map is case-sensitive; lowercase should not match.
+        # The map is case-sensitive; lowercase should never match.
         assert normalize("salesrevenuenet") is None
 
     def test_partial_match_returns_none(self):
@@ -166,24 +134,28 @@ class TestUnmappedConcepts:
 
 
 # ---------------------------------------------------------------------------
-# Map completeness / structural tests
+# Map completeness / structural tests — use the exported VALID_NORMALIZED_METRICS
 # ---------------------------------------------------------------------------
 class TestMapCompleteness:
-    EXPECTED_NORMALIZED_VALUES = {
-        "revenue", "net_income", "gross_profit", "operating_income",
-        "operating_cash_flow", "total_assets", "total_liabilities",
-        "equity", "short_term_debt", "long_term_debt", "rd_expense",
-    }
-
     def test_all_values_are_known_normalized_metrics(self):
-        for concept, normalized in TARGET_CONCEPT_MAP.items():
-            assert normalized in self.EXPECTED_NORMALIZED_VALUES, (
-                f"Concept '{concept}' maps to unknown value '{normalized}'"
+        for concept, normalised in TARGET_CONCEPT_MAP.items():
+            assert normalised in VALID_NORMALIZED_METRICS, (
+                f"Concept '{concept}' maps to unknown value '{normalised}'"
             )
 
     def test_map_is_not_empty(self):
         assert len(TARGET_CONCEPT_MAP) > 0
 
     def test_no_none_values_in_map(self):
-        for concept, normalized in TARGET_CONCEPT_MAP.items():
-            assert normalized is not None, f"Concept '{concept}' has a None value"
+        for concept, normalised in TARGET_CONCEPT_MAP.items():
+            assert normalised is not None, f"Concept '{concept}' has a None value"
+
+    def test_valid_normalized_metrics_covers_expected_categories(self):
+        expected_categories = {
+            "revenue", "net_income", "gross_profit", "operating_income",
+            "operating_cash_flow", "total_assets", "total_liabilities",
+            "equity", "short_term_debt", "long_term_debt", "rd_expense",
+        }
+        assert expected_categories.issubset(VALID_NORMALIZED_METRICS), (
+            f"Missing categories: {expected_categories - VALID_NORMALIZED_METRICS}"
+        )

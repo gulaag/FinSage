@@ -7,6 +7,23 @@
 
 # COMMAND ----------
 
+# ── Runtime Parameters ────────────────────────────────────────────────────────
+# Injected by the DAB job via base_parameters; defaults enable interactive use.
+dbutils.widgets.text("catalog",       "main",       "Unity Catalog catalog")
+dbutils.widgets.text("env",           "dev",        "Environment (dev/prod)")
+dbutils.widgets.text("start_date",    "2020-01-01", "Earliest filing date")
+dbutils.widgets.text("ticker_filter", "",           "Comma-separated tickers (empty=all)")
+
+CATALOG       = dbutils.widgets.get("catalog")
+ENV           = dbutils.widgets.get("env")
+START_DATE    = dbutils.widgets.get("start_date")
+TICKER_FILTER = dbutils.widgets.get("ticker_filter")
+TICKER_SUBSET = [t.strip() for t in TICKER_FILTER.split(",") if t.strip()] if TICKER_FILTER else []
+
+print(f"[CONFIG] catalog={CATALOG} | env={ENV} | start_date={START_DATE} | tickers={TICKER_SUBSET or 'ALL'}")
+
+# COMMAND ----------
+
 # MAGIC %sql
 # MAGIC -- Create the 3-layer Medallion structure inside 'main'
 # MAGIC CREATE SCHEMA IF NOT EXISTS main.finsage_bronze; -- raw data & ingestion logs
@@ -58,17 +75,18 @@ from pyspark.sql.functions import col, current_timestamp, expr
 from delta.tables import DeltaTable
 
 # --- CONFIGURATION ---
-VOLUME_PATH = "/Volumes/main/finsage_bronze/raw_filings"
-USER_AGENT = "Arsaga Partners digvijay@arsaga.jp"
-LOG_TABLE = "main.finsage_bronze.sec_filings_download_log"
+VOLUME_PATH = f"/Volumes/{CATALOG}/finsage_bronze/raw_filings"
+USER_AGENT  = "Arsaga Partners digvijay@arsaga.jp"
+LOG_TABLE   = f"{CATALOG}.finsage_bronze.sec_filings_download_log"
 MAX_RETRIES = 3
 MAX_CONCURRENT_WORKERS = 3  # Safe limit for SEC's 10 req/sec rate limit
 
-TICKERS = [
+_ALL_TICKERS = [
     "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "JPM", "GS", "BAC", "V", "MA",
     "JNJ", "PFE", "UNH", "ABBV", "MRK", "WMT", "KO", "NKE", "MCD", "SBUX",
     "TSLA", "F", "GM", "RIVN", "LCID", "CRM", "SNOW", "PLTR", "NET", "DDOG"
 ]
+TICKERS    = TICKER_SUBSET if TICKER_SUBSET else _ALL_TICKERS
 FORM_TYPES = ["10-K", "10-Q"]
 
 # --- 1. PRE-FLIGHT IDEMPOTENCY CHECK ---
