@@ -129,12 +129,17 @@ FinSage/
 │   │   ├── 04_gold_metrics.py         # Metric aggregation + KPI derivation
 │   │   └── 05_vector_chunker.py       # Chunking + Vector Search setup
 │   └── workflows/                     # (reserved for future workflow YAMLs)
+├── terraform/
+│   └── main.tf                        # Cluster policy, secret scope, SP lookup
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml                 # CI/CD pipeline
+│       └── deploy.yml                 # CI/CD pipeline (pytest → validate → deploy)
 ├── tests/
 │   └── unit/
 │       └── test_normalizer.py         # pytest: TARGET_CONCEPT_MAP coverage
+├── assets/
+│   └── screenshots/
+│       └── finsage_dag_databricks.png # Live DAG view from Databricks workspace
 ├── src/
 │   ├── ingestion/                     # Legacy downloader scripts
 │   ├── processing/
@@ -211,6 +216,19 @@ databricks bundle run -t prod finsage_daily_run
 # Destroy all deployed resources (dev only — never run in prod without approval)
 databricks bundle destroy
 ```
+
+### Live DAG — Databricks Workspace
+
+The screenshot below shows the `finsage_daily_run` job as it appears in the Databricks
+Jobs & Pipelines UI after a successful `databricks bundle deploy`.  All five tasks are
+connected as a strictly sequential DAG, sharing the `finsage_cluster` job cluster to
+avoid cold-start overhead between tasks.
+
+![FinSage pipeline DAG in Databricks workspace — five sequential tasks: schema_setup → bronze_autoloader → silver_decoder → gold_metrics → vector_chunker, all running on the shared finsage_cluster. The job is connected to Declarative Automation Bundles (DAB) and scheduled daily at 06:00 UTC.](assets/screenshots/finsage_dag_databricks.png)
+
+> The job is marked **[dev Digvijay]** in development mode — DAB automatically prefixes
+> the job name with the deploying user to prevent collisions with the production
+> `finsage_daily_run` job in the same shared workspace.
 
 ---
 
