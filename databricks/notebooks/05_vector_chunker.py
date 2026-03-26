@@ -435,41 +435,6 @@ INDEX_NAME = "main.finsage_gold.filing_chunks_index"
 
 def search_financial_filings(query: str, num_results: int = 3):
     print(f"Searching for: '{query}'")
-    try:
-        index   = vsc.get_index(endpoint_name="finsage_vs_endpoint", index_name=INDEX_NAME)
-        results = index.similarity_search(
-            query_text=query,
-            columns_to_return=["ticker", "fiscal_year", "section_name", "chunk_text"],
-            num_results=num_results,
-        )
-        docs = results.get("result", {}).get("data_array", [])
-        if not docs:
-            return "No results found."
-        return "\n---\n".join(
-            f"[{d[0]} | {d[1]} | {d[2]}]\n{d[3]}" for d in docs
-        )
-    except Exception as e:
-        return f"Search failed: {str(e)}"
-
-print(search_financial_filings("What did Apple say about supply chain or manufacturing risks?"))
-
-# COMMAND ----------
-
-# Commented: describe the index in full JSON for debugging
-# import json
-# idx  = vsc.get_index(endpoint_name="finsage_vs_endpoint", index_name="main.finsage_gold.filing_chunks_index")
-# desc = idx.describe()
-# print(json.dumps(desc, indent=2, default=str))
-
-# COMMAND ----------
-
-from databricks.vector_search.client import VectorSearchClient
-
-vsc        = VectorSearchClient(disable_notice=True)
-INDEX_NAME = "main.finsage_gold.filing_chunks_index"
-
-def search_financial_filings(query: str, num_results: int = 3):
-    print(f"Searching for: '{query}'")
     index   = vsc.get_index(endpoint_name="finsage_vs_endpoint", index_name=INDEX_NAME)
     results = index.similarity_search(
         query_text=query,
@@ -484,3 +449,11 @@ def search_financial_filings(query: str, num_results: int = 3):
     )
 
 print(search_financial_filings("What did Apple say about supply chain or manufacturing risks?"))
+
+# COMMAND ----------
+
+# Commented: describe the index in full JSON for debugging
+# import json
+# idx  = vsc.get_index(endpoint_name="finsage_vs_endpoint", index_name="main.finsage_gold.filing_chunks_index")
+# desc = idx.describe()
+# print(json.dumps(desc, indent=2, default=str))
