@@ -7,7 +7,7 @@ making them fast enough to execute on every pull request in CI.
 """
 
 import pytest
-
+from typing import Optional
 # ---------------------------------------------------------------------------
 # Inline the canonical map so the test has no Spark / Databricks dependency.
 # This mirrors the dict in 03_silver_decoder.py exactly; if you update that
@@ -47,7 +47,7 @@ TARGET_CONCEPT_MAP = {
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
-def normalize(concept: str) -> str | None:
+def normalize(concept: str) -> Optional[str]:
     """Return the normalized metric name for a raw XBRL concept, or None."""
     return TARGET_CONCEPT_MAP.get(concept)
 
