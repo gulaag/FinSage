@@ -101,12 +101,12 @@ targets:
     default: true
     mode: development
     workspace:
-      host: ${workspace.host}
+      host: https://dbc-f33010ed-00fc.cloud.databricks.com/
 
   # Prod — deployed to a shared /Shared/finsage folder; no prefix on job names.
   prod:
     mode: production
     workspace:
-      host: ${workspace.host}
+      host: https://dbc-f33010ed-00fc.cloud.databricks.com/
     variables:
       cluster_node_type: "i3.2xlarge"   # larger nodes for production workloads
