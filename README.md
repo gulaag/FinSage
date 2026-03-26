@@ -252,16 +252,22 @@ push to main
 
 ### Authentication
 
-The CLI authenticates to Databricks using a **Personal Access Token** stored as
-GitHub repository secrets:
+The CLI uses **OAuth Machine-to-Machine (M2M)** authentication via a Service Principal.
+Legacy Personal Access Tokens (PATs) are disabled in this workspace per enterprise policy.
 
 | Secret | Value |
 |---|---|
-| `DATABRICKS_HOST` | `https://<your-workspace>.azuredatabricks.net` |
-| `DATABRICKS_TOKEN` | A Databricks PAT with `CAN_MANAGE_RUNS` and `CAN_USE` permissions |
+| `DATABRICKS_HOST` | `https://<your-workspace>.cloud.databricks.com` |
+| `DATABRICKS_CLIENT_ID` | Application (client) ID of the `finsage-service-principal` |
+| `DATABRICKS_CLIENT_SECRET` | OAuth secret of the `finsage-service-principal` |
 
-Add these under **Settings → Secrets and variables → Actions** in your GitHub
-repository.
+Add these under **Settings → Secrets and variables → Actions** in your GitHub repository.
+
+To provision the Service Principal (requires Databricks admin access):
+1. Create a Service Principal in your identity provider (Entra ID / Okta).
+2. Grant the SP the **Can Manage** role on the Databricks workspace.
+3. Generate an OAuth secret for the SP.
+4. Add the three secrets above to GitHub.
 
 ---
 
@@ -319,9 +325,10 @@ source .venv/bin/activate
 # 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. Configure the Databricks CLI
-databricks configure --token
-# Enter your workspace host and PAT when prompted
+# 4. Configure the Databricks CLI using OAuth U2M (browser-based login for local dev)
+databricks auth login --host https://dbc-f33010ed-00fc.cloud.databricks.com/
+# Your browser will open for a one-time login. No PAT required.
+# In CI, authentication uses DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET (M2M OAuth).
 
 # 5. Deploy to your personal dev environment
 databricks bundle deploy       # deploys to the 'dev' target by default
@@ -398,8 +405,9 @@ databricks runs get-output --run-id <run-id>
 | Name | Where set | Purpose |
 |---|---|---|
 | `DATABRICKS_HOST` | GitHub Secret | Workspace URL for CLI authentication in CI |
-| `DATABRICKS_TOKEN` | GitHub Secret | PAT for CLI authentication in CI |
-| `USER_AGENT` | Notebook variable | Identifies FinSage to the SEC EDGAR API (required by SEC ToS) |
+| `DATABRICKS_CLIENT_ID` | GitHub Secret | Service Principal client ID for M2M OAuth in CI |
+| `DATABRICKS_CLIENT_SECRET` | GitHub Secret | Service Principal OAuth secret for M2M auth in CI |
+| `USER_AGENT` | Notebook widget default | Identifies FinSage to the SEC EDGAR API (required by SEC ToS) |
 
 > **Never commit secrets to Git.**  The `.gitignore` already excludes `.env` files.
 > Use GitHub Secrets for CI and the Databricks secret scope (`databricks secrets`)

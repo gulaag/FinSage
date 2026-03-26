@@ -8,6 +8,22 @@
 
 # COMMAND ----------
 
+# ── Runtime Parameters ────────────────────────────────────────────────────────
+dbutils.widgets.text("catalog",       "main",       "Unity Catalog catalog")
+dbutils.widgets.text("env",           "dev",        "Environment (dev/prod)")
+dbutils.widgets.text("start_date",    "2020-01-01", "Earliest filing date")
+dbutils.widgets.text("ticker_filter", "",           "Comma-separated tickers (empty=all)")
+
+CATALOG       = dbutils.widgets.get("catalog")
+ENV           = dbutils.widgets.get("env")
+START_DATE    = dbutils.widgets.get("start_date")
+TICKER_FILTER = dbutils.widgets.get("ticker_filter")
+TICKER_SUBSET = [t.strip() for t in TICKER_FILTER.split(",") if t.strip()] if TICKER_FILTER else []
+
+print(f"[CONFIG] catalog={CATALOG} | env={ENV} | start_date={START_DATE} | tickers={TICKER_SUBSET or 'ALL'}")
+
+# COMMAND ----------
+
 # %pip install lxml
 
 # COMMAND ----------
@@ -29,8 +45,8 @@ from pyspark.sql.functions import (
 from pyspark.sql.window import Window
 from delta.tables import DeltaTable
 
-silver_table = "main.finsage_silver.financial_statements"
-gold_table   = "main.finsage_gold.company_metrics"
+silver_table = f"{CATALOG}.finsage_silver.financial_statements"
+gold_table   = f"{CATALOG}.finsage_gold.company_metrics"
 
 # --- 1. Temporal filters: annual 10-K facts from the last 5 years only ---
 df = (
