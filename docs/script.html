@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FinSage — Interview Teleprompter</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+    * { font-family: 'Inter', sans-serif; }
+    body { background: #0d1117; }
+
+    /* Smooth scroll */
+    html { scroll-behavior: smooth; }
+
+    /* Progress bar */
+    #progress-bar {
+      position: fixed; top: 0; left: 0; height: 3px;
+      background: linear-gradient(90deg, #3b82f6, #f97316);
+      transition: width 0.2s;
+      z-index: 9999;
+    }
+
+    /* Section connector line */
+    .section-line {
+      width: 2px;
+      background: linear-gradient(180deg, #1d4ed8 0%, #7c3aed 100%);
+      margin: 0 auto;
+    }
+
+    /* Spoken script text highlight on hover */
+    .script-line:hover { background: rgba(59,130,246,0.06); border-radius: 8px; }
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #0d1117; }
+    ::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 3px; }
+
+    /* Transition for "done" state */
+    .section-done .section-number { background: #166534 !important; border-color: #15803d !important; }
+    .section-done .section-title-bar { opacity: 0.5; }
+
+    /* Fade in animation */
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    .section-card { animation: fadeIn 0.4s ease both; }
+
+    /* Typing cursor blink */
+    @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+    .cursor { animation: blink 1s infinite; }
+  </style>
+</head>
+<body class="text-slate-100 min-h-screen">
+
+  <!-- Progress bar -->
+  <div id="progress-bar" style="width: 0%"></div>
+
+  <!-- ══════════════════════════════════════════════════════
+       STICKY HEADER
+  ══════════════════════════════════════════════════════ -->
+  <header class="sticky top-0 z-50 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-6 py-3 flex items-center justify-between shadow-xl">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-600 to-orange-500 flex items-center justify-center">
+        <span class="text-xs font-black text-white">FS</span>
+      </div>
+      <div>
+        <p class="text-white font-bold text-sm leading-none">FinSage Interview Script</p>
+        <p class="text-slate-500 text-xs mt-0.5">Teleprompter — Data Engineer Technical Round</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <div class="hidden md:flex items-center gap-2 text-xs text-slate-500">
+        <span>↑↓ arrows or scroll to navigate</span>
+        <span class="text-slate-700">|</span>
+        <span>Click section to mark done</span>
+      </div>
+      <div id="section-counter" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1 text-xs text-slate-400 font-mono">
+        0 / 9 done
+      </div>
+    </div>
+  </header>
+
+  <!-- ══════════════════════════════════════════════════════
+       LEGEND
+  ══════════════════════════════════════════════════════ -->
+  <div class="max-w-4xl mx-auto px-6 pt-8 pb-2 flex flex-wrap gap-4 text-xs">
+    <div class="flex items-center gap-2"><div class="w-4 h-4 rounded bg-blue-600 border-2 border-blue-400"></div><span class="text-slate-400">Action (do this in the IDE)</span></div>
+    <div class="flex items-center gap-2"><div class="w-4 h-4 rounded bg-slate-800 border-2 border-slate-600"></div><span class="text-slate-400">Say this out loud</span></div>
+    <div class="flex items-center gap-2"><div class="w-4 h-4 rounded bg-amber-900 border-2 border-amber-600"></div><span class="text-slate-400">Technical detail / code callout</span></div>
+    <div class="flex items-center gap-2"><div class="w-4 h-4 rounded bg-green-900 border-2 border-green-600"></div><span class="text-slate-400">Key talking point</span></div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       PART DIVIDER — SECTION 1
+  ══════════════════════════════════════════════════════ -->
+  <div class="max-w-4xl mx-auto px-6 mt-10 mb-6">
+    <div class="flex items-center gap-4">
+      <div class="flex-1 h-px bg-slate-800"></div>
+      <div class="bg-gradient-to-r from-blue-900 to-blue-800 border border-blue-700 rounded-full px-5 py-2">
+        <span class="text-blue-200 font-bold text-sm uppercase tracking-widest">Part 1 — Infrastructure & Orchestration</span>
+      </div>
+      <div class="flex-1 h-px bg-slate-800"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       SECTION 1: databricks.yml
+  ══════════════════════════════════════════════════════ -->
+  <div class="section-card max-w-4xl mx-auto px-6 mb-10" id="sec-1" data-section="1">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl">
+
+      <!-- Section header -->
+      <div class="section-title-bar flex items-center gap-4 px-6 py-4 bg-slate-800/60 border-b border-slate-700 cursor-pointer select-none" onclick="toggleDone('sec-1')">
+        <div class="section-number w-9 h-9 rounded-xl bg-blue-900 border-2 border-blue-600 flex items-center justify-center font-bold text-blue-300 text-sm flex-shrink-0">1</div>
+        <div class="flex-1">
+          <p class="text-slate-400 text-xs font-medium uppercase tracking-widest">Infrastructure · Orchestration</p>
+          <h2 class="text-white font-bold text-lg leading-tight">Databricks Asset Bundle — <code class="text-blue-300 text-base">databricks.yml</code></h2>
+        </div>
+        <span class="text-slate-600 text-xs font-mono">click to mark done</span>
+      </div>
+
+      <div class="p-6 space-y-5">
+
+        <!-- ACTION -->
+        <div class="bg-blue-600/20 border-2 border-blue-500 rounded-xl px-5 py-4">
+          <p class="text-blue-300 font-black text-xs uppercase tracking-widest mb-1.5">⚡ Action</p>
+          <p class="text-blue-100 font-bold text-lg">Open <code class="bg-blue-900/50 px-2 py-0.5 rounded text-blue-200">databricks.yml</code> — scroll to the <code class="bg-blue-900/50 px-2 py-0.5 rounded text-blue-200">variables:</code> block, then to <code class="bg-blue-900/50 px-2 py-0.5 rounded text-blue-200">job_clusters:</code>, then to <code class="bg-blue-900/50 px-2 py-0.5 rounded text-blue-200">targets:</code></p>
+        </div>
+
+        <!-- OPENER -->
+        <div class="bg-slate-800/50 border border-slate-700 rounded-xl px-5 py-4">
+          <p class="text-emerald-400 font-bold text-xs uppercase tracking-widest mb-2">💬 Say This</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "So let me start with how the entire project is <span class="text-white font-semibold">deployed and orchestrated</span>. FinSage uses a <span class="text-blue-300 font-semibold">Databricks Asset Bundle</span> — this file is the single source of truth for the entire job topology. Clusters, tasks, schedules, environment promotion — all defined as code."
+          </p>
+        </div>
+
+        <!-- TALKING POINT: Variables -->
+        <div class="bg-amber-900/20 border border-amber-700/60 rounded-xl px-5 py-4">
+          <p class="text-amber-400 font-bold text-xs uppercase tracking-widest mb-2">🔍 Code Callout — <code class="text-amber-300 font-mono">variables:</code> block (line ~36)</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "Notice the <span class="text-amber-300 font-semibold">variables block</span> at the top. I parameterize everything — the catalog name, environment label, cluster version, even the ticker filter. These get <span class="text-white font-semibold">injected into every notebook</span> via <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">base_parameters</code>, and the notebook reads them with <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">dbutils.widgets.get()</code>. This means the exact same notebook code runs correctly in both dev and prod — <span class="text-white font-semibold">zero code changes between environments</span>."
+          </p>
+        </div>
+
+        <!-- TALKING POINT: Shared cluster -->
+        <div class="bg-amber-900/20 border border-amber-700/60 rounded-xl px-5 py-4">
+          <p class="text-amber-400 font-bold text-xs uppercase tracking-widest mb-2">🔍 Code Callout — <code class="text-amber-300 font-mono">job_clusters:</code> → <code class="text-amber-300 font-mono">finsage_cluster</code> (line ~96)</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "I define <span class="text-white font-semibold">one shared job cluster</span> and all five tasks reference it by key. The alternative — a new cluster per task — would cost <span class="text-red-300 font-semibold">five separate cold-start penalties</span>, around five to eight minutes each. By sharing one ephemeral cluster across the whole DAG, I cut that down to a single startup cost."
+          </p>
+        </div>
+
+        <!-- TALKING POINT: Targets -->
+        <div class="bg-green-900/20 border border-green-700/60 rounded-xl px-5 py-4">
+          <p class="text-green-400 font-bold text-xs uppercase tracking-widest mb-2">✅ Key Point — dev vs prod targets</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "The <code class="text-green-200 bg-slate-900 rounded px-1 text-base">targets</code> block defines two environments. The <span class="text-white font-semibold">dev target</span> has the schedule paused by default so I don't burn compute credits during development. The <span class="text-white font-semibold">prod target</span> unphrases the schedule and is the only target CI/CD ever touches. Promotion is just a CLI flag — <code class="text-green-200 bg-slate-900 rounded px-1 text-base">databricks bundle deploy -t prod</code>."
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       SECTION 2: CI/CD — deploy.yml
+  ══════════════════════════════════════════════════════ -->
+  <div class="section-card max-w-4xl mx-auto px-6 mb-10" id="sec-2" data-section="2">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl">
+
+      <div class="section-title-bar flex items-center gap-4 px-6 py-4 bg-slate-800/60 border-b border-slate-700 cursor-pointer select-none" onclick="toggleDone('sec-2')">
+        <div class="section-number w-9 h-9 rounded-xl bg-blue-900 border-2 border-blue-600 flex items-center justify-center font-bold text-blue-300 text-sm flex-shrink-0">2</div>
+        <div class="flex-1">
+          <p class="text-slate-400 text-xs font-medium uppercase tracking-widest">CI/CD · Authentication</p>
+          <h2 class="text-white font-bold text-lg leading-tight">GitHub Actions Pipeline — <code class="text-blue-300 text-base">.github/workflows/deploy.yml</code></h2>
+        </div>
+        <span class="text-slate-600 text-xs font-mono">click to mark done</span>
+      </div>
+
+      <div class="p-6 space-y-5">
+
+        <!-- ACTION -->
+        <div class="bg-blue-600/20 border-2 border-blue-500 rounded-xl px-5 py-4">
+          <p class="text-blue-300 font-black text-xs uppercase tracking-widest mb-1.5">⚡ Action</p>
+          <p class="text-blue-100 font-bold text-lg">Open <code class="bg-blue-900/50 px-2 py-0.5 rounded text-blue-200">.github/workflows/deploy.yml</code> — point to the three jobs: <code class="bg-blue-900/50 px-1 rounded text-blue-200">unit-tests</code>, <code class="bg-blue-900/50 px-1 rounded text-blue-200">bundle-validate</code>, <code class="bg-blue-900/50 px-1 rounded text-blue-200">deploy-prod</code></p>
+        </div>
+
+        <!-- Pipeline overview -->
+        <div class="bg-slate-800/50 border border-slate-700 rounded-xl px-5 py-4">
+          <p class="text-emerald-400 font-bold text-xs uppercase tracking-widest mb-2">💬 Say This</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "Every push to <code class="text-white bg-slate-900 rounded px-1 text-base">main</code> triggers a <span class="text-white font-semibold">three-job sequential pipeline</span>. First, <span class="text-blue-300 font-semibold">pytest</span> runs on GitHub's runner — no Databricks connection needed, no cloud cost, and it completes in seconds. If tests pass, <span class="text-blue-300 font-semibold">bundle validate</span> checks the YAML syntax against the live workspace API to catch config errors before any deployment. Only if both gates pass does <span class="text-blue-300 font-semibold">deploy-prod</span> run."
+          </p>
+        </div>
+
+        <!-- pytest gate -->
+        <div class="bg-amber-900/20 border border-amber-700/60 rounded-xl px-5 py-4">
+          <p class="text-amber-400 font-bold text-xs uppercase tracking-widest mb-2">🔍 Why This Matters</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "The pytest gate is critical. If my <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">TARGET_CONCEPT_MAP</code> ever gets corrupted — say someone maps <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">Revenues</code> to the wrong metric — the unit tests catch that in CI and <span class="text-red-300 font-semibold">block the deploy entirely</span>. Bad code never reaches the warehouse."
+          </p>
+        </div>
+
+        <!-- IMPORTANT: M2M OAuth / run_as explanation -->
+        <div class="bg-purple-900/30 border-2 border-purple-500 rounded-xl px-5 py-5">
+          <p class="text-purple-300 font-black text-xs uppercase tracking-widest mb-3">⚠️ Important — Be Ready For This Question: "Why isn't run_as configured?"</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "Great question — and I'm glad you noticed. My CI/CD pipeline is <span class="text-white font-semibold">fully architected for Machine-to-Machine OAuth</span> via a Service Principal. The Databricks CLI is configured to read <code class="text-purple-200 bg-slate-900 rounded px-1 text-base">DATABRICKS_HOST</code>, <code class="text-purple-200 bg-slate-900 rounded px-1 text-base">DATABRICKS_CLIENT_ID</code>, and <code class="text-purple-200 bg-slate-900 rounded px-1 text-base">DATABRICKS_CLIENT_SECRET</code> from GitHub secrets, call the workspace OIDC token endpoint, and receive a short-lived bearer token. No PAT is used anywhere."
+          </p>
+          <div class="mt-3 bg-slate-950 rounded-lg px-4 py-3 border border-purple-800/40">
+            <p class="text-purple-200 font-bold text-base mb-1">Continue with:</p>
+            <p class="text-slate-100 text-xl leading-relaxed">
+              "However — I intentionally <span class="text-white font-semibold">commented out the <code class="text-purple-200 bg-slate-900 rounded px-1 text-base">run_as</code> block</span> in <code class="text-purple-200 bg-slate-900 rounded px-1 text-base">databricks.yml</code>. I don't currently have Workspace Admin privileges to create and register the Service Principal in this specific environment. Rather than let CI fail on every deploy, I treated this as a deliberate <span class="text-yellow-300 font-semibold">'Ops Handoff'</span> — the configuration is documented, the pattern is correct, and it's a two-minute fix once an admin provisions the SP. For this demo, I authenticate using <span class="text-white font-semibold">User-to-Machine OAuth</span> via <code class="text-purple-200 bg-slate-900 rounded px-1 text-base">databricks auth login</code>. I designed around the constraint rather than blocking myself."
+            </p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       SECTION 3: Terraform
+  ══════════════════════════════════════════════════════ -->
+  <div class="section-card max-w-4xl mx-auto px-6 mb-10" id="sec-3" data-section="3">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl">
+
+      <div class="section-title-bar flex items-center gap-4 px-6 py-4 bg-slate-800/60 border-b border-slate-700 cursor-pointer select-none" onclick="toggleDone('sec-3')">
+        <div class="section-number w-9 h-9 rounded-xl bg-blue-900 border-2 border-blue-600 flex items-center justify-center font-bold text-blue-300 text-sm flex-shrink-0">3</div>
+        <div class="flex-1">
+          <p class="text-slate-400 text-xs font-medium uppercase tracking-widest">Infrastructure as Code</p>
+          <h2 class="text-white font-bold text-lg leading-tight">Terraform — <code class="text-blue-300 text-base">terraform/main.tf</code></h2>
+        </div>
+        <span class="text-slate-600 text-xs font-mono">click to mark done</span>
+      </div>
+
+      <div class="p-6 space-y-5">
+
+        <!-- ACTION -->
+        <div class="bg-blue-600/20 border-2 border-blue-500 rounded-xl px-5 py-4">
+          <p class="text-blue-300 font-black text-xs uppercase tracking-widest mb-1.5">⚡ Action</p>
+          <p class="text-blue-100 font-bold text-lg">Open <code class="bg-blue-900/50 px-2 py-0.5 rounded text-blue-200">terraform/main.tf</code> — point to <code class="bg-blue-900/50 px-1 rounded text-blue-200">databricks_cluster_policy</code>, <code class="bg-blue-900/50 px-1 rounded text-blue-200">databricks_secret_scope</code>, and the SP data source</p>
+        </div>
+
+        <!-- Separation of concerns -->
+        <div class="bg-slate-800/50 border border-slate-700 rounded-xl px-5 py-4">
+          <p class="text-emerald-400 font-bold text-xs uppercase tracking-widest mb-2">💬 Say This</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "I use Terraform for a specific reason — there's a <span class="text-white font-semibold">separation of concerns</span> between infrastructure and orchestration. Terraform manages the <span class="text-blue-300 font-semibold">long-lived workspace state</span> that outlasts any single deploy. The DAB manages the daily job definition that's redeployed on every push. They're complementary, not competing."
+          </p>
+        </div>
+
+        <!-- What Terraform owns -->
+        <div class="bg-amber-900/20 border border-amber-700/60 rounded-xl px-5 py-4">
+          <p class="text-amber-400 font-bold text-xs uppercase tracking-widest mb-2">🔍 Three Things Terraform Owns Here</p>
+          <div class="space-y-3 mt-1">
+            <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+              "First — the <span class="text-white font-semibold">cluster policy</span>. It enforces hard limits: maximum four workers, thirty-minute auto-termination, and mandatory cost tags on every cluster. No engineer can accidentally spin up an uncapped cluster and rack up a surprise bill."
+            </p>
+            <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+              "Second — the <span class="text-white font-semibold">secret scope</span>. Runtime credentials never live in code. They're stored in the Databricks secret scope and notebooks read them with <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">dbutils.secrets.get()</code>."
+            </p>
+            <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+              "Third — the <span class="text-white font-semibold">Service Principal data source</span>. Terraform resolves the SP application ID so it can be referenced in the DAB without hardcoding any credential."
+            </p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       PART DIVIDER — SECTION 2
+  ══════════════════════════════════════════════════════ -->
+  <div class="max-w-4xl mx-auto px-6 mt-4 mb-6">
+    <div class="flex items-center gap-4">
+      <div class="flex-1 h-px bg-slate-800"></div>
+      <div class="bg-gradient-to-r from-orange-900 to-amber-900 border border-orange-700 rounded-full px-5 py-2">
+        <span class="text-orange-200 font-bold text-sm uppercase tracking-widest">Part 2 — Medallion Notebooks Deep Dive</span>
+      </div>
+      <div class="flex-1 h-px bg-slate-800"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       SECTION 4: Notebook 01 — Schema Setup
+  ══════════════════════════════════════════════════════ -->
+  <div class="section-card max-w-4xl mx-auto px-6 mb-10" id="sec-4" data-section="4">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl">
+
+      <div class="section-title-bar flex items-center gap-4 px-6 py-4 bg-slate-800/60 border-b border-slate-700 cursor-pointer select-none" onclick="toggleDone('sec-4')">
+        <div class="section-number w-9 h-9 rounded-xl bg-orange-900 border-2 border-orange-600 flex items-center justify-center font-bold text-orange-300 text-sm flex-shrink-0">4</div>
+        <div class="flex-1">
+          <p class="text-slate-400 text-xs font-medium uppercase tracking-widest">Notebook 01</p>
+          <h2 class="text-white font-bold text-lg leading-tight">Schema Setup — <code class="text-orange-300 text-base">01_schema_setup.py</code></h2>
+        </div>
+        <span class="text-slate-600 text-xs font-mono">click to mark done</span>
+      </div>
+
+      <div class="p-6 space-y-5">
+
+        <!-- ACTION -->
+        <div class="bg-blue-600/20 border-2 border-blue-500 rounded-xl px-5 py-4">
+          <p class="text-blue-300 font-black text-xs uppercase tracking-widest mb-1.5">⚡ Action</p>
+          <p class="text-blue-100 font-bold text-lg">Open <code class="bg-blue-900/50 px-2 py-0.5 rounded text-blue-200">databricks/notebooks/01_schema_setup.py</code> — scroll to the <code class="bg-blue-900/50 px-1 rounded text-blue-200">%sql CREATE SCHEMA IF NOT EXISTS</code> block and the <code class="bg-blue-900/50 px-1 rounded text-blue-200">CREATE TABLE IF NOT EXISTS</code> DDL</p>
+        </div>
+
+        <div class="bg-slate-800/50 border border-slate-700 rounded-xl px-5 py-4">
+          <p class="text-emerald-400 font-bold text-xs uppercase tracking-widest mb-2">💬 Say This</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "Notebook one is intentionally boring — that's by design. It's pure DDL. It creates the three Medallion schemas — <code class="text-orange-200 bg-slate-900 rounded px-1 text-base">finsage_bronze</code>, <code class="text-slate-200 bg-slate-900 rounded px-1 text-base">finsage_silver</code>, and <code class="text-yellow-200 bg-slate-900 rounded px-1 text-base">finsage_gold</code> — inside Unity Catalog."
+          </p>
+        </div>
+
+        <div class="bg-amber-900/20 border border-amber-700/60 rounded-xl px-5 py-4">
+          <p class="text-amber-400 font-bold text-xs uppercase tracking-widest mb-2">🔍 Idempotency — <code class="text-amber-300 font-mono">IF NOT EXISTS</code></p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "Every single DDL statement uses <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">IF NOT EXISTS</code>. This notebook is <span class="text-white font-semibold">idempotent by definition</span>. I can re-run it on an existing prod environment after a schema drift incident and it will not corrupt or truncate anything. It's also the first task in the DAB DAG, so the full pipeline can't start on a broken schema."
+          </p>
+        </div>
+
+        <div class="bg-green-900/20 border border-green-700/60 rounded-xl px-5 py-4">
+          <p class="text-green-400 font-bold text-xs uppercase tracking-widest mb-2">✅ Key Point — Unity Catalog binding</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "Notice the <code class="text-green-200 bg-slate-900 rounded px-1 text-base">CATALOG</code> variable at the top. The schema names are not hardcoded — they're bound to whatever catalog the DAB injects. In dev I might point this at a personal sandbox catalog; in prod it hits <code class="text-green-200 bg-slate-900 rounded px-1 text-base">main</code>. The notebook doesn't care."
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       SECTION 5: Notebook 02 — Bronze Auto Loader
+  ══════════════════════════════════════════════════════ -->
+  <div class="section-card max-w-4xl mx-auto px-6 mb-10" id="sec-5" data-section="5">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl">
+
+      <div class="section-title-bar flex items-center gap-4 px-6 py-4 bg-slate-800/60 border-b border-slate-700 cursor-pointer select-none" onclick="toggleDone('sec-5')">
+        <div class="section-number w-9 h-9 rounded-xl bg-orange-900 border-2 border-orange-600 flex items-center justify-center font-bold text-orange-300 text-sm flex-shrink-0">5</div>
+        <div class="flex-1">
+          <p class="text-slate-400 text-xs font-medium uppercase tracking-widest">Notebook 02 · Bronze Layer</p>
+          <h2 class="text-white font-bold text-lg leading-tight">Auto Loader Ingestion — <code class="text-orange-300 text-base">02_bronze_autoloader.py</code></h2>
+        </div>
+        <span class="text-slate-600 text-xs font-mono">click to mark done</span>
+      </div>
+
+      <div class="p-6 space-y-5">
+
+        <!-- ACTION -->
+        <div class="bg-blue-600/20 border-2 border-blue-500 rounded-xl px-5 py-4">
+          <p class="text-blue-300 font-black text-xs uppercase tracking-widest mb-1.5">⚡ Action</p>
+          <p class="text-blue-100 font-bold text-lg">Open <code class="bg-blue-900/50 px-2 py-0.5 rounded text-blue-200">databricks/notebooks/02_bronze_autoloader.py</code> — point to the <code class="bg-blue-900/50 px-1 rounded text-blue-200">RESET_PIPELINE</code> flag and the <code class="bg-blue-900/50 px-1 rounded text-blue-200">cloudFiles</code> stream config</p>
+        </div>
+
+        <div class="bg-slate-800/50 border border-slate-700 rounded-xl px-5 py-4">
+          <p class="text-emerald-400 font-bold text-xs uppercase tracking-widest mb-2">💬 Say This</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "The Bronze layer has one rule: <span class="text-white font-semibold">append-only, zero business logic</span>. Whatever comes from the SEC API goes straight in. This gives me a complete audit trail — if Silver or Gold ever produce wrong numbers, I can always reprocess from Bronze without hitting the SEC API again."
+          </p>
+        </div>
+
+        <div class="bg-amber-900/20 border border-amber-700/60 rounded-xl px-5 py-4">
+          <p class="text-amber-400 font-bold text-xs uppercase tracking-widest mb-2">🔍 Auto Loader — Exactly-Once Ingestion</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "I use Databricks <span class="text-white font-semibold">Auto Loader</span> with the <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">cloudFiles</code> format to stream raw SEC filing bytes. The key guarantee here is <span class="text-white font-semibold">exactly-once delivery</span>, backed by a <span class="text-amber-300 font-semibold">RocksDB checkpoint</span>. If the job crashes mid-run, the next run resumes from exactly where it stopped — no duplicate files, no missed files."
+          </p>
+        </div>
+
+        <div class="bg-amber-900/20 border border-amber-700/60 rounded-xl px-5 py-4">
+          <p class="text-amber-400 font-bold text-xs uppercase tracking-widest mb-2">🔍 <code class="text-amber-300 font-mono">availableNow=True</code> trigger</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "I use <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">availableNow=True</code> as the trigger, which makes the stream behave like a <span class="text-white font-semibold">batch</span>. It processes all new files since the last checkpoint, then stops. This is intentional — I don't want a 24/7 streaming cluster running for a nightly batch job."
+          </p>
+        </div>
+
+        <div class="bg-green-900/20 border border-green-700/60 rounded-xl px-5 py-4">
+          <p class="text-green-400 font-bold text-xs uppercase tracking-widest mb-2">✅ Safety Valve — <code class="text-green-300 font-mono">RESET_PIPELINE</code></p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "Notice the <code class="text-green-200 bg-slate-900 rounded px-1 text-base">RESET_PIPELINE = False</code> flag at the top. This is a safety valve for full re-ingestion. It's off by default and requires a <span class="text-white font-semibold">deliberate code change</span> to activate — you can't accidentally nuke your Bronze tables by re-running the job."
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       SECTION 6: Notebook 03 — Silver Decoder
+  ══════════════════════════════════════════════════════ -->
+  <div class="section-card max-w-4xl mx-auto px-6 mb-10" id="sec-6" data-section="6">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl">
+
+      <div class="section-title-bar flex items-center gap-4 px-6 py-4 bg-slate-800/60 border-b border-slate-700 cursor-pointer select-none" onclick="toggleDone('sec-6')">
+        <div class="section-number w-9 h-9 rounded-xl bg-orange-900 border-2 border-orange-600 flex items-center justify-center font-bold text-orange-300 text-sm flex-shrink-0">6</div>
+        <div class="flex-1">
+          <p class="text-slate-400 text-xs font-medium uppercase tracking-widest">Notebook 03 · Silver Layer — ⚠️ Hardest Layer</p>
+          <h2 class="text-white font-bold text-lg leading-tight">Silver Decoder — <code class="text-orange-300 text-base">03_silver_decoder.py</code></h2>
+        </div>
+        <span class="text-slate-600 text-xs font-mono">click to mark done</span>
+      </div>
+
+      <div class="p-6 space-y-5">
+
+        <!-- ACTION -->
+        <div class="bg-blue-600/20 border-2 border-blue-500 rounded-xl px-5 py-4">
+          <p class="text-blue-300 font-black text-xs uppercase tracking-widest mb-1.5">⚡ Action</p>
+          <p class="text-blue-100 font-bold text-lg">Open <code class="bg-blue-900/50 px-2 py-0.5 rounded text-blue-200">databricks/notebooks/03_silver_decoder.py</code> — point to <code class="bg-blue-900/50 px-1 rounded text-blue-200">flatten_companyfacts</code> function, <code class="bg-blue-900/50 px-1 rounded text-blue-200">TARGET_CONCEPT_MAP</code>, and the <code class="bg-blue-900/50 px-1 rounded text-blue-200">split_udf</code> / <code class="bg-blue-900/50 px-1 rounded text-blue-200">chunk_sections_udf</code></p>
+        </div>
+
+        <!-- Setup -->
+        <div class="bg-slate-800/50 border border-slate-700 rounded-xl px-5 py-4">
+          <p class="text-emerald-400 font-bold text-xs uppercase tracking-widest mb-2">💬 Say This</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "This was the <span class="text-red-300 font-semibold">hardest notebook to build</span>. Silver does two completely different jobs. Part A flattens the XBRL JSON. Part B parses the raw 10-K HTML into three readable sections. Let me walk through each."
+          </p>
+        </div>
+
+        <!-- Part A: XBRL -->
+        <div class="bg-amber-900/20 border border-amber-700/60 rounded-xl px-5 py-4">
+          <p class="text-amber-400 font-bold text-xs uppercase tracking-widest mb-2">🔍 Part A — XBRL Flattening + <code class="text-amber-300 font-mono">TARGET_CONCEPT_MAP</code></p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "The <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">flatten_companyfacts</code> function is a <span class="text-white font-semibold">pure Python generator</span> that I run with <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">flatMap</code> over the Bronze RDD. I intentionally kept it off Spark's columnar engine because the XBRL JSON structure is deeply nested and irregular — Python handles that far more cleanly than trying to unpack it with Spark SQL."
+          </p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1 mt-3">
+            "The key to normalisation is <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">TARGET_CONCEPT_MAP</code>. Every company files under slightly different XBRL tags — Apple uses <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">RevenueFromContractWithCustomer</code>, JPMorgan uses <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">RevenuesNetOfInterestExpense</code>. My map collapses <span class="text-white font-semibold">30-plus raw XBRL concepts into 11 clean metric names</span>. This is the single source of truth, it lives in <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">src/finsage/constants.py</code>, and it's <span class="text-white font-semibold">independently unit-tested</span> in CI without needing a Spark session."
+          </p>
+        </div>
+
+        <!-- Part B: HTML parsing -->
+        <div class="bg-amber-900/20 border border-amber-700/60 rounded-xl px-5 py-4">
+          <p class="text-amber-400 font-bold text-xs uppercase tracking-widest mb-2">🔍 Part B — HTML Section Extraction via UDF</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "Part B is the more complex one. SEC 10-K filings are enormous HTML files — some are several megabytes. I need to extract three specific sections: <span class="text-white font-semibold">Item 1 Business</span>, <span class="text-white font-semibold">Item 1A Risk Factors</span>, and <span class="text-white font-semibold">Item 7 MD&A</span>."
+          </p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1 mt-3">
+            "I strip the HTML in stages using <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">regexp_replace</code> — first removing base64 images, then scripts and styles, then replacing block-level tags with newlines, and finally stripping all remaining tags. Then the <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">split_udf</code> uses regex boundary detection to find section headers, scores candidate matches by word count, and picks the best block. This runs as a <span class="text-white font-semibold">Spark UDF vectorised across all executors</span> in parallel."
+          </p>
+        </div>
+
+        <!-- SHA-256 dedup -->
+        <div class="bg-green-900/20 border border-green-700/60 rounded-xl px-5 py-4">
+          <p class="text-green-400 font-bold text-xs uppercase tracking-widest mb-2">✅ Key Point — SHA-256 Dedup + MERGE</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "Every financial statement record gets a <span class="text-white font-semibold">SHA-256 <code class="text-green-200 bg-slate-900 rounded px-1 text-base">statement_id</code></span> derived from the ticker, fiscal year, accession number, and metric name. The Silver write is a <span class="text-white font-semibold">Delta MERGE on that hash</span>. Re-running this notebook a hundred times produces the same Silver table — no duplicates."
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       SECTION 7: Notebook 04 — Gold Metrics
+  ══════════════════════════════════════════════════════ -->
+  <div class="section-card max-w-4xl mx-auto px-6 mb-10" id="sec-7" data-section="7">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl">
+
+      <div class="section-title-bar flex items-center gap-4 px-6 py-4 bg-slate-800/60 border-b border-slate-700 cursor-pointer select-none" onclick="toggleDone('sec-7')">
+        <div class="section-number w-9 h-9 rounded-xl bg-yellow-900 border-2 border-yellow-600 flex items-center justify-center font-bold text-yellow-300 text-sm flex-shrink-0">7</div>
+        <div class="flex-1">
+          <p class="text-slate-400 text-xs font-medium uppercase tracking-widest">Notebook 04 · Gold Layer</p>
+          <h2 class="text-white font-bold text-lg leading-tight">Gold Metrics — <code class="text-yellow-300 text-base">04_gold_metrics.py</code></h2>
+        </div>
+        <span class="text-slate-600 text-xs font-mono">click to mark done</span>
+      </div>
+
+      <div class="p-6 space-y-5">
+
+        <!-- ACTION -->
+        <div class="bg-blue-600/20 border-2 border-blue-500 rounded-xl px-5 py-4">
+          <p class="text-blue-300 font-black text-xs uppercase tracking-widest mb-1.5">⚡ Action</p>
+          <p class="text-blue-100 font-bold text-lg">Open <code class="bg-blue-900/50 px-2 py-0.5 rounded text-blue-200">databricks/notebooks/04_gold_metrics.py</code> — scroll to the <code class="bg-blue-900/50 px-1 rounded text-blue-200">concept_priority</code> Window function, then to the <code class="bg-blue-900/50 px-1 rounded text-blue-200">DeltaTable.forName(...).merge()</code> statement near the bottom</p>
+        </div>
+
+        <div class="bg-slate-800/50 border border-slate-700 rounded-xl px-5 py-4">
+          <p class="text-emerald-400 font-bold text-xs uppercase tracking-widest mb-2">💬 Say This</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "Gold is where the raw metrics become <span class="text-white font-semibold">analyst-ready KPIs</span>. The output is one wide row per ticker per fiscal year with sixteen derived metrics — gross margin percentage, revenue year-over-year growth, debt-to-equity ratio, and a <span class="text-yellow-300 font-semibold">data quality score</span> that tells downstream consumers how complete that row is."
+          </p>
+        </div>
+
+        <!-- Accession selection -->
+        <div class="bg-amber-900/20 border border-amber-700/60 rounded-xl px-5 py-4">
+          <p class="text-amber-400 font-bold text-xs uppercase tracking-widest mb-2">🔍 The Hard Problem — Canonical Accession Selection</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "This was a subtle data quality challenge. A company can amend its 10-K multiple times, producing multiple accession numbers for the same fiscal year. I can't just take the latest one — the amendment might have only corrected a footnote and might be missing metrics the original had. So I use a <span class="text-white font-semibold">Window function with <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">concept_priority</code></span> to rank accession numbers by how many of the nine core metrics they contain, then pick the best-coverage accession before any aggregation."
+          </p>
+        </div>
+
+        <!-- MERGE statement -->
+        <div class="bg-amber-900/20 border border-amber-700/60 rounded-xl px-5 py-4">
+          <p class="text-amber-400 font-bold text-xs uppercase tracking-widest mb-2">🔍 Delta MERGE — the Upsert Pattern</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "The write to Gold is a <span class="text-white font-semibold">Delta MERGE</span> — a true UPSERT. I match on <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">ticker</code> and <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">fiscal_year</code>. If the row already exists, I update it. If it's new, I insert it. This means the Gold table is always current without ever having duplicate rows, and it's safe to re-run after any upstream fix."
+          </p>
+        </div>
+
+        <!-- FY alignment -->
+        <div class="bg-green-900/20 border border-green-700/60 rounded-xl px-5 py-4">
+          <p class="text-green-400 font-bold text-xs uppercase tracking-widest mb-2">✅ Key Point — Fiscal Year Alignment Guard</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "I apply a strict <span class="text-white font-semibold">350 to 380 day duration filter</span> on flow metrics like revenue and cash flow. This prevents quarterly or stub-period facts from polluting the annual Gold table. A revenue figure for a nine-month period would look like a thirty percent drop in a trend chart and confuse every analyst downstream."
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       SECTION 8: Notebook 05 — Vector Chunker
+  ══════════════════════════════════════════════════════ -->
+  <div class="section-card max-w-4xl mx-auto px-6 mb-10" id="sec-8" data-section="8">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl">
+
+      <div class="section-title-bar flex items-center gap-4 px-6 py-4 bg-slate-800/60 border-b border-slate-700 cursor-pointer select-none" onclick="toggleDone('sec-8')">
+        <div class="section-number w-9 h-9 rounded-xl bg-blue-900 border-2 border-blue-600 flex items-center justify-center font-bold text-blue-300 text-sm flex-shrink-0">8</div>
+        <div class="flex-1">
+          <p class="text-slate-400 text-xs font-medium uppercase tracking-widest">Notebook 05 · Vector Layer — 🤖 Data Engineering → AI Bridge</p>
+          <h2 class="text-white font-bold text-lg leading-tight">Vector Chunker — <code class="text-blue-300 text-base">05_vector_chunker.py</code></h2>
+        </div>
+        <span class="text-slate-600 text-xs font-mono">click to mark done</span>
+      </div>
+
+      <div class="p-6 space-y-5">
+
+        <!-- ACTION -->
+        <div class="bg-blue-600/20 border-2 border-blue-500 rounded-xl px-5 py-4">
+          <p class="text-blue-300 font-black text-xs uppercase tracking-widest mb-1.5">⚡ Action</p>
+          <p class="text-blue-100 font-bold text-lg">Open <code class="bg-blue-900/50 px-2 py-0.5 rounded text-blue-200">databricks/notebooks/05_vector_chunker.py</code> — point to the <code class="bg-blue-900/50 px-1 rounded text-blue-200">CHUNK_TOKENS = 512</code> config, the <code class="bg-blue-900/50 px-1 rounded text-blue-200">deterministic_chunk_id</code> function, and the <code class="bg-blue-900/50 px-1 rounded text-blue-200">@F.pandas_udf</code> decorator on <code class="bg-blue-900/50 px-1 rounded text-blue-200">chunk_sections_udf</code></p>
+        </div>
+
+        <div class="bg-slate-800/50 border border-slate-700 rounded-xl px-5 py-4">
+          <p class="text-emerald-400 font-bold text-xs uppercase tracking-widest mb-2">💬 Say This</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "This is the notebook that bridges <span class="text-white font-semibold">Data Engineering and AI</span>. It takes the clean narrative sections from Silver — the Business description, Risk Factors, and MD&A — and converts them into a format that a <span class="text-blue-300 font-semibold">Retrieval-Augmented Generation</span> system can query."
+          </p>
+        </div>
+
+        <!-- Tiktoken -->
+        <div class="bg-amber-900/20 border border-amber-700/60 rounded-xl px-5 py-4">
+          <p class="text-amber-400 font-bold text-xs uppercase tracking-widest mb-2">🔍 Tiktoken — Token-Aware Chunking</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "I use <span class="text-white font-semibold">OpenAI's Tiktoken library</span> to split text into chunks of exactly <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">512 tokens</code> with a <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">64-token overlap</code> between adjacent chunks. The overlap is critical — it ensures that a sentence split across a chunk boundary doesn't get its context destroyed. Using <span class="text-white font-semibold">tokens rather than characters</span> is important because the embedding model — <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">text-embedding-3-large</code> — operates on tokens, and I don't want to silently truncate chunks that exceed the context window."
+          </p>
+        </div>
+
+        <!-- Deterministic chunk_id -->
+        <div class="bg-amber-900/20 border border-amber-700/60 rounded-xl px-5 py-4">
+          <p class="text-amber-400 font-bold text-xs uppercase tracking-widest mb-2">🔍 <code class="text-amber-300 font-mono">deterministic_chunk_id</code> — Idempotent Vector Writes</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "Every chunk gets a <span class="text-white font-semibold">SHA-256 <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">chunk_id</code></span> derived from the filing ID, section name, chunk index, chunk text, and chunk version string. This is deterministic — the same input always produces the same ID. The write to Gold is again a <span class="text-white font-semibold">Delta MERGE on this hash</span>, so re-running the chunker never creates duplicate vectors in the index."
+          </p>
+        </div>
+
+        <!-- Pandas UDF -->
+        <div class="bg-amber-900/20 border border-amber-700/60 rounded-xl px-5 py-4">
+          <p class="text-amber-400 font-bold text-xs uppercase tracking-widest mb-2">🔍 Pandas UDF — Vectorised Chunking at Scale</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "The chunking runs inside a <span class="text-white font-semibold">Pandas UDF</span> — notice the <code class="text-amber-200 bg-slate-900 rounded px-1 text-base">@F.pandas_udf</code> decorator. Unlike a regular Python UDF which processes one row at a time with high serialisation overhead, a Pandas UDF receives and returns entire <span class="text-white font-semibold">Arrow-backed batches</span>. Tiktoken and all the chunking logic runs in pure Python locally on each executor, and Spark never has to touch the tokenizer internals."
+          </p>
+        </div>
+
+        <!-- Vector Search -->
+        <div class="bg-green-900/20 border border-green-700/60 rounded-xl px-5 py-4">
+          <p class="text-green-400 font-bold text-xs uppercase tracking-widest mb-2">✅ Key Point — Databricks Vector Search</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "The final step provisions a <span class="text-white font-semibold">Databricks Vector Search Delta Sync index</span> backed by the <code class="text-green-200 bg-slate-900 rounded px-1 text-base">databricks-bge-large-en</code> embedding model. Because I enabled <code class="text-green-200 bg-slate-900 rounded px-1 text-base">delta.enableChangeDataFeed</code> on the source table, the index automatically syncs whenever new chunks are merged in — no manual re-index step required."
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       SECTION 9: CLOSING
+  ══════════════════════════════════════════════════════ -->
+  <div class="section-card max-w-4xl mx-auto px-6 mb-20" id="sec-9" data-section="9">
+    <div class="bg-slate-900 border-2 border-green-700 rounded-2xl overflow-hidden shadow-2xl">
+
+      <div class="section-title-bar flex items-center gap-4 px-6 py-4 bg-green-900/20 border-b border-green-800 cursor-pointer select-none" onclick="toggleDone('sec-9')">
+        <div class="section-number w-9 h-9 rounded-xl bg-green-900 border-2 border-green-600 flex items-center justify-center font-bold text-green-300 text-sm flex-shrink-0">✓</div>
+        <div class="flex-1">
+          <p class="text-green-400 text-xs font-medium uppercase tracking-widest">Closing</p>
+          <h2 class="text-white font-bold text-lg leading-tight">Summary & Status — What's Next</h2>
+        </div>
+        <span class="text-slate-600 text-xs font-mono">click to mark done</span>
+      </div>
+
+      <div class="p-6 space-y-5">
+
+        <!-- ACTION -->
+        <div class="bg-blue-600/20 border-2 border-blue-500 rounded-xl px-5 py-4">
+          <p class="text-blue-300 font-black text-xs uppercase tracking-widest mb-1.5">⚡ Action</p>
+          <p class="text-blue-100 font-bold text-lg">Switch back to <code class="bg-blue-900/50 px-2 py-0.5 rounded text-blue-200">docs/finsage_presentation.html</code> — show the Status slide</p>
+        </div>
+
+        <div class="bg-slate-800/50 border border-slate-700 rounded-xl px-5 py-4">
+          <p class="text-emerald-400 font-bold text-xs uppercase tracking-widest mb-2">💬 Say This — Closing Summary</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "So to summarise what we've built: a <span class="text-white font-semibold">fully automated, idempotent, production-grade Medallion pipeline</span> that goes from raw SEC EDGAR bytes to a queryable AI vector index — entirely on Databricks, deployed with CI/CD, and managed as code from top to bottom."
+          </p>
+        </div>
+
+        <div class="bg-slate-800/50 border border-slate-700 rounded-xl px-5 py-4">
+          <p class="text-emerald-400 font-bold text-xs uppercase tracking-widest mb-2">💬 Say This — Current Status</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "All five layers are complete and deployed. The Vector Search index is provisioned. The pipeline is ready for the next step, which is wiring up an <span class="text-blue-300 font-semibold">LLM agent</span> on top of the index — a RAG system that could let any analyst ask natural language questions like 'What were Apple's key risks in their 2023 10-K?' and get an evidence-backed answer in seconds."
+          </p>
+        </div>
+
+        <div class="bg-green-900/20 border border-green-700/60 rounded-xl px-5 py-4">
+          <p class="text-green-400 font-bold text-xs uppercase tracking-widest mb-2">✅ Final Line — Engineer Mindset</p>
+          <p class="text-slate-100 text-xl leading-relaxed script-line px-2 py-1">
+            "Every design decision in this project was made with a <span class="text-white font-semibold">production team in mind</span> — not just making it work, but making it safe to re-run, safe to hand off to an ops team, and safe to extend. That's the standard I hold myself to."
+          </p>
+        </div>
+
+        <!-- Breathe reminder -->
+        <div class="bg-slate-800/30 border border-slate-700 rounded-xl px-5 py-4 text-center">
+          <p class="text-slate-400 text-sm font-medium">— Pause. Breathe. Invite questions. You've got this. —</p>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom padding -->
+  <div class="h-24"></div>
+
+  <script>
+    // ── Progress bar ──────────────────────────────────────────
+    function updateProgress() {
+      const scrollTop = window.scrollY;
+      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+      const pct = docHeight > 0 ? (scrollTop / docHeight) * 100 : 0;
+      document.getElementById('progress-bar').style.width = pct + '%';
+    }
+    window.addEventListener('scroll', updateProgress, { passive: true });
+
+    // ── Section done toggle ────────────────────────────────────
+    const doneSet = new Set();
+
+    function toggleDone(id) {
+      const el = document.getElementById(id);
+      if (doneSet.has(id)) {
+        doneSet.delete(id);
+        el.classList.remove('section-done');
+      } else {
+        doneSet.add(id);
+        el.classList.add('section-done');
+      }
+      updateCounter();
+    }
+
+    function updateCounter() {
+      const total = document.querySelectorAll('[data-section]').length;
+      document.getElementById('section-counter').textContent = `${doneSet.size} / ${total} done`;
+    }
+
+    // ── Keyboard navigation ────────────────────────────────────
+    const sections = ['sec-1','sec-2','sec-3','sec-4','sec-5','sec-6','sec-7','sec-8','sec-9'];
+    let currentSection = 0;
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        if (currentSection < sections.length - 1) {
+          currentSection++;
+          document.getElementById(sections[currentSection]).scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        e.preventDefault();
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        if (currentSection > 0) {
+          currentSection--;
+          document.getElementById(sections[currentSection]).scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        e.preventDefault();
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        toggleDone(sections[currentSection]);
+        e.preventDefault();
+      }
+    });
+
+    // Track which section is in view
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const idx = sections.indexOf(entry.target.id);
+          if (idx !== -1) currentSection = idx;
+        }
+      });
+    }, { threshold: 0.3 });
+
+    sections.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    });
+  </script>
+
+</body>
+</html>
