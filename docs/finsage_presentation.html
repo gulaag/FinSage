@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FinSage — Interview Presentation</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+    * { font-family: 'Inter', sans-serif; }
+
+    body { background: #0f1117; }
+
+    /* Scrolling section snap */
+    html { scroll-behavior: smooth; }
+
+    /* Gradient text */
+    .gradient-text {
+      background: linear-gradient(135deg, #3b82f6 0%, #f97316 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* Card glow on hover */
+    .card-glow:hover {
+      box-shadow: 0 0 30px rgba(59, 130, 246, 0.3);
+      transform: translateY(-3px);
+      transition: all 0.3s ease;
+    }
+
+    .card-orange-glow:hover {
+      box-shadow: 0 0 30px rgba(249, 115, 22, 0.3);
+      transform: translateY(-3px);
+      transition: all 0.3s ease;
+    }
+
+    /* Pipeline arrow */
+    .pipeline-arrow {
+      display: flex;
+      align-items: center;
+      color: #4b5563;
+      font-size: 2rem;
+      flex-shrink: 0;
+    }
+
+    /* Animated pulse badge */
+    @keyframes pulse-ring {
+      0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }
+      70% { box-shadow: 0 0 0 12px rgba(34, 197, 94, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+    }
+    .pulse-green { animation: pulse-ring 2s infinite; }
+
+    /* Slide sections */
+    .slide {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    /* Nav dot active */
+    .nav-dot.active { background: #3b82f6; transform: scale(1.4); }
+
+    /* Subtle grid background */
+    .grid-bg {
+      background-image:
+        linear-gradient(rgba(59,130,246,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(59,130,246,0.04) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+
+    /* Layer header colors */
+    .bronze-header { background: linear-gradient(135deg, #92400e, #b45309); }
+    .silver-header { background: linear-gradient(135deg, #374151, #6b7280); }
+    .gold-header   { background: linear-gradient(135deg, #78350f, #d97706); }
+    .vector-header { background: linear-gradient(135deg, #1e3a8a, #3b82f6); }
+
+    .bronze-border { border-color: #b45309; }
+    .silver-border { border-color: #6b7280; }
+    .gold-border   { border-color: #d97706; }
+    .vector-border { border-color: #3b82f6; }
+
+    /* Tech badge */
+    .tech-badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 9999px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+
+    /* Transition for slides */
+    .slide { transition: opacity 0.3s; }
+  </style>
+</head>
+<body class="text-slate-100 grid-bg">
+
+  <!-- ════════════════════════════════════════════════════════════════════════
+       SLIDE 1 — TITLE / HERO
+  ════════════════════════════════════════════════════════════════════════ -->
+  <section class="slide px-8 py-16 max-w-7xl mx-auto w-full" id="slide-1">
+    <div class="flex flex-col items-center text-center gap-8">
+
+      <!-- Logo / Brand mark -->
+      <div class="flex items-center gap-4">
+        <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-600 to-orange-500 flex items-center justify-center shadow-xl">
+          <span class="text-2xl font-black text-white">FS</span>
+        </div>
+        <div class="text-left">
+          <p class="text-slate-400 text-sm font-medium uppercase tracking-widest">Enterprise Data Engineering</p>
+          <h1 class="text-5xl font-black gradient-text leading-tight">FinSage</h1>
+        </div>
+      </div>
+
+      <!-- Subtitle -->
+      <div class="max-w-3xl">
+        <p class="text-2xl text-slate-200 font-light leading-relaxed">
+          <span class="text-white font-semibold">SEC Filing Intelligence Platform</span>
+        </p>
+        <p class="text-xl text-slate-400 mt-3 font-light">
+          Transforming raw financial filings into AI-ready vector databases.
+        </p>
+      </div>
+
+      <!-- Quick stat bar -->
+      <div class="flex flex-wrap justify-center gap-6 mt-4">
+        <div class="bg-slate-800/80 border border-slate-700 rounded-2xl px-6 py-4 text-center card-glow">
+          <p class="text-3xl font-black text-blue-400">30</p>
+          <p class="text-slate-400 text-sm mt-1">Large-Cap Companies</p>
+        </div>
+        <div class="bg-slate-800/80 border border-slate-700 rounded-2xl px-6 py-4 text-center card-glow">
+          <p class="text-3xl font-black text-orange-400">5</p>
+          <p class="text-slate-400 text-sm mt-1">Pipeline Layers</p>
+        </div>
+        <div class="bg-slate-800/80 border border-slate-700 rounded-2xl px-6 py-4 text-center card-glow">
+          <p class="text-3xl font-black text-blue-400">10-K</p>
+          <p class="text-slate-400 text-sm mt-1">& 10-Q Filings</p>
+        </div>
+        <div class="bg-slate-800/80 border border-slate-700 rounded-2xl px-6 py-4 text-center card-glow">
+          <p class="text-3xl font-black text-orange-400">512</p>
+          <p class="text-slate-400 text-sm mt-1">Token Chunk Size</p>
+        </div>
+        <div class="bg-slate-800/80 border border-slate-700 rounded-2xl px-6 py-4 text-center card-glow">
+          <p class="text-3xl font-black text-green-400">CI/CD</p>
+          <p class="text-slate-400 text-sm mt-1">GitHub Actions</p>
+        </div>
+      </div>
+
+      <!-- Stack pills -->
+      <div class="flex flex-wrap justify-center gap-3 mt-2">
+        <span class="tech-badge bg-blue-900/60 text-blue-300 border border-blue-700">Databricks</span>
+        <span class="tech-badge bg-orange-900/60 text-orange-300 border border-orange-700">Delta Lake</span>
+        <span class="tech-badge bg-blue-900/60 text-blue-300 border border-blue-700">Unity Catalog</span>
+        <span class="tech-badge bg-slate-700 text-slate-300 border border-slate-600">PySpark</span>
+        <span class="tech-badge bg-blue-900/60 text-blue-300 border border-blue-700">Vector Search</span>
+        <span class="tech-badge bg-orange-900/60 text-orange-300 border border-orange-700">Tiktoken</span>
+        <span class="tech-badge bg-slate-700 text-slate-300 border border-slate-600">Terraform</span>
+        <span class="tech-badge bg-slate-700 text-slate-300 border border-slate-600">GitHub Actions</span>
+      </div>
+
+      <p class="text-slate-500 text-sm mt-6 animate-bounce">↓ scroll to explore</p>
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════════════════════
+       SLIDE 2 — THE PROBLEM
+  ════════════════════════════════════════════════════════════════════════ -->
+  <section class="slide px-8 py-20 max-w-7xl mx-auto w-full" id="slide-2">
+
+    <div class="text-center mb-12">
+      <span class="tech-badge bg-red-900/60 text-red-300 border border-red-700 mb-4 inline-block">The Problem</span>
+      <h2 class="text-5xl font-black text-white mt-3">The Raw Data is <span class="text-red-400">Unusable</span></h2>
+      <p class="text-slate-400 text-xl mt-4 max-w-2xl mx-auto">SEC EDGAR publishes thousands of filings — but they're locked in formats no AI or analyst can query directly.</p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mt-4">
+
+      <!-- Problem 1 -->
+      <div class="bg-slate-800/70 border border-red-900/60 rounded-2xl p-7 card-glow">
+        <div class="w-12 h-12 rounded-xl bg-red-900/40 flex items-center justify-center mb-5 text-2xl">📄</div>
+        <h3 class="text-xl font-bold text-white mb-3">Unstructured HTML</h3>
+        <p class="text-slate-400 leading-relaxed">10-K filings are massive HTML documents. Item 1 (Business), Item 1A (Risk Factors), and Item 7 (MD&A) are buried inside raw markup with no clean boundaries.</p>
+        <div class="mt-4 p-3 bg-slate-900 rounded-lg font-mono text-xs text-red-400 break-all">
+          &lt;div class="WordSection1"&gt;&lt;p class="MsoBodyText"&gt;...thousands of lines...&lt;/p&gt;&lt;/div&gt;
+        </div>
+      </div>
+
+      <!-- Problem 2 -->
+      <div class="bg-slate-800/70 border border-red-900/60 rounded-2xl p-7 card-glow">
+        <div class="w-12 h-12 rounded-xl bg-red-900/40 flex items-center justify-center mb-5 text-2xl">🧮</div>
+        <h3 class="text-xl font-bold text-white mb-3">XBRL Concept Chaos</h3>
+        <p class="text-slate-400 leading-relaxed">The same metric — "Revenue" — can appear under <span class="text-orange-300 font-mono text-sm">5+ different XBRL concept names</span> depending on the company's filing software.</p>
+        <div class="mt-4 space-y-1">
+          <div class="font-mono text-xs text-slate-500 bg-slate-900 rounded px-3 py-1">Revenues</div>
+          <div class="font-mono text-xs text-slate-500 bg-slate-900 rounded px-3 py-1">SalesRevenueNet</div>
+          <div class="font-mono text-xs text-slate-500 bg-slate-900 rounded px-3 py-1">RevenueFromContractWithCustomer...</div>
+          <div class="font-mono text-xs text-blue-400 bg-slate-900 rounded px-3 py-1">→ all mean "revenue"</div>
+        </div>
+      </div>
+
+      <!-- Problem 3 -->
+      <div class="bg-slate-800/70 border border-red-900/60 rounded-2xl p-7 card-glow">
+        <div class="w-12 h-12 rounded-xl bg-red-900/40 flex items-center justify-center mb-5 text-2xl">🔁</div>
+        <h3 class="text-xl font-bold text-white mb-3">No Idempotency</h3>
+        <p class="text-slate-400 leading-relaxed">Re-running ingestion jobs on the SEC API without careful design causes <span class="text-red-400 font-semibold">duplicate records, phantom data, and broken analytics</span>. Every re-run must be safe.</p>
+        <div class="mt-4 grid grid-cols-2 gap-2 text-xs text-center">
+          <div class="bg-red-900/30 border border-red-800 rounded-lg px-2 py-2 text-red-300">❌ Naïve Append<br/><span class="text-slate-500">= duplicates</span></div>
+          <div class="bg-green-900/30 border border-green-800 rounded-lg px-2 py-2 text-green-300">✅ Delta MERGE<br/><span class="text-slate-500">= idempotent</span></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Source tag -->
+    <div class="text-center mt-10">
+      <span class="text-slate-600 text-sm">Data source: </span>
+      <span class="text-blue-400 font-mono text-sm">SEC EDGAR — /api/xbrl/companyfacts/{cik}.json</span>
+    </div>
+
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════════════════════
+       SLIDE 3 — THE SOLUTION: MEDALLION PIPELINE (FULL VISUAL)
+  ════════════════════════════════════════════════════════════════════════ -->
+  <section class="slide px-8 py-20 max-w-7xl mx-auto w-full" id="slide-3">
+
+    <div class="text-center mb-12">
+      <span class="tech-badge bg-blue-900/60 text-blue-300 border border-blue-700 mb-4 inline-block">The Solution</span>
+      <h2 class="text-5xl font-black text-white mt-3">Medallion <span class="gradient-text">Architecture</span></h2>
+      <p class="text-slate-400 text-xl mt-4">A 5-layer production pipeline — every stage adds structure, quality, and value.</p>
+    </div>
+
+    <!-- HORIZONTAL PIPELINE FLOW -->
+    <div class="flex flex-col lg:flex-row items-stretch gap-0 mt-6">
+
+      <!-- ── BRONZE ─────────────────────────────── -->
+      <div class="flex-1 bg-slate-800/80 border-2 bronze-border rounded-2xl overflow-hidden flex flex-col card-orange-glow">
+        <div class="bronze-header px-5 py-3 flex items-center gap-3">
+          <span class="text-xl">🥉</span>
+          <div>
+            <p class="text-xs text-orange-200/70 font-medium uppercase tracking-widest">Layer 01</p>
+            <h3 class="text-lg font-black text-white">Bronze</h3>
+          </div>
+        </div>
+        <div class="p-5 flex flex-col gap-3 flex-1">
+          <p class="text-slate-400 text-sm font-medium">Raw Ingestion · Append-Only</p>
+          <div class="space-y-2">
+            <div class="flex items-start gap-2">
+              <span class="text-orange-400 mt-0.5 text-sm">▸</span>
+              <p class="text-slate-300 text-sm"><span class="text-white font-semibold">Auto Loader</span> (<code class="text-orange-300 text-xs">cloudFiles</code>) streams raw 10-K/10-Q bytes</p>
+            </div>
+            <div class="flex items-start gap-2">
+              <span class="text-orange-400 mt-0.5 text-sm">▸</span>
+              <p class="text-slate-300 text-sm"><span class="text-white font-semibold">SEC CompanyFacts API</span> — raw JSON per ticker per day</p>
+            </div>
+            <div class="flex items-start gap-2">
+              <span class="text-orange-400 mt-0.5 text-sm">▸</span>
+              <p class="text-slate-300 text-sm"><span class="text-white font-semibold">Zero transformation</span> — full audit trail preserved</p>
+            </div>
+          </div>
+          <div class="mt-auto pt-3 border-t border-slate-700">
+            <p class="text-xs text-slate-500 mb-2 font-medium uppercase tracking-wider">Tables</p>
+            <div class="space-y-1">
+              <div class="font-mono text-xs text-orange-300 bg-slate-900/60 rounded px-2 py-1">filings</div>
+              <div class="font-mono text-xs text-orange-300 bg-slate-900/60 rounded px-2 py-1">xbrl_companyfacts_raw</div>
+              <div class="font-mono text-xs text-orange-300 bg-slate-900/60 rounded px-2 py-1">ingestion_errors</div>
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-1 mt-2">
+            <span class="tech-badge bg-orange-900/30 text-orange-300 text-xs">Auto Loader</span>
+            <span class="tech-badge bg-orange-900/30 text-orange-300 text-xs">CDF enabled</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Arrow -->
+      <div class="pipeline-arrow justify-center py-4 lg:py-0 lg:px-2 rotate-90 lg:rotate-0">
+        <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+          <path d="M6 18H30M30 18L22 10M30 18L22 26" stroke="#3b82f6" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+
+      <!-- ── SILVER ─────────────────────────────── -->
+      <div class="flex-1 bg-slate-800/80 border-2 silver-border rounded-2xl overflow-hidden flex flex-col card-glow">
+        <div class="silver-header px-5 py-3 flex items-center gap-3">
+          <span class="text-xl">🥈</span>
+          <div>
+            <p class="text-xs text-slate-300/70 font-medium uppercase tracking-widest">Layer 02</p>
+            <h3 class="text-lg font-black text-white">Silver</h3>
+          </div>
+        </div>
+        <div class="p-5 flex flex-col gap-3 flex-1">
+          <p class="text-slate-400 text-sm font-medium">Cleaned & Parsed · Idempotent</p>
+          <div class="space-y-2">
+            <div class="flex items-start gap-2">
+              <span class="text-slate-400 mt-0.5 text-sm">▸</span>
+              <p class="text-slate-300 text-sm"><span class="text-white font-semibold">XBRL flattening</span> — 30+ concepts → 11 normalised metrics via <code class="text-slate-300 text-xs">TARGET_CONCEPT_MAP</code></p>
+            </div>
+            <div class="flex items-start gap-2">
+              <span class="text-slate-400 mt-0.5 text-sm">▸</span>
+              <p class="text-slate-300 text-sm"><span class="text-white font-semibold">Section extraction</span> — regex-parses Item 1, 1A, 7 from raw HTML</p>
+            </div>
+            <div class="flex items-start gap-2">
+              <span class="text-slate-400 mt-0.5 text-sm">▸</span>
+              <p class="text-slate-300 text-sm"><span class="text-white font-semibold">SHA-256 dedup</span> on <code class="text-slate-300 text-xs">statement_id</code></p>
+            </div>
+          </div>
+          <div class="mt-auto pt-3 border-t border-slate-700">
+            <p class="text-xs text-slate-500 mb-2 font-medium uppercase tracking-wider">Tables</p>
+            <div class="space-y-1">
+              <div class="font-mono text-xs text-slate-300 bg-slate-900/60 rounded px-2 py-1">financial_statements</div>
+              <div class="font-mono text-xs text-slate-300 bg-slate-900/60 rounded px-2 py-1">filing_sections</div>
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-1 mt-2">
+            <span class="tech-badge bg-slate-700 text-slate-300 text-xs">Python UDFs</span>
+            <span class="tech-badge bg-slate-700 text-slate-300 text-xs">Delta MERGE</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Arrow -->
+      <div class="pipeline-arrow justify-center py-4 lg:py-0 lg:px-2 rotate-90 lg:rotate-0">
+        <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+          <path d="M6 18H30M30 18L22 10M30 18L22 26" stroke="#3b82f6" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+
+      <!-- ── GOLD ─────────────────────────────── -->
+      <div class="flex-1 bg-slate-800/80 border-2 gold-border rounded-2xl overflow-hidden flex flex-col card-orange-glow">
+        <div class="gold-header px-5 py-3 flex items-center gap-3">
+          <span class="text-xl">🥇</span>
+          <div>
+            <p class="text-xs text-yellow-200/70 font-medium uppercase tracking-widest">Layer 03</p>
+            <h3 class="text-lg font-black text-white">Gold</h3>
+          </div>
+        </div>
+        <div class="p-5 flex flex-col gap-3 flex-1">
+          <p class="text-slate-400 text-sm font-medium">Analytical Metrics · Analyst-Ready</p>
+          <div class="space-y-2">
+            <div class="flex items-start gap-2">
+              <span class="text-yellow-400 mt-0.5 text-sm">▸</span>
+              <p class="text-slate-300 text-sm"><span class="text-white font-semibold">16 KPIs</span> per ticker-year: gross margin %, revenue YoY growth %, debt-to-equity</p>
+            </div>
+            <div class="flex items-start gap-2">
+              <span class="text-yellow-400 mt-0.5 text-sm">▸</span>
+              <p class="text-slate-300 text-sm"><span class="text-white font-semibold">Data quality score</span> (0–1) for every row</p>
+            </div>
+            <div class="flex items-start gap-2">
+              <span class="text-yellow-400 mt-0.5 text-sm">▸</span>
+              <p class="text-slate-300 text-sm"><span class="text-white font-semibold">FY-only alignment</span> — strict 350–380 day duration filter</p>
+            </div>
+          </div>
+          <div class="mt-auto pt-3 border-t border-slate-700">
+            <p class="text-xs text-slate-500 mb-2 font-medium uppercase tracking-wider">Tables</p>
+            <div class="space-y-1">
+              <div class="font-mono text-xs text-yellow-300 bg-slate-900/60 rounded px-2 py-1">company_metrics</div>
+              <div class="font-mono text-xs text-yellow-300 bg-slate-900/60 rounded px-2 py-1">filing_section_chunks</div>
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-1 mt-2">
+            <span class="tech-badge bg-yellow-900/30 text-yellow-300 text-xs">Delta MERGE</span>
+            <span class="tech-badge bg-yellow-900/30 text-yellow-300 text-xs">Window Fns</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Arrow -->
+      <div class="pipeline-arrow justify-center py-4 lg:py-0 lg:px-2 rotate-90 lg:rotate-0">
+        <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+          <path d="M6 18H30M30 18L22 10M30 18L22 26" stroke="#f97316" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+
+      <!-- ── VECTOR ─────────────────────────────── -->
+      <div class="flex-1 bg-slate-800/80 border-2 vector-border rounded-2xl overflow-hidden flex flex-col card-glow ring-1 ring-blue-500/30">
+        <div class="vector-header px-5 py-3 flex items-center gap-3">
+          <span class="text-xl">🤖</span>
+          <div>
+            <p class="text-xs text-blue-200/70 font-medium uppercase tracking-widest">Layer 04</p>
+            <h3 class="text-lg font-black text-white">Vector</h3>
+          </div>
+        </div>
+        <div class="p-5 flex flex-col gap-3 flex-1">
+          <p class="text-slate-400 text-sm font-medium">AI-Ready · RAG-Optimised</p>
+          <div class="space-y-2">
+            <div class="flex items-start gap-2">
+              <span class="text-blue-400 mt-0.5 text-sm">▸</span>
+              <p class="text-slate-300 text-sm"><span class="text-white font-semibold">Tiktoken</span> chunks — 512 tokens, 64-token overlap</p>
+            </div>
+            <div class="flex items-start gap-2">
+              <span class="text-blue-400 mt-0.5 text-sm">▸</span>
+              <p class="text-slate-300 text-sm"><span class="text-white font-semibold">SHA-256 chunk IDs</span> — fully deterministic, idempotent merges</p>
+            </div>
+            <div class="flex items-start gap-2">
+              <span class="text-blue-400 mt-0.5 text-sm">▸</span>
+              <p class="text-slate-300 text-sm"><span class="text-white font-semibold">Databricks Vector Search</span> — Delta Sync index, <code class="text-blue-300 text-xs">bge-large-en</code></p>
+            </div>
+          </div>
+          <div class="mt-auto pt-3 border-t border-slate-700">
+            <p class="text-xs text-slate-500 mb-2 font-medium uppercase tracking-wider">Resources</p>
+            <div class="space-y-1">
+              <div class="font-mono text-xs text-blue-300 bg-slate-900/60 rounded px-2 py-1">filing_chunks_index</div>
+              <div class="font-mono text-xs text-blue-300 bg-slate-900/60 rounded px-2 py-1">text-embedding-3-large</div>
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-1 mt-2">
+            <span class="tech-badge bg-blue-900/30 text-blue-300 text-xs">Tiktoken</span>
+            <span class="tech-badge bg-blue-900/30 text-blue-300 text-xs">Vector Search</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Unity Catalog footer label -->
+    <div class="mt-6 flex items-center justify-center gap-3">
+      <div class="h-px flex-1 bg-slate-700/50"></div>
+      <p class="text-slate-500 text-sm px-4">All layers stored as Delta Lake tables in <span class="text-blue-400 font-semibold">Unity Catalog</span> (<code class="text-slate-400 text-xs">main.*</code>)</p>
+      <div class="h-px flex-1 bg-slate-700/50"></div>
+    </div>
+
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════════════════════
+       SLIDE 4 — ENGINEERING DETAILS
+  ════════════════════════════════════════════════════════════════════════ -->
+  <section class="slide px-8 py-20 max-w-7xl mx-auto w-full" id="slide-4">
+
+    <div class="text-center mb-12">
+      <span class="tech-badge bg-slate-700 text-slate-300 border border-slate-600 mb-4 inline-block">Under the Hood</span>
+      <h2 class="text-5xl font-black text-white mt-3">Production <span class="gradient-text">Engineering</span></h2>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+      <!-- CI/CD -->
+      <div class="bg-slate-800/70 border border-slate-700 rounded-2xl p-6 card-glow">
+        <div class="flex items-center gap-3 mb-5">
+          <div class="w-10 h-10 rounded-xl bg-slate-700 flex items-center justify-center text-xl">⚙️</div>
+          <h3 class="text-lg font-bold text-white">CI/CD Pipeline</h3>
+        </div>
+        <div class="space-y-3">
+          <div class="flex items-center gap-3 bg-slate-900/50 rounded-xl px-4 py-3">
+            <span class="text-green-400 font-bold text-lg">1</span>
+            <div>
+              <p class="text-white text-sm font-semibold">pytest (unit tests)</p>
+              <p class="text-slate-500 text-xs">No Spark needed — pure Python</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-3 bg-slate-900/50 rounded-xl px-4 py-3">
+            <span class="text-blue-400 font-bold text-lg">2</span>
+            <div>
+              <p class="text-white text-sm font-semibold">bundle validate</p>
+              <p class="text-slate-500 text-xs">Syntax + workspace API check</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-3 bg-slate-900/50 rounded-xl px-4 py-3">
+            <span class="text-orange-400 font-bold text-lg">3</span>
+            <div>
+              <p class="text-white text-sm font-semibold">bundle deploy -t prod</p>
+              <p class="text-slate-500 text-xs">Only on push to main</p>
+            </div>
+          </div>
+        </div>
+        <div class="mt-4 flex gap-2">
+          <span class="tech-badge bg-slate-700 text-slate-300 text-xs">GitHub Actions</span>
+          <span class="tech-badge bg-slate-700 text-slate-300 text-xs">M2M OAuth 2.0</span>
+        </div>
+      </div>
+
+      <!-- Databricks Asset Bundle -->
+      <div class="bg-slate-800/70 border border-slate-700 rounded-2xl p-6 card-glow">
+        <div class="flex items-center gap-3 mb-5">
+          <div class="w-10 h-10 rounded-xl bg-blue-900/40 flex items-center justify-center text-xl">📦</div>
+          <h3 class="text-lg font-bold text-white">Asset Bundle (DAB)</h3>
+        </div>
+        <p class="text-slate-400 text-sm mb-4">The entire job topology is code — clusters, tasks, schedules, and environment promotion defined in <code class="text-blue-300 text-xs">databricks.yml</code>.</p>
+        <div class="bg-slate-900 rounded-xl p-4 font-mono text-xs text-slate-300 leading-6">
+          <span class="text-slate-500">tasks:</span><br/>
+          <span class="text-blue-300">&nbsp;&nbsp;schema_setup</span><br/>
+          <span class="text-orange-300">&nbsp;&nbsp;→ bronze_autoloader</span><br/>
+          <span class="text-slate-300">&nbsp;&nbsp;→ silver_decoder</span><br/>
+          <span class="text-yellow-300">&nbsp;&nbsp;→ gold_metrics</span><br/>
+          <span class="text-blue-400">&nbsp;&nbsp;→ vector_chunker</span>
+        </div>
+        <div class="mt-4 flex gap-2">
+          <span class="tech-badge bg-blue-900/30 text-blue-300 text-xs">dev target</span>
+          <span class="tech-badge bg-orange-900/30 text-orange-300 text-xs">prod target</span>
+        </div>
+      </div>
+
+      <!-- Data Quality -->
+      <div class="bg-slate-800/70 border border-slate-700 rounded-2xl p-6 card-glow">
+        <div class="flex items-center gap-3 mb-5">
+          <div class="w-10 h-10 rounded-xl bg-green-900/40 flex items-center justify-center text-xl">✅</div>
+          <h3 class="text-lg font-bold text-white">Data Quality by Design</h3>
+        </div>
+        <div class="space-y-3">
+          <div class="border border-slate-700 rounded-xl px-4 py-3">
+            <p class="text-white text-sm font-semibold">Idempotent MERGE</p>
+            <p class="text-slate-500 text-xs mt-1">Every pipeline layer uses Delta MERGE — safe to re-run at any time.</p>
+          </div>
+          <div class="border border-slate-700 rounded-xl px-4 py-3">
+            <p class="text-white text-sm font-semibold">SHA-256 Deduplication</p>
+            <p class="text-slate-500 text-xs mt-1">Deterministic IDs on statements and chunks prevent phantom rows.</p>
+          </div>
+          <div class="border border-slate-700 rounded-xl px-4 py-3">
+            <p class="text-white text-sm font-semibold">Change Data Feed</p>
+            <p class="text-slate-500 text-xs mt-1"><code class="text-green-300 text-xs">delta.enableChangeDataFeed</code> on all Bronze tables for downstream CDC.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- XBRL normalisation -->
+      <div class="bg-slate-800/70 border border-slate-700 rounded-2xl p-6 card-glow">
+        <div class="flex items-center gap-3 mb-5">
+          <div class="w-10 h-10 rounded-xl bg-orange-900/40 flex items-center justify-center text-xl">🗺️</div>
+          <h3 class="text-lg font-bold text-white">XBRL Normalisation</h3>
+        </div>
+        <p class="text-slate-400 text-sm mb-4">A single <span class="text-orange-300 font-semibold">TARGET_CONCEPT_MAP</span> canonically maps 30+ raw us-gaap concepts to 11 clean metric names. The single source of truth.</p>
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          <div class="bg-red-900/20 border border-red-900/40 rounded-lg px-2 py-2 text-red-300 font-mono text-center">Revenues</div>
+          <div class="bg-green-900/20 border border-green-900/40 rounded-lg px-2 py-2 text-green-300 font-mono text-center">revenue</div>
+          <div class="bg-red-900/20 border border-red-900/40 rounded-lg px-2 py-2 text-red-300 font-mono text-center">NetIncomeLoss</div>
+          <div class="bg-green-900/20 border border-green-900/40 rounded-lg px-2 py-2 text-green-300 font-mono text-center">net_income</div>
+          <div class="bg-red-900/20 border border-red-900/40 rounded-lg px-2 py-2 text-red-300 font-mono text-center">GrossProfit</div>
+          <div class="bg-green-900/20 border border-green-900/40 rounded-lg px-2 py-2 text-green-300 font-mono text-center">gross_profit</div>
+        </div>
+      </div>
+
+      <!-- Infrastructure as Code -->
+      <div class="bg-slate-800/70 border border-slate-700 rounded-2xl p-6 card-glow">
+        <div class="flex items-center gap-3 mb-5">
+          <div class="w-10 h-10 rounded-xl bg-purple-900/40 flex items-center justify-center text-xl">🏗️</div>
+          <h3 class="text-lg font-bold text-white">Infrastructure as Code</h3>
+        </div>
+        <p class="text-slate-400 text-sm mb-4">All cloud resources managed via <span class="text-purple-300 font-semibold">Terraform</span> — cluster policies, secret scopes, and service principal lookups.</p>
+        <div class="space-y-2 font-mono text-xs">
+          <div class="bg-slate-900/60 rounded px-3 py-2 text-slate-300">cluster_policy — cost controls</div>
+          <div class="bg-slate-900/60 rounded px-3 py-2 text-slate-300">secret_scope — credential vault</div>
+          <div class="bg-slate-900/60 rounded px-3 py-2 text-slate-300">service_principal — no PAT tokens</div>
+        </div>
+        <div class="mt-4 flex gap-2">
+          <span class="tech-badge bg-purple-900/30 text-purple-300 text-xs">Terraform</span>
+          <span class="tech-badge bg-slate-700 text-slate-300 text-xs">IaC</span>
+        </div>
+      </div>
+
+      <!-- Testing -->
+      <div class="bg-slate-800/70 border border-slate-700 rounded-2xl p-6 card-glow">
+        <div class="flex items-center gap-3 mb-5">
+          <div class="w-10 h-10 rounded-xl bg-teal-900/40 flex items-center justify-center text-xl">🧪</div>
+          <h3 class="text-lg font-bold text-white">Testing Strategy</h3>
+        </div>
+        <div class="space-y-3">
+          <div class="border-l-2 border-teal-500 pl-3">
+            <p class="text-white text-sm font-semibold">Unit Tests</p>
+            <p class="text-slate-500 text-xs">test_normalizer.py — validates TARGET_CONCEPT_MAP without Spark. Runs in CI in seconds.</p>
+          </div>
+          <div class="border-l-2 border-blue-500 pl-3">
+            <p class="text-white text-sm font-semibold">Integration Tests</p>
+            <p class="text-slate-500 text-xs">test_bronze_schema.py — validates Delta table schemas against expected contracts.</p>
+          </div>
+          <div class="border-l-2 border-orange-500 pl-3">
+            <p class="text-white text-sm font-semibold">Conftest Fixtures</p>
+            <p class="text-slate-500 text-xs">Shared pytest fixtures isolate Spark session setup from test logic.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════════════════════
+       SLIDE 5 — STATUS & NEXT STEPS
+  ════════════════════════════════════════════════════════════════════════ -->
+  <section class="slide px-8 py-20 max-w-7xl mx-auto w-full" id="slide-5">
+
+    <div class="text-center mb-12">
+      <span class="tech-badge bg-green-900/60 text-green-300 border border-green-700 mb-4 inline-block">Current Status</span>
+      <h2 class="text-5xl font-black text-white mt-3">Where We Are <span class="gradient-text">Today</span></h2>
+    </div>
+
+    <!-- BIG STATUS CARD -->
+    <div class="bg-slate-800/80 border-2 border-green-600/60 rounded-3xl p-8 max-w-4xl mx-auto pulse-green">
+      <div class="flex flex-col md:flex-row items-center gap-8">
+        <div class="flex-shrink-0">
+          <div class="w-24 h-24 rounded-full bg-green-900/40 border-4 border-green-500 flex items-center justify-center">
+            <span class="text-4xl">✅</span>
+          </div>
+        </div>
+        <div class="text-center md:text-left">
+          <div class="flex items-center gap-3 justify-center md:justify-start mb-2">
+            <div class="w-3 h-3 rounded-full bg-green-400 animate-pulse"></div>
+            <span class="text-green-300 font-semibold uppercase tracking-widest text-sm">Pipeline Complete</span>
+          </div>
+          <h3 class="text-3xl font-black text-white mb-2">Vector Chunking Layer — Done</h3>
+          <p class="text-slate-300 text-lg">All 5 pipeline layers are implemented, tested, and deployed to Databricks via CI/CD. The full Bronze → Silver → Gold → Vector chain is production-grade.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Progress tracker -->
+    <div class="mt-10 max-w-4xl mx-auto">
+      <div class="flex flex-col gap-3">
+
+        <div class="flex items-center gap-4 bg-slate-800/50 border border-green-800/40 rounded-xl px-5 py-4">
+          <div class="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-sm font-bold text-white flex-shrink-0">✓</div>
+          <div class="flex-1">
+            <div class="flex items-center justify-between">
+              <span class="text-white font-semibold">01 — Schema Setup</span>
+              <span class="tech-badge bg-green-900/40 text-green-300 text-xs">Complete</span>
+            </div>
+            <p class="text-slate-500 text-xs mt-1">DDL: schemas, tables, volumes created in Unity Catalog</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-4 bg-slate-800/50 border border-green-800/40 rounded-xl px-5 py-4">
+          <div class="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-sm font-bold text-white flex-shrink-0">✓</div>
+          <div class="flex-1">
+            <div class="flex items-center justify-between">
+              <span class="text-white font-semibold">02 — Bronze Auto Loader</span>
+              <span class="tech-badge bg-green-900/40 text-green-300 text-xs">Complete</span>
+            </div>
+            <p class="text-slate-500 text-xs mt-1">Auto Loader + SEC API ingestion, exactly-once delivery</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-4 bg-slate-800/50 border border-green-800/40 rounded-xl px-5 py-4">
+          <div class="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-sm font-bold text-white flex-shrink-0">✓</div>
+          <div class="flex-1">
+            <div class="flex items-center justify-between">
+              <span class="text-white font-semibold">03 — Silver Decoder</span>
+              <span class="tech-badge bg-green-900/40 text-green-300 text-xs">Complete</span>
+            </div>
+            <p class="text-slate-500 text-xs mt-1">XBRL flattening, HTML section extraction, SHA-256 dedup</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-4 bg-slate-800/50 border border-green-800/40 rounded-xl px-5 py-4">
+          <div class="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-sm font-bold text-white flex-shrink-0">✓</div>
+          <div class="flex-1">
+            <div class="flex items-center justify-between">
+              <span class="text-white font-semibold">04 — Gold Metrics</span>
+              <span class="tech-badge bg-green-900/40 text-green-300 text-xs">Complete</span>
+            </div>
+            <p class="text-slate-500 text-xs mt-1">16 KPIs, YoY growth, data quality scoring per ticker-year</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-4 bg-slate-800/50 border border-green-800/40 rounded-xl px-5 py-4">
+          <div class="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-sm font-bold text-white flex-shrink-0">✓</div>
+          <div class="flex-1">
+            <div class="flex items-center justify-between">
+              <span class="text-white font-semibold">05 — Vector Chunker</span>
+              <span class="tech-badge bg-green-900/40 text-green-300 text-xs">Complete</span>
+            </div>
+            <p class="text-slate-500 text-xs mt-1">512-token chunks, Delta Sync index, Vector Search provisioned</p>
+          </div>
+        </div>
+
+        <!-- Next step -->
+        <div class="flex items-center gap-4 bg-blue-900/20 border border-blue-700/60 rounded-xl px-5 py-4">
+          <div class="w-8 h-8 rounded-full bg-blue-600/40 border-2 border-blue-500 flex items-center justify-center text-sm font-bold text-blue-300 flex-shrink-0">→</div>
+          <div class="flex-1">
+            <div class="flex items-center justify-between">
+              <span class="text-blue-200 font-semibold">06 — RAG LLM Integration</span>
+              <span class="tech-badge bg-blue-900/40 text-blue-300 text-xs border border-blue-700">Next</span>
+            </div>
+            <p class="text-slate-500 text-xs mt-1">Connect Vector Search index to LLM agent for financial Q&A</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- HR-friendly value summary -->
+    <div class="mt-12 max-w-4xl mx-auto text-center">
+      <p class="text-slate-500 text-sm uppercase tracking-widest mb-6 font-medium">What this means in plain English</p>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="bg-slate-800/50 border border-slate-700 rounded-2xl px-5 py-5">
+          <div class="text-3xl mb-3">🔍</div>
+          <h4 class="text-white font-semibold mb-2">Automated Research</h4>
+          <p class="text-slate-400 text-sm">Any analyst can ask "What were Apple's risk factors in 2023?" and get an answer instantly — no manual filing review.</p>
+        </div>
+        <div class="bg-slate-800/50 border border-slate-700 rounded-2xl px-5 py-5">
+          <div class="text-3xl mb-3">📊</div>
+          <h4 class="text-white font-semibold mb-2">Comparable Metrics</h4>
+          <p class="text-slate-400 text-sm">30 companies, multiple years, all on a single normalised standard — ready for cross-company financial analysis.</p>
+        </div>
+        <div class="bg-slate-800/50 border border-slate-700 rounded-2xl px-5 py-5">
+          <div class="text-3xl mb-3">🚀</div>
+          <h4 class="text-white font-semibold mb-2">Production Grade</h4>
+          <p class="text-slate-400 text-sm">Not a demo. Real CI/CD, real tests, real Terraform — the same engineering standards used at FAANG-level data teams.</p>
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════════════════════
+       FOOTER NAV
+  ════════════════════════════════════════════════════════════════════════ -->
+  <footer class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
+    <div class="bg-slate-800/90 backdrop-blur border border-slate-700 rounded-full px-5 py-2 flex items-center gap-3 shadow-2xl">
+      <a href="#slide-1" class="nav-dot w-2.5 h-2.5 rounded-full bg-slate-500 hover:bg-blue-400 transition-all" title="Title"></a>
+      <a href="#slide-2" class="nav-dot w-2.5 h-2.5 rounded-full bg-slate-500 hover:bg-blue-400 transition-all" title="Problem"></a>
+      <a href="#slide-3" class="nav-dot w-2.5 h-2.5 rounded-full bg-slate-500 hover:bg-blue-400 transition-all" title="Pipeline"></a>
+      <a href="#slide-4" class="nav-dot w-2.5 h-2.5 rounded-full bg-slate-500 hover:bg-blue-400 transition-all" title="Engineering"></a>
+      <a href="#slide-5" class="nav-dot w-2.5 h-2.5 rounded-full bg-slate-500 hover:bg-blue-400 transition-all" title="Status"></a>
+      <div class="w-px h-4 bg-slate-600 mx-1"></div>
+      <span class="text-slate-400 text-xs font-medium">FinSage</span>
+    </div>
+  </footer>
+
+  <script>
+    // Highlight active nav dot based on scroll position
+    const slides = ['slide-1','slide-2','slide-3','slide-4','slide-5'];
+    const dots = document.querySelectorAll('.nav-dot');
+
+    function updateDots() {
+      let activeIdx = 0;
+      slides.forEach((id, i) => {
+        const el = document.getElementById(id);
+        if (el) {
+          const rect = el.getBoundingClientRect();
+          if (rect.top <= window.innerHeight / 2) activeIdx = i;
+        }
+      });
+      dots.forEach((d, i) => {
+        d.classList.toggle('active', i === activeIdx);
+        if (i === activeIdx) {
+          d.style.background = '#3b82f6';
+          d.style.transform = 'scale(1.5)';
+        } else {
+          d.style.background = '';
+          d.style.transform = '';
+        }
+      });
+    }
+
+    window.addEventListener('scroll', updateDots, { passive: true });
+    updateDots();
+
+    // Keyboard navigation
+    document.addEventListener('keydown', e => {
+      let cur = 0;
+      slides.forEach((id, i) => {
+        const el = document.getElementById(id);
+        if (el) {
+          const rect = el.getBoundingClientRect();
+          if (rect.top <= window.innerHeight / 2) cur = i;
+        }
+      });
+      if ((e.key === 'ArrowDown' || e.key === 'ArrowRight') && cur < slides.length - 1) {
+        document.getElementById(slides[cur + 1]).scrollIntoView({ behavior: 'smooth' });
+      }
+      if ((e.key === 'ArrowUp' || e.key === 'ArrowLeft') && cur > 0) {
+        document.getElementById(slides[cur - 1]).scrollIntoView({ behavior: 'smooth' });
+      }
+    });
+  </script>
+
+</body>
+</html>

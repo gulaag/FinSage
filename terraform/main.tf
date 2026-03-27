@@ -35,17 +35,15 @@ terraform {
 # Authenticates via environment variables set by CI (same as the DAB workflow):
 #   DATABRICKS_HOST, DATABRICKS_CLIENT_ID, DATABRICKS_CLIENT_SECRET
 # ---------------------------------------------------------------------------
-provider "databricks" {
-  host = var.databricks_host
-}
+provider "databricks" {}
 
 # ---------------------------------------------------------------------------
 # Variables
 # ---------------------------------------------------------------------------
-variable "databricks_host" {
-  description = "Databricks workspace URL (e.g. https://dbc-xxxx.cloud.databricks.com)"
-  type        = string
-}
+#variable "databricks_host" {
+#  description = "Databricks workspace URL (e.g. https://dbc-xxxx.cloud.databricks.com)"
+#  type        = string
+#}
 
 variable "environment" {
   description = "Deployment environment label: dev or prod"
