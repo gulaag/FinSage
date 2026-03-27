@@ -224,7 +224,7 @@ Jobs & Pipelines UI after a successful `databricks bundle deploy`.  All five tas
 connected as a strictly sequential DAG, sharing the `finsage_cluster` job cluster to
 avoid cold-start overhead between tasks.
 
-<img src="assets/screenshots/finsage_dag_databricks.png" alt="FinSage pipeline DAG in Databricks workspace — five sequential tasks: schema_setup → bronze_autoloader → silver_decoder → gold_metrics → vector_chunker, all running on the shared finsage_cluster. Scheduled daily at 06:00 UTC." style="max-width:100%;" />
+<img src="assets/screenshots/pipeline.gif" alt="FinSage pipeline DAG in Databricks workspace — five sequential tasks: schema_setup → bronze_autoloader → silver_decoder → gold_metrics → vector_chunker, all running on the shared finsage_cluster. Scheduled daily at 06:00 UTC." style="max-width:100%;" />
 
 > The job is marked **[dev Digvijay]** in development mode — DAB automatically prefixes
 > the job name with the deploying user to prevent collisions with the production
