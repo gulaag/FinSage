@@ -215,7 +215,7 @@ databricks bundle destroy
 
 以下のスクリーンショットは、`databricks bundle deploy`成功後にDatabricks Jobs & Pipelines UIに表示される`finsage_daily_run`ジョブです。5つのタスクすべてが厳密に順次実行されるDAGとして接続され、タスク間のコールドスタートのオーバーヘッドを避けるために`finsage_cluster`ジョブクラスターを共有しています。
 
-<img src="assets/screenshots/finsage_dag_databricks.png" alt="DatabricksワークスペースのFinSageパイプラインDAG — schema_setup → bronze_autoloader → silver_decoder → gold_metrics → vector_chunkerの5つの順次タスク、すべて共有finsage_clusterで実行。UTC 06:00に毎日スケジュール。" style="max-width:100%;" />
+<img src="assets/screenshots/pipeline.gif" alt="DatabricksワークスペースのFinSageパイプラインDAG — schema_setup → bronze_autoloader → silver_decoder → gold_metrics → vector_chunkerの5つの順次タスク、すべて共有finsage_clusterで実行。UTC 06:00に毎日スケジュール。" style="max-width:100%;" />
 
 > 開発モードではジョブは**[dev Digvijay]**とマークされます — DABは自動的にデプロイユーザー名をジョブ名にプレフィックスとして付け、同じ共有ワークスペース内の本番`finsage_daily_run`ジョブとの衝突を防ぎます。
 

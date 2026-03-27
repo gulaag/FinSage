@@ -403,7 +403,13 @@ def wait_for_index_ready(vsc, endpoint_name, index_name, timeout_sec):
         indexed_rows = _nested_get(desc, ("status", "indexed_row_count"), ("indexed_row_count",))
         total_rows   = _nested_get(desc, ("status", "total_row_count"),   ("total_row_count",))
         log.info("Index state=%s indexed=%s total=%s message=%s", state, indexed_rows, total_rows, msg)
+        # FIND THIS BLOCK IN YOUR wait_for_index_ready FUNCTION:
         if state in {"ONLINE", "READY", "ONLINE_NO_PENDING_UPDATE"} or state.startswith("ONLINE"):
+            return desc
+
+        # REPLACE IT WITH THIS:
+        if state in {"ONLINE", "READY", "ONLINE_NO_PENDING_UPDATE"} or state.startswith("ONLINE") or "succeeded" in msg.lower():
+            log.info("Success detected via state or message. Proceeding...")
             return desc
         if state in {"FAILED", "ERROR", "UNHEALTHY"}:
             raise RuntimeError(
