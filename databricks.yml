@@ -1,15 +1,43 @@
+# ==============================================================================
+# FinSage — Databricks Asset Bundle (DAB) Configuration
+#
+# A DAB is the Databricks-native way to define, deploy, and version-control
+# Jobs, Pipelines, and other workspace resources as code.
+#
+# This file is the single source of truth for the FinSage job topology.
+# The Databricks CLI reads it and translates it into REST API calls:
+#   databricks bundle deploy -t dev    # deploy to dev
+#   databricks bundle deploy -t prod   # deploy to prod (CI only)
+#   databricks bundle run -t dev finsage_daily_run   # trigger a manual run
+#
+# Relationship to Terraform:
+#   Terraform (terraform/main.tf) manages long-lived infrastructure that
+#   outlasts any single deploy: cluster policies, secret scopes, and SP lookup.
+#   This DAB file manages the job definition itself and is redeployed on every
+#   push to main. The two tools are complementary, not competing.
+# ==============================================================================
+
+# ── 1. Bundle Identity ─────────────────────────────────────────────────────────
+# The bundle name is a unique identifier for this project across all workspaces.
+# It is used as a namespace prefix in the Databricks backend state.
 bundle:
   name: finsage_pipeline
 
-# ---------------------------------------------------------------------------
-# Variables — all can be overridden per-target or via CLI flag:
-#   databricks bundle deploy -t prod --var catalog=main --var ticker_filter=AAPL,MSFT
-# ---------------------------------------------------------------------------
+# ── 2. Input Variables ─────────────────────────────────────────────────────────
+# Variables act as parameters for the entire bundle. They have defaults here
+# and can be overridden two ways:
+#   a) Per-target block (see the `targets` section below)
+#   b) CLI flag at deploy time:
+#        databricks bundle deploy -t prod --var catalog=main --var ticker_filter=AAPL,MSFT
+#
+# Every variable is injected into notebook tasks via `base_parameters`, which
+# means notebooks read them with dbutils.widgets.get("variable_name").
+# This pattern avoids hardcoding environment-specific values in notebook code.
 variables:
   cluster_spark_version:
     default: "14.3.x-scala2.12"
     description: "Databricks Runtime version for the shared job cluster."
-  cluster_node_type:
+  cluster_node_type: 
     default: "i3.xlarge"
     description: "EC2 instance type for the shared job cluster."
   catalog:
@@ -32,9 +60,13 @@ variables:
     default: "digvijay@arsaga.jp"
     description: "Email address for job failure alerts. Override with a team DL in prod."
 
-# ---------------------------------------------------------------------------
-# Resources
-# ---------------------------------------------------------------------------
+# ── 3. Resources ───────────────────────────────────────────────────────────────
+# The resources block declares all Databricks objects this bundle owns.
+# Currently: one Job. Could be extended to include Pipelines, Model Serving
+# endpoints, or Dashboards in the future.
+#
+# On `bundle deploy`, the CLI creates or updates these resources via the
+# Databricks Jobs API. On `bundle destroy`, they are deleted.
 resources:
   jobs:
     finsage_daily_run:
@@ -43,13 +75,23 @@ resources:
         FinSage end-to-end Medallion pipeline:
         schema setup → bronze ingestion → silver decoding → gold metrics → vector chunking.
 
-      # run_as: intentionally omitted for dev — the job runs as the authenticated user
-      # (U2M OAuth via 'databricks auth login'). In production, an admin would add:
+      # ── Job execution identity ──────────────────────────────────────────────
+      # run_as controls WHICH IDENTITY runs the job at execution time.
+      # This is separate from the deployment identity (the CI service principal
+      # that runs `bundle deploy`). Two different concerns, two different SPs.
+      #
+      # run_as is intentionally omitted for dev — the job runs as the
+      # authenticated user (U2M OAuth via 'databricks auth login').
+      # In production, an admin would uncomment and fill in:
       #   run_as:
       #     service_principal_name: "<SP application ID from Databricks admin console>"
       # This decouples job execution from a human identity and is required for prod.
 
-      # Shared cluster reused by all tasks to avoid cold-start overhead per task.
+      # ── Shared Job Cluster ─────────────────────────────────────────────────
+      # A job cluster is ephemeral: it starts when the job starts and terminates
+      # when the job finishes. We define ONE cluster here and share it across
+      # ALL tasks using job_cluster_key references. This avoids the cold-start
+      # penalty of spinning up a new cluster per task (~5–8 min each).
       job_clusters:
         - job_cluster_key: finsage_cluster
           new_cluster:
@@ -58,15 +100,23 @@ resources:
             num_workers:   2
             spark_conf:
               spark.databricks.delta.preview.enabled: "true"
+            # Custom tags flow through to cloud billing (AWS Cost Explorer / Azure Cost Management).
+            # Terraform cluster policy enforces these tags cannot be removed by users.
             custom_tags:
               project:    finsage
               managed_by: dab
               env:        ${var.env}
 
-      # -----------------------------------------------------------------------
-      # Tasks — sequential execution enforced via depends_on.
-      # base_parameters injects runtime config into each notebook via dbutils.widgets.
-      # -----------------------------------------------------------------------
+      # ── Tasks ──────────────────────────────────────────────────────────────
+      # Tasks are the individual steps of the job. Execution order is controlled
+      # by `depends_on` — DAB builds a DAG from these declarations.
+      # Here the pipeline is strictly sequential: each task waits for the
+      # previous one to succeed before starting.
+      #
+      # `base_parameters` passes runtime variables into each notebook.
+      # Inside the notebook, dbutils.widgets.get("catalog") reads them back.
+      # This is what enables the same notebook code to run correctly in both
+      # dev and prod without any code changes.
       tasks:
         - task_key: schema_setup
           description: "Create Medallion schemas, volumes, and download-log table."
@@ -127,6 +177,11 @@ resources:
           depends_on:
             - task_key: gold_metrics
           job_cluster_key: finsage_cluster
+          # --- ADD THESE 3 LINES ---
+          libraries:
+            - pypi:
+                package: tiktoken
+          # -------------------------
           notebook_task:
             notebook_path: ./databricks/notebooks/05_vector_chunker.py
             source: WORKSPACE
@@ -136,27 +191,49 @@ resources:
               start_date:    ${var.start_date}
               ticker_filter: ${var.ticker_filter}
 
-      # Daily schedule: 06:00 UTC — paused per-target in dev (see targets section).
+      # ── Schedule ───────────────────────────────────────────────────────────
+      # Quartz cron syntax: "seconds minutes hours day-of-month month day-of-week"
+      # "0 0 6 * * ?" = every day at 06:00 UTC.
+      # pause_status is set to UNPAUSED here (the global default) but is
+      # overridden to PAUSED in the dev target below to prevent accidental
+      # cron runs consuming cluster credits during development.
       schedule:
         quartz_cron_expression: "0 0 6 * * ?"
         timezone_id: UTC
         pause_status: UNPAUSED
 
+      # ── Failure Notifications ──────────────────────────────────────────────
+      # Sends an email if any task in the job fails.
+      # The recipient is controlled by the notification_email variable so it
+      # can be overridden to a team distribution list in prod without code changes.
       email_notifications:
         on_failure:
           - ${var.notification_email}
 
-# ---------------------------------------------------------------------------
-# Targets
-# ---------------------------------------------------------------------------
+# ── 4. Targets (Environments) ──────────────────────────────────────────────────
+# Targets are named environments. Each target can override variables, workspace
+# host, job settings, and the deployment mode.
+#
+# Deployment mode controls two things:
+#   development  → prefixes job names with "[dev <username>]" to prevent
+#                  collisions when multiple engineers deploy to the same workspace.
+#                  Also relaxes some validation rules.
+#   production   → no name prefix. Strict validation. Intended for CI only.
+#
+# Anything defined under a target's `resources` block deep-merges with the
+# top-level resources definition above, allowing surgical overrides (e.g.
+# pausing the schedule in dev) without duplicating the entire job config.
 targets:
-  # ---------------------------------------------------------------------------
-  # Dev — personal development environment.
-  # Jobs are prefixed with the deploying user's name (DAB development mode).
-  # Schedule is PAUSED to prevent cron runs consuming cluster credits in dev.
-  # ---------------------------------------------------------------------------
+
+  # ── Dev ────────────────────────────────────────────────────────────────────
+  # Personal development environment. Deploy locally with:
+  #   databricks bundle deploy          (uses this target by default)
+  #   databricks bundle run finsage_daily_run   (trigger a manual run)
+  #
+  # Authentication: U2M OAuth — run `databricks auth login` once to set up.
+  # The job runs as your personal user identity in dev.
   dev:
-    default: true
+    default: true        # Used when --target is not specified on the CLI.
     mode: development
     workspace:
       # MANUAL INTERVENTION REQUIRED:
@@ -172,10 +249,46 @@ targets:
           schedule:
             pause_status: PAUSED   # Never auto-run in dev; trigger manually with 'bundle run'.
 
-  # ---------------------------------------------------------------------------
-  # Prod — shared production environment.
-  # No job name prefix. Deployed exclusively by CI on push to main.
-  # ---------------------------------------------------------------------------
+          # DEV WORKAROUND: Route all tasks to an existing interactive cluster instead of
+          # spinning up a new job cluster. This avoids the PERMISSION_DENIED error when
+          # the user account lacks "Allow cluster creation" for automated job compute.
+          #
+          # MANUAL INTERVENTION REQUIRED:
+          # Replace the placeholder below with your actual cluster ID.
+          # Find it in: Databricks UI → Compute → your cluster → URL contains the ID
+          # e.g. https://dbc-xxxx.cloud.databricks.com/#setting/clusters/1234-567890-abc123/configuration
+          #                                                                 ^^^^^^^^^^^^^^^^^^^^
+          # Then re-deploy: databricks bundle deploy && databricks bundle run finsage_daily_run
+          #
+          # Remove this block once the admin grants you job cluster creation permissions.
+          # Clear the job_cluster_key from every task so the Jobs API does not
+          # try to resolve the new_cluster definition. Both fields cannot coexist.
+          job_clusters: []
+          tasks:
+            - task_key: schema_setup
+              job_cluster_key: ""
+              existing_cluster_id: "0317-021937-p03vbmz8"
+            - task_key: bronze_autoloader
+              job_cluster_key: ""
+              existing_cluster_id: "0317-021937-p03vbmz8"
+            - task_key: silver_decoder
+              job_cluster_key: ""
+              existing_cluster_id: "0317-021937-p03vbmz8"
+            - task_key: gold_metrics
+              job_cluster_key: ""
+              existing_cluster_id: "0317-021937-p03vbmz8"
+            - task_key: vector_chunker
+              job_cluster_key: ""
+              existing_cluster_id: "0317-021937-p03vbmz8"
+
+  # ── Prod ───────────────────────────────────────────────────────────────────
+  # Shared production environment. Deployed exclusively by CI (GitHub Actions)
+  # on push to main. Never deploy to prod manually from a local machine.
+  #
+  # Authentication: M2M OAuth — GitHub Actions passes DATABRICKS_CLIENT_ID and
+  # DATABRICKS_CLIENT_SECRET (stored as GitHub Secrets) as environment variables.
+  # The Databricks CLI uses these to obtain a short-lived bearer token via the
+  # OAuth 2.0 Client Credentials flow and authenticates as the CI service principal.
   prod:
     mode: production
     workspace:

@@ -1,10 +1,30 @@
-name: FinSage CI/CD Pipeline
+# ==============================================================================
+# FinSage — CI/CD Pipeline (GitHub Actions)
+#
+# This workflow is the automated gatekeeper for all changes to production.
+# It enforces a strict promotion model:
+#   Pull Request → unit-tests only (no deploy)
+#   Push to main → unit-tests → bundle-validate → deploy-prod
+#
+# Three-job sequential pipeline:
+#   unit-tests       runs on every push and PR; fastest feedback gate.
+#   bundle-validate  parses and validates databricks.yml against the live
+#                    workspace API. Catches config errors before any deploy.
+#   deploy-prod      runs `databricks bundle deploy -t prod`; only reached
+#                    after both prior gates pass.
+#
+# Authentication (M2M OAuth 2.0 Client Credentials flow):
+#   DATABRICKS_HOST, DATABRICKS_CLIENT_ID, DATABRICKS_CLIENT_SECRET are
+#   stored as encrypted GitHub Actions secrets. The Databricks CLI reads
+#   these env vars automatically, calls the workspace OIDC token endpoint
+#   (/oidc/v1/token), receives a short-lived bearer token (~1 hour TTL),
+#   and uses it for all API calls. No PAT is used anywhere in this pipeline.
+# ==============================================================================
 
-# ---------------------------------------------------------------------------
-# Triggers
-# Push to main  → full validate + deploy to prod.
-# Pull request  → validate + unit tests only (no deploy).
-# ---------------------------------------------------------------------------
+# ── 1. Triggers — when does this pipeline run? ────────────────────────────────
+# push to main   → full pipeline (test → validate → deploy)
+# pull_request   → test job only; deploy jobs are gated by the `if` conditions
+#                  below and will be skipped on PRs automatically.
 on:
   push:
     branches:
@@ -14,10 +34,13 @@ on:
       - main
 
 jobs:
-  # ─────────────────────────────────────────────────────────────────────────
-  # Job 1: Unit tests
-  # Runs on every push and PR; fastest gate in the pipeline.
-  # ─────────────────────────────────────────────────────────────────────────
+  # ── Job 1: Unit Tests ────────────────────────────────────────────────────────
+  # Runs on EVERY push and PR — the fastest and cheapest gate in the pipeline.
+  # Failures here block all downstream jobs via the `needs` dependency chain.
+  #
+  # Runs entirely on the GitHub-hosted runner (no Databricks connection needed).
+  # Tests are pure Python unit tests that mock Spark/dbutils, so they complete
+  # in seconds and give immediate feedback before any cloud resource is touched.
   unit-tests:
     name: Unit Tests (pytest)
     runs-on: ubuntu-latest
@@ -31,6 +54,9 @@ jobs:
         with:
           python-version: "3.11"
 
+      # Cache pip's download cache keyed on requirements.txt hash.
+      # On a cache hit, pip skips downloading packages and installs from cache,
+      # cutting install time from ~60s to ~5s on warm runs.
       - name: Cache pip dependencies
         uses: actions/cache@v4
         with:
@@ -42,23 +68,32 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt pytest pytest-cov
 
+      # --cov-report=term-missing prints uncovered line numbers inline,
+      # making it easy to spot gaps without opening a separate HTML report.
       - name: Run unit tests with coverage
         run: pytest tests/unit/ -v --tb=short --cov=databricks/notebooks --cov-report=term-missing
 
-  # ─────────────────────────────────────────────────────────────────────────
-  # Job 2: Bundle validate
-  # Ensures the DAB config is syntactically and semantically correct before
-  # any deploy attempt.  Runs on every push to main.
-  # ─────────────────────────────────────────────────────────────────────────
+  # ── Job 2: Bundle Validate ───────────────────────────────────────────────────
+  # `databricks bundle validate` does more than a YAML lint — it calls the
+  # Databricks REST API to verify that referenced resources (clusters, policies,
+  # catalogs) actually exist in the target workspace. A locally valid YAML can
+  # still fail here if, for example, a cluster policy ID was deleted in the workspace.
+  #
+  # Runs only on push to main (not PRs). PRs only need the unit-test gate.
+  # Requires the Databricks CLI to be installed and credentials to be set.
   bundle-validate:
     name: Databricks Bundle Validate
     runs-on: ubuntu-latest
-    needs: unit-tests
+    needs: unit-tests   # Only runs if unit-tests job passes.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
+    # These three env vars are all the Databricks CLI needs to authenticate.
+    # The CLI detects them automatically — no config file required.
+    # Values are stored as encrypted GitHub Actions secrets (never appear in logs).
     env:
-      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-      # Enterprise Security: Enforcing OAuth M2M Authentication via Service Principal. Legacy PATs are disabled.
+      DATABRICKS_HOST:          ${{ secrets.DATABRICKS_HOST }}
+      # M2M OAuth: CLIENT_ID is the Application ID of the CI service principal.
+      # CLIENT_SECRET is its OAuth client secret, rotated periodically by the admin.
       DATABRICKS_CLIENT_ID:     ${{ secrets.DATABRICKS_CLIENT_ID }}
       DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
 
@@ -66,26 +101,32 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Pinned to a specific CLI version for reproducibility.
+      # Using the official Databricks action (not pip install) ensures the CLI
+      # binary is cached across runs and the version is explicitly auditable.
       - name: Install Databricks CLI
         uses: databricks/setup-cli@v0.218.0
 
       - name: Validate bundle configuration
         run: databricks bundle validate
 
-  # ─────────────────────────────────────────────────────────────────────────
-  # Job 3: Deploy to production
-  # Runs only after unit tests pass AND the bundle validates successfully.
-  # Deploys to the `prod` target defined in databricks.yml.
-  # ─────────────────────────────────────────────────────────────────────────
+  # ── Job 3: Deploy to Production ──────────────────────────────────────────────
+  # The final gate. Only reached after unit-tests AND bundle-validate both pass.
+  # Runs `databricks bundle deploy -t prod`, which:
+  #   1. Uploads notebook source files to the workspace.
+  #   2. Creates or updates the finsage_daily_run job via the Jobs API.
+  #   3. Applies variable overrides defined in the `prod` target of databricks.yml.
+  #
+  # This job should NEVER be triggered manually from a feature branch.
+  # The `if` condition enforces that it only runs on push to main.
   deploy-prod:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    needs: bundle-validate
+    needs: bundle-validate   # Only runs if bundle-validate job passes.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     env:
-      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-      # Enterprise Security: Enforcing OAuth M2M Authentication via Service Principal. Legacy PATs are disabled.
+      DATABRICKS_HOST:          ${{ secrets.DATABRICKS_HOST }}
       DATABRICKS_CLIENT_ID:     ${{ secrets.DATABRICKS_CLIENT_ID }}
       DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
 
@@ -96,9 +137,14 @@ jobs:
       - name: Install Databricks CLI
         uses: databricks/setup-cli@v0.218.0
 
+      # `-t prod` selects the `prod` target from databricks.yml, applying its
+      # variable overrides (larger node type, prod catalog, team email, etc.).
       - name: Deploy bundle to production
         run: databricks bundle deploy -t prod
 
+      # This step only runs if the deploy step above succeeded (exit code 0).
+      # Logs the deployed commit SHA for traceability — correlates the live job
+      # version back to a specific Git commit in the audit trail.
       - name: Notify on deployment success
         if: success()
         run: |

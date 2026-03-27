@@ -46,8 +46,8 @@ from pyspark.sql import types as T
 from delta.tables import DeltaTable
 
 # --- Configuration ---
-SOURCE_TABLE          = f"{CATALOG}.finsage_silver.filing_sections"
-TARGET_TABLE          = f"{CATALOG}.finsage_gold.filing_section_chunks"
+SOURCE_TABLE          = f"main.finsage_silver.filing_sections"
+TARGET_TABLE          = f"main.finsage_gold.filing_section_chunks"
 EMBEDDING_MODEL       = "text-embedding-3-large"
 CHUNK_TOKENS          = 512
 CHUNK_OVERLAP_TOKENS  = 64
@@ -198,7 +198,7 @@ df_chunks = (
         F.lit(run_id).alias("run_id"),
     )
 )
-
+df_chunks = df_chunks.withColumn("content_hash", F.sha2(F.col("chunk_text"), 256))
 # --- Data quality guards ---
 dup_count = (
     df_chunks.groupBy("chunk_id").count()
