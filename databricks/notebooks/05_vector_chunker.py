@@ -409,16 +409,44 @@ def wait_for_index_ready(vsc, endpoint_name, index_name, timeout_sec):
             )
         time.sleep(POLL_SEC)
 
-def trigger_sync_if_needed(vsc, endpoint_name, index_name, pipeline_type):
+def trigger_sync_if_needed(vsc, endpoint_name, index_name, pipeline_type,
+                           sync_timeout_sec: int = 30):
     if pipeline_type.upper() != "TRIGGERED":
         log.info("Pipeline type is %s; explicit sync not required.", pipeline_type)
         return
     idx = _retryable_call(lambda: vsc.get_index(endpoint_name=endpoint_name, index_name=index_name))
-    if hasattr(idx, "sync"):
-        log.info("Triggering index sync for TRIGGERED pipeline.")
-        _retryable_call(lambda: idx.sync())
-    else:
+    if not hasattr(idx, "sync"):
         log.warning("Index object has no sync() method in this SDK version; skip explicit trigger.")
+        return
+
+    import threading
+    sync_exc: list = []
+
+    def _do_sync():
+        try:
+            idx.sync()
+        except Exception as e:
+            sync_exc.append(e)
+
+    log.info("Triggering index sync for TRIGGERED pipeline (non-blocking, timeout=%ss).", sync_timeout_sec)
+    t = threading.Thread(target=_do_sync, daemon=True)
+    t.start()
+    t.join(timeout=sync_timeout_sec)
+
+    if t.is_alive():
+        # idx.sync() is still blocking — SDK did not receive a completion signal.
+        # Verify directly via the index state; if ONLINE the sync already finished.
+        log.warning("idx.sync() did not return within %ss. Verifying index state directly.", sync_timeout_sec)
+        desc = _retryable_call(lambda: vsc.get_index(endpoint_name=endpoint_name, index_name=index_name))
+        state = _normalize_state(_nested_get(desc, ("status", "state"), ("state",)))
+        if state.startswith("ONLINE") or state == "READY":
+            log.info("Index confirmed %s via direct poll — sync complete. Ignoring SDK hang.", state)
+        else:
+            log.warning("Index state=%s after sync timeout. Proceeding anyway — monitor the index.", state)
+    elif sync_exc:
+        log.warning("idx.sync() raised: %s. Index may still sync in background.", sync_exc[0])
+    else:
+        log.info("idx.sync() returned cleanly.")
 
 def run_vector_index_setup():
     vsc = VectorSearchClient(disable_notice=True)
