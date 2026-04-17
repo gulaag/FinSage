@@ -1,169 +1,196 @@
-# FinSage — SEC申告書インテリジェンスプラットフォーム
+# FinSage — SEC Filing Intelligence Platform
 
-> **Databricks上の本番グレード・メダリオンデータパイプライン**、GitHub ActionsによるフルCI/CDを備えたDatabricksアセットバンドル（DAB）としてデプロイされます。
+> **A production-grade Medallion data pipeline on Databricks**, deployed as a Databricks Asset Bundle (DAB) with full CI/CD via GitHub Actions.
 
-FinSageは、30社の大型株企業の年次（10-K）および四半期（10-Q）SEC申告書を取り込み、XBRL財務指標を正規化し、ナラティブセクションを抽出し、検索拡張生成（RAG）向けのトークンベースのベクターインデックスを公開します。
-
-> **英語版READMEは [README_english.md](README_english.md) を参照してください。**
+FinSage ingests annual (10-K) and quarterly (10-Q) SEC filings for 30 large-cap U.S. companies, normalizes XBRL financial metrics, extracts narrative sections, and publishes a token-based vector index for Retrieval-Augmented Generation (RAG).
 
 ---
 
-## 目次
+## Table of Contents
 
-1. [アーキテクチャ概要](#1-アーキテクチャ概要)
-2. [メダリオン層](#2-メダリオン層)
-3. [リポジトリ構成](#3-リポジトリ構成)
-4. [Databricksアセットバンドル](#4-databricksアセットバンドル)
-5. [CI/CD — GitHub Actions](#5-cicd--github-actions)
-6. [ブランチ戦略](#6-ブランチ戦略)
-7. [ローカル開発](#7-ローカル開発)
-8. [テストの実行](#8-テストの実行)
-9. [デプロイメント参照](#9-デプロイメント参照)
-10. [環境変数とシークレット](#10-環境変数とシークレット)
-11. [ノートブックコード詳細解説](#11-ノートブックコード詳細解説)
+1. [Project Overview](#1-project-overview)
+2. [Architecture / CI-CD Flow](#2-architecture--ci-cd-flow)
+3. [Medallion Layers](#3-medallion-layers)
+4. [Directory Structure](#4-directory-structure)
+5. [Databricks Asset Bundle](#5-databricks-asset-bundle)
+6. [CI/CD — GitHub Actions](#6-cicd--github-actions)
+7. [Branch Strategy](#7-branch-strategy)
+8. [Local Development](#8-local-development)
+9. [Running Tests](#9-running-tests)
+10. [Deployment Reference](#10-deployment-reference)
+11. [Environment Variables and Secrets](#11-environment-variables-and-secrets)
+12. [Notebook Code Reference](#12-notebook-code-reference)
+13. [Future Work](#13-future-work)
 
 ---
 
-## 1. アーキテクチャ概要
+## 1. Project Overview
+
+FinSage is a production-grade data engineering platform that processes SEC EDGAR filings for a curated set of 30 large-cap U.S. companies. The pipeline is structured as a five-stage Medallion architecture (Bronze → Silver → Gold → Vector) and is deployed to Databricks as a Databricks Asset Bundle (DAB). The full job topology, cluster configuration, and environment promotions are version-controlled and deployed automatically through GitHub Actions CI/CD.
+
+**What FinSage does:**
+
+- Downloads 10-K and 10-Q SEC filings from SEC EDGAR using the `sec-edgar-downloader` library and the CompanyFacts API.
+- Ingests raw filing files into a Delta Lake Bronze layer using Databricks Auto Loader (`cloudFiles` format).
+- Normalizes XBRL financial data (27 raw XBRL concepts → 11 canonical metric names) in the Silver layer.
+- Extracts three named narrative sections (Business Overview, Risk Factors, MD&A) from 10-K HTML filings using regex-based boundary detection.
+- Aggregates financial KPIs, computes year-over-year growth rates, and assigns data quality scores in the Gold layer.
+- Chunks Gold narrative text with `tiktoken` (512 tokens, 64-token overlap) and provisions a Databricks Vector Search Delta Sync index for downstream RAG use.
+
+---
+
+## 2. Architecture / CI-CD Flow
 
 ```
-                       ┌──────────────────────────────────────────────────┐
-                       │               GitHubリポジトリ                    │
-                       │   feature/* ──► dev ──► main                     │
-                       └──────────────────────┬───────────────────────────┘
-                                              │  mainへのpush
-                                              ▼
-                       ┌──────────────────────────────────────────────────┐
-                       │         GitHub Actionsワークフロー               │
-                       │  1. pytest（ユニットテスト）                      │
-                       │  2. databricks bundle validate                   │
-                       │  3. databricks bundle deploy -t prod             │
-                       └──────────────────────┬───────────────────────────┘
-                                              │  デプロイ
-                                              ▼
+                   ┌──────────────────────────────────────────────────┐
+                   │               GitHub Repository                   │
+                   │   feature/* ──► dev ──► main                     │
+                   └──────────────────────┬───────────────────────────┘
+                                          │  push to main
+                                          ▼
+                   ┌──────────────────────────────────────────────────┐
+                   │         GitHub Actions Workflow                   │
+                   │  1. pytest (unit tests)                          │
+                   │  2. databricks bundle validate                   │
+                   │  3. databricks bundle deploy -t prod             │
+                   └──────────────────────┬───────────────────────────┘
+                                          │  deploy
+                                          ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                      Databricksワークスペース（本番）                         │
+│                       Databricks Workspace (Production)                     │
 │                                                                             │
-│  SEC EDGAR / SEC API ──► [01 スキーマセットアップ]                           │
+│  SEC EDGAR / SEC API ──► [01 Schema Setup]                                  │
 │                               │                                             │
 │                               ▼                                             │
-│                         [02 ブロンズ]  ◄── Auto Loader (cloudFiles)         │
+│                         [02 Bronze]  ◄── Auto Loader (cloudFiles)           │
 │                               │          + CompanyFacts API                 │
 │                               ▼                                             │
-│                         [03 シルバー] ◄── XBRLフラット化 + セクションNLP     │
+│                         [03 Silver] ◄── XBRL Flattening + Section NLP      │
 │                               │                                             │
 │                               ▼                                             │
-│                         [04 ゴールド] ◄── 指標集計 + 前年比成長率            │
+│                         [04 Gold]   ◄── Metric Aggregation + YoY Growth    │
 │                               │                                             │
 │                               ▼                                             │
-│                         [05 ベクター] ◄── tiktokenチャンク化 + VSインデックス │
+│                         [05 Vector] ◄── tiktoken Chunking + VS Index        │
 │                                                                             │
-│   すべての層はUnity Catalog（mainカタログ）内のDelta Lakeテーブルに保存       │
+│   All layers are stored as Delta Lake tables in Unity Catalog (main)        │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. メダリオン層
+## 3. Medallion Layers
 
-### ブロンズ層 — 生データ取り込み（`main.finsage_bronze`）
+### Bronze Layer — Raw Data Ingestion (`main.finsage_bronze`)
 
-ブロンズ層は**追記専用かつ監査可能**です。ビジネスロジックは適用されません。
+The Bronze layer is **append-only and auditable**. No business logic is applied.
 
-| テーブル | 内容 |
+| Table | Description |
 |---|---|
-| `filings` | すべてのSEC申告書ファイルの生バイナリデータ。Databricks Auto Loader（`cloudFiles`フォーマット）で取り込まれます。Auto Loaderのチェックポイントによってexactly-onceデリバリーが保証されます。 |
-| `xbrl_companyfacts_raw` | SEC EDGAR CompanyFacts API（`/api/xbrl/companyfacts/CIK{cik}.json`）からの生JSONペイロード。ティッカーごと・日ごとに1行。 |
-| `ingestion_errors` | すべての層からのダウンロード失敗、HTTPエラー、パース例外をログに記録。可観測性と再処理のために使用。 |
-| `sec_filings_download_log` | `sec-edgar-downloader`並列ダウンロードジョブの冪等性ログ。再実行時の重複API呼び出しを防止。 |
+| `filings` | Raw binary content of all SEC filing files. Ingested by Databricks Auto Loader (`cloudFiles` format). Checkpoint-based exactly-once delivery is guaranteed. |
+| `xbrl_companyfacts_raw` | Raw JSON payloads from the SEC EDGAR CompanyFacts API (`/api/xbrl/companyfacts/CIK{cik}.json`). One row per ticker per day. |
+| `ingestion_errors` | Logs download failures, HTTP errors, and parse exceptions from all layers. Used for observability and reprocessing. |
+| `sec_filings_download_log` | Idempotency log for the `sec-edgar-downloader` parallel download job. Prevents duplicate API calls on re-runs. |
 
-**主要設計方針：**
-- すべてのブロンズテーブルで`delta.enableChangeDataFeed = true`を有効化し、ダウンストリームのChange Data Captureを実現。
-- Auto Loaderの`availableNow=True`トリガーにより、ストリームをバッチとして動作させます（新しいファイルをすべて処理してから停止）。
+**Key design decisions:**
 
-### シルバー層 — クリーニング・解析済み（`main.finsage_silver`）
+- `delta.enableChangeDataFeed = true` is enabled on all Bronze tables to support downstream Change Data Capture.
+- The Auto Loader `availableNow=True` trigger causes the stream to behave as a batch job: it processes all newly available files and then stops.
 
-シルバー層はブロンズデータに対して2つの独立した変換を適用します：
+### Silver Layer — Cleaned and Parsed (`main.finsage_silver`)
 
-| テーブル | 変換 |
+The Silver layer applies two independent transformations to Bronze data:
+
+| Table | Transformation |
 |---|---|
-| `financial_statements` | XBRL CompanyFacts JSONを`TARGET_CONCEPT_MAP`を使用してフラット化。30以上の生XBRLコンセプトを11の正規化指標名（`revenue`、`net_income`など）に正規マッピング。SHA-256の`statement_id`で重複排除。毎回実行時に冪等なMERGE。 |
-| `filing_sections` | 10-KのHTMLファイルバイトをデコードし、HTMLタグ・Base64画像・スクリプトを除去後、正規表現による境界検出を使用して3つの名前付きセクション（**事業概要（Item 1）**、**リスク要因（Item 1A）**、**MD&A（Item 7）**）に解析。セクション境界は決定論的かつ監査可能。 |
+| `financial_statements` | Flattens XBRL CompanyFacts JSON using `TARGET_CONCEPT_MAP`, which maps 27 raw XBRL concept names to 11 canonical metric names (`revenue`, `net_income`, etc.). Deduplication uses a SHA-256 `statement_id`. Each run performs an idempotent MERGE. |
+| `filing_sections` | Decodes 10-K HTML file bytes, removes HTML tags, Base64-encoded images, and scripts, then parses three named sections (**Business (Item 1)**, **Risk Factors (Item 1A)**, **MD&A (Item 7)**) using regex-based boundary detection. Section boundaries are deterministic and auditable. |
 
-**主要設計方針：**
-- `TARGET_CONCEPT_MAP`は指標正規化の唯一の真実のソースであり、Sparkとは独立してユニットテスト済み（`tests/unit/test_normalizer.py`参照）。
-- セクション抽出では`10-K`申告書のみを処理 — 四半期報告書にはItem 1/7構造がありません。
+**Key design decisions:**
 
-### ゴールド層 — 分析用指標（`main.finsage_gold`）
+- `TARGET_CONCEPT_MAP` is the single source of truth for metric normalization. It is defined in `src/finsage/constants.py` and is independently unit-tested (see `tests/unit/test_normalizer.py`).
+- Section extraction processes `10-K` filings only — quarterly reports do not have an Item 1/7 structure.
 
-ゴールド層は、ティッカー・年度ごとに派生KPIを含む**ワイドで分析レディな**テーブルを生成します。
+### Gold Layer — Analytical Metrics (`main.finsage_gold`)
 
-| テーブル | 内容 |
+The Gold layer produces **wide, analytics-ready** tables with derived KPIs per ticker and fiscal year.
+
+| Table | Description |
 |---|---|
-| `company_metrics` | `(ticker, fiscal_year)`ごとに1行。16の財務指標、粗利益率%、売上高前年比成長率%、負債資本比率、9つのコア指標のうち何個が入力されたかを示す`data_quality_score`（0〜1）を含む。 |
-| `filing_section_chunks` | シルバーセクションのトークンベースのチャンク（512トークン、64トークンオーバーラップ）。冪等なマージのための決定論的SHA-256 `chunk_id`付き。 |
+| `company_metrics` | One row per `(ticker, fiscal_year)`. Contains 16 financial metrics, gross margin %, revenue YoY growth %, debt-to-equity ratio, and a `data_quality_score` (0–1) indicating how many of 9 core metrics are populated. |
+| `filing_section_chunks` | Token-based chunks of Silver sections (512 tokens, 64-token overlap). Each chunk has a deterministic SHA-256 `chunk_id` for idempotent merges. |
 
-**主要設計方針：**
-- 厳密な会計期間の整合：フロー指標には`fiscal_period = 'FY'`のみを使用し、`duration_days`は350〜380でなければなりません。
-- 正規のアクセッション番号選択：集計前に必須指標のカバレッジに基づいて`(ticker, fiscal_year)`ごとに1つの`accession_number`が選ばれます。
+**Key design decisions:**
 
-### ベクター層 — RAGインデックス（`main.finsage_gold`）
+- Strict accounting period alignment: flow metrics require `fiscal_period = 'FY'` and `duration_days` between 350 and 380.
+- Canonical accession number selection: before aggregation, one `accession_number` per `(ticker, fiscal_year)` is selected based on required metric coverage.
 
-| リソース | 内容 |
+### Vector Layer — RAG Index (`main.finsage_gold`)
+
+| Resource | Description |
 |---|---|
-| `filing_section_chunks`（ゴールド） | `delta.enableChangeDataFeed = true`のソーステーブル。 |
-| `filing_chunks_index` | `databricks-bge-large-en`でバックされたDatabricks Vector Search Delta Syncインデックス。ダウンストリームRAGエージェントの類似検索をサポート。 |
+| `filing_section_chunks` (Gold) | Source table with `delta.enableChangeDataFeed = true`. |
+| `filing_chunks_index` | Databricks Vector Search Delta Sync index backed by `databricks-bge-large-en`. Supports similarity search for downstream RAG agents. |
 
 ---
 
-## 3. リポジトリ構成
+## 4. Directory Structure
 
 ```
 FinSage/
-├── databricks.yml                     # Databricksアセットバンドルルート設定
+├── databricks.yml                     # Databricks Asset Bundle root configuration
 ├── databricks/
 │   ├── notebooks/
-│   │   ├── 01_schema_setup.py         # DDL：スキーマ、テーブル、ボリューム + SEC申告書ダウンロード
-│   │   ├── 02_bronze_autoloader.py    # Auto Loader + SEC API取り込み
-│   │   ├── 03_silver_decoder.py       # XBRLフラット化 + セクション抽出
-│   │   ├── 04_gold_metrics.py         # 指標集計 + KPI導出
-│   │   └── 05_vector_chunker.py       # チャンク化 + Vector Searchセットアップ
-│   └── workflows/                     # （将来のワークフローYAML用に予約）
+│   │   ├── 01_schema_setup.py         # DDL: schemas, tables, volumes + SEC filing download
+│   │   ├── 02_bronze_autoloader.py    # Auto Loader + SEC API ingestion
+│   │   ├── 03_silver_decoder.py       # XBRL flattening + section extraction
+│   │   ├── 04_gold_metrics.py         # Metric aggregation + KPI derivation
+│   │   └── 05_vector_chunker.py       # Chunking + Vector Search setup
+│   └── workflows/                     # Reserved for future workflow YAML definitions
 ├── terraform/
-│   └── main.tf                        # クラスターポリシー、シークレットスコープ、SPルックアップ
+│   └── main.tf                        # Cluster policy, secret scope, and SP lookup
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml                 # CI/CDパイプライン（pytest → validate → deploy）
+│       └── deploy.yml                 # CI/CD pipeline (pytest → validate → deploy)
 ├── tests/
 │   └── unit/
-│       └── test_normalizer.py         # pytest：TARGET_CONCEPT_MAPカバレッジ
-├── assets/
-│   └── screenshots/
-│       └── finsage_dag_databricks.png # DatabricksワークスペースのライブDAGビュー
+│       └── test_normalizer.py         # pytest: TARGET_CONCEPT_MAP coverage
 ├── src/
+│   ├── finsage/
+│   │   ├── __init__.py
+│   │   └── constants.py               # TARGET_CONCEPT_MAP and VALID_NORMALIZED_METRICS
 │   ├── ingestion/
-│   ├── processing/
-│   ├── retrieval/
-│   ├── serving/
-│   └── agent/
+│   │   └── edgar_downloader.py        # SEC EDGAR downloader utilities
+│   ├── evaluation/
+│   │   └── ground_test.json           # Evaluation ground truth data
+│   ├── agent/                         # Stub — see Future Work
+│   ├── app/                           # Stub — see Future Work
+│   ├── monitoring/                    # Stub — see Future Work
+│   ├── processing/                    # Stub — see Future Work
+│   ├── retrieval/                     # Stub — see Future Work
+│   └── serving/                       # Stub — see Future Work
 ├── docs/
-│   ├── FinSage_blueprint_v2.html
+│   ├── finsage_presentation.html
 │   ├── challenges_log.html
 │   └── technical_decisions.html
+├── assets/
+│   └── screenshots/
+│       └── pipeline.gif               # Live DAG view in the Databricks workspace
 ├── requirements.txt
-├── README.md                          # 本ファイル（日本語版）
-└── README_english.md                  # 英語版README
+└── README.md
 ```
 
-> **Databricksノートブックソースファイル：** `databricks/notebooks/`配下のすべての`.py`ファイルは`# Databricks notebook source`で始まります。DABデプロイステップによってDatabricksワークスペースにアップロードされると、Databricksはそれらをインタラクティブなノートブックとして認識しますが、Gitでは通常のPythonファイルのまま残ります。
+> **Databricks notebook source files:** All `.py` files under `databricks/notebooks/` begin with `# Databricks notebook source`. When uploaded to the Databricks workspace by the DAB deploy step, Databricks recognizes them as interactive notebooks; in Git they remain plain Python files.
 
 ---
 
-## 4. Databricksアセットバンドル
+## 5. Databricks Asset Bundle
 
-FinSageは**Databricksアセットバンドル（DAB）**としてデプロイされます。クラスター、タスク、スケジュール、環境プロモーションを含むジョブトポロジー全体がリポジトリルートの`databricks.yml`に定義されています。
+FinSage is deployed as a **Databricks Asset Bundle (DAB)**. The entire job topology — including the cluster definition, task DAG, schedule, and environment promotions — is defined in `databricks.yml` at the repository root.
 
-### バンドル構成
+### Bundle Configuration
+
+The bundle defines one job (`finsage_daily_run`) with five tasks connected in a strict sequential DAG:
 
 ```yaml
 bundle:
@@ -180,68 +207,86 @@ resources:
         - task_key: vector_chunker      # 05_vector_chunker.py     (depends_on: gold_metrics)
 ```
 
-タスクは`depends_on`により**厳密に順次実行**されます。いずれかのタスクが失敗すると、すべてのダウンストリームタスクがスキップされ、メールアラートが送信されます。
+Tasks execute in **strict sequential order** via `depends_on`. If any task fails, all downstream tasks are skipped and an email alert is sent to the configured `notification_email`.
 
-### ターゲット
+The job is scheduled daily at **06:00 UTC** in production. In the `dev` target, the schedule is set to `PAUSED` to prevent accidental cron runs during development.
 
-| ターゲット | モード | 目的 |
+### Bundle Variables
+
+Variables are defined at the bundle level and injected into notebook tasks via `base_parameters`. Notebooks read them using `dbutils.widgets.get("variable_name")`. This pattern eliminates hard-coded environment-specific values in notebook code.
+
+| Variable | Default | Description |
 |---|---|---|
-| `dev`（デフォルト） | `development` | 個人デプロイ；ジョブ名にプレフィックス付き；安全にイテレーション可能。 |
-| `prod` | `production` | 共有デプロイ；名前プレフィックスなし；`main`へのCI/CDにより起動。 |
+| `catalog` | `main` | Unity Catalog catalog name |
+| `env` | `dev` | Environment label (`dev` / `prod`) |
+| `start_date` | `2020-01-01` | Earliest SEC filing date to ingest |
+| `ticker_filter` | `""` | Comma-separated tickers to process (empty = all 30) |
+| `cluster_spark_version` | `14.3.x-scala2.12` | Databricks Runtime version |
+| `cluster_node_type` | `i3.xlarge` | EC2 instance type (overridden to `i3.2xlarge` in prod) |
+| `notification_email` | `digvijay@arsaga.jp` | Email address for job failure alerts |
 
-### CLIコマンド
+### Targets
+
+| Target | Mode | Purpose |
+|---|---|---|
+| `dev` (default) | `development` | Personal deploys; job name is prefixed with `[dev <username>]`; safe for iterative development. Schedule is paused. |
+| `prod` | `production` | Shared deploy; no name prefix; triggered exclusively by CI/CD on push to `main`. |
+
+**Note on the dev target:** The current `dev` target routes all tasks to an existing interactive cluster (`existing_cluster_id`) rather than spinning up a new job cluster. This is a workaround for environments where the deploying user account lacks the "Allow cluster creation" permission required for automated job compute. Once an administrator grants the required permission, replace the `existing_cluster_id` override with the top-level `job_clusters` definition.
+
+### CLI Commands
 
 ```bash
-# バンドルの検証（構文 + ワークスペース接続チェック）
+# Validate the bundle (syntax + workspace connection check)
 databricks bundle validate
 
-# devへのデプロイ（デフォルトターゲット）
+# Deploy to dev (default target)
 databricks bundle deploy
 
-# 特定ターゲットへのデプロイ
+# Deploy to a specific target
 databricks bundle deploy -t prod
 
-# devでジョブを手動実行
+# Manually trigger the job in dev
 databricks bundle run finsage_daily_run
 
-# prodでジョブを手動実行
+# Manually trigger the job in prod
 databricks bundle run -t prod finsage_daily_run
 
-# デプロイ済みリソースを破棄（devのみ — 本番では承認なしに実行しないこと）
+# Destroy deployed resources (dev only — do not run in prod without approval)
 databricks bundle destroy
 ```
 
-### ライブDAG — Databricksワークスペース
+### Live DAG — Databricks Workspace
 
-以下のスクリーンショットは、`databricks bundle deploy`成功後にDatabricks Jobs & Pipelines UIに表示される`finsage_daily_run`ジョブです。5つのタスクすべてが厳密に順次実行されるDAGとして接続され、タスク間のコールドスタートのオーバーヘッドを避けるために`finsage_cluster`ジョブクラスターを共有しています。
+The screenshot below shows the `finsage_daily_run` job as it appears in the Databricks Jobs UI after a successful `databricks bundle deploy`. All five tasks are connected as a strictly sequential DAG and share the `finsage_cluster` job cluster to avoid per-task cold-start overhead.
 
-<img src="assets/screenshots/pipeline.gif" alt="DatabricksワークスペースのFinSageパイプラインDAG — schema_setup → bronze_autoloader → silver_decoder → gold_metrics → vector_chunkerの5つの順次タスク、すべて共有finsage_clusterで実行。UTC 06:00に毎日スケジュール。" style="max-width:100%;" />
+<img src="assets/screenshots/pipeline.gif" alt="FinSage pipeline DAG in the Databricks workspace — five sequential tasks: schema_setup → bronze_autoloader → silver_decoder → gold_metrics → vector_chunker, all running on the shared finsage_cluster. Scheduled daily at 06:00 UTC." style="max-width:100%;" />
 
-> 開発モードではジョブは**[dev Digvijay]**とマークされます — DABは自動的にデプロイユーザー名をジョブ名にプレフィックスとして付け、同じ共有ワークスペース内の本番`finsage_daily_run`ジョブとの衝突を防ぎます。
+> In development mode, the job is marked **[dev Digvijay]** — DAB automatically prefixes the deploying user's name to the job name to prevent collisions with the production `finsage_daily_run` job in the same shared workspace.
 
 ---
 
-## 5. CI/CD — GitHub Actions
+## 6. CI/CD — GitHub Actions
 
-ワークフローファイルは`.github/workflows/deploy.yml`です。
+The workflow file is `.github/workflows/deploy.yml`.
 
-### パイプラインステージ
+### Pipeline Stages
 
 ```
-mainへのpush
+push to main
      │
      ▼
-┌────────────────┐     失敗     ┌─────────────────────────────────────────┐
-│  unit-tests    │────────────►│  パイプライン停止。デプロイは行われない。  │
-│  (pytest)      │              └─────────────────────────────────────────┘
+┌────────────────┐     failure     ┌─────────────────────────────────────────┐
+│  unit-tests    │────────────────►│  Pipeline halted. No deploy occurs.     │
+│  (pytest)      │                  └─────────────────────────────────────────┘
 └───────┬────────┘
-        │ 成功
+        │ success
         ▼
 ┌────────────────────────┐
 │  bundle-validate       │  databricks bundle validate
 │  (Databricks CLI)      │
 └────────────┬───────────┘
-             │ 成功
+             │ success
              ▼
 ┌────────────────────────┐
 │  deploy-prod           │  databricks bundle deploy -t prod
@@ -249,184 +294,187 @@ mainへのpush
 └────────────────────────┘
 ```
 
-### ワークフローの動作
+### Workflow Trigger Matrix
 
-| トリガー | unit-tests | bundle-validate | deploy-prod |
+| Trigger | unit-tests | bundle-validate | deploy-prod |
 |---|---|---|---|
-| `main`へのpush | ✓ | ✓ | ✓ |
-| `main`へのプルリクエスト | ✓ | ✗ | ✗ |
-| `dev`またはフィーチャーブランチへのpush | ✗ | ✗ | ✗ |
+| push to `main` | ✓ | ✓ | ✓ |
+| pull request targeting `main` | ✓ | ✗ | ✗ |
+| push to `dev` or feature branches | ✗ | ✗ | ✗ |
 
-### 認証
+### Authentication
 
-CLIはサービスプリンシパルを介した**OAuthマシン間（M2M）**認証を使用します。このワークスペースではエンタープライズポリシーにより従来のパーソナルアクセストークン（PAT）は無効化されています。
+The Databricks CLI authenticates via **OAuth Machine-to-Machine (M2M)** using a service principal. Classic Personal Access Tokens (PATs) are not used anywhere in this pipeline.
 
-| シークレット | 値 |
+The CLI reads the following environment variables automatically, calls the workspace OIDC token endpoint (`/oidc/v1/token`), receives a short-lived bearer token (~1 hour TTL), and uses it for all API calls.
+
+| Secret | Value |
 |---|---|
 | `DATABRICKS_HOST` | `https://<your-workspace>.cloud.databricks.com` |
-| `DATABRICKS_CLIENT_ID` | `finsage-service-principal`のアプリケーション（クライアント）ID |
-| `DATABRICKS_CLIENT_SECRET` | `finsage-service-principal`のOAuthシークレット |
+| `DATABRICKS_CLIENT_ID` | Application (client) ID of the `finsage-service-principal` |
+| `DATABRICKS_CLIENT_SECRET` | OAuth client secret of the `finsage-service-principal` |
 
-GitHubリポジトリの**Settings → Secrets and variables → Actions**でこれらを追加してください。
+Add these under **Settings → Secrets and variables → Actions** in the GitHub repository.
 
-サービスプリンシパルのプロビジョニング（Databricks管理者アクセスが必要）：
-1. IDプロバイダー（Entra ID / Okta）でサービスプリンシパルを作成。
-2. SPにDatabricksワークスペースの**Can Manage**ロールを付与。
-3. SPのOAuthシークレットを生成。
-4. 上記3つのシークレットをGitHubに追加。
+**Service principal provisioning (requires Databricks admin access):**
+
+1. Create a service principal in your identity provider (Entra ID / Okta).
+2. Grant the SP the **Can Manage** role on the Databricks workspace.
+3. Generate an OAuth client secret for the SP.
+4. Add the three secrets to GitHub Actions.
 
 ---
 
-## 6. ブランチ戦略
+## 7. Branch Strategy
 
 ```
-main          ──── 保護済み；PR + CI通過が必要 ──────────────────────────►
+main          ──── protected; requires PR + CI pass ──────────────────────────►
                          ▲                    ▲
-                         │ マージ              │ マージ
-dev           ──── 統合テスト ────────────────┘
+                         │ merge              │ merge
+dev           ──── integration testing ───────┘
                          ▲
-                         │ マージ
-feature/*     ──── 個別フィーチャー作業 ────────────────────────────────►
+                         │ merge
+feature/*     ──── individual feature work ──────────────────────────────────►
 ```
 
-| ブランチ | 目的 | デプロイ先 |
+| Branch | Purpose | Deploys to |
 |---|---|---|
-| `feature/*` | 新機能、バグ修正。短命。 | なし（PRではCIユニットテストのみ） |
-| `dev` | 統合テスト；ステージング相当。 | Databricks`dev`ターゲット（手動`bundle deploy`） |
-| `main` | 本番対応コード。PRのみでマージ。 | Databricks`prod`ターゲット（GitHub Actions自動化） |
+| `feature/*` | New features, bug fixes. Short-lived. | None (CI runs unit tests only on PRs) |
+| `dev` | Integration testing; staging equivalent. | Databricks `dev` target (manual `bundle deploy`) |
+| `main` | Production-ready code. Merged via PR only. | Databricks `prod` target (automated via GitHub Actions) |
 
-### リリースプロセス
+### Release Process
 
-1. `main`から`feature/my-change`ブランチを作成。
-2. ローカルで開発・テスト（§7参照）。
-3. `main`へのプルリクエストを開く。GitHub Actionsが自動的にユニットテストを実行。
-4. PRが承認されCIが通過したら、`main`にマージ。
-5. CI/CDパイプラインが自動的に検証して`prod`にデプロイ。
+1. Create a `feature/my-change` branch from `main`.
+2. Develop and test locally (see §8).
+3. Open a pull request targeting `main`. GitHub Actions automatically runs unit tests.
+4. Once the PR is approved and CI passes, merge to `main`.
+5. The CI/CD pipeline automatically validates and deploys to `prod`.
 
-> **ホットフィックス：** `main`から直接ブランチを切り、修正を適用してPRを開いてください。PRプロセスを迂回しないでください — `bundle validate`ゲートは本番前の最後の防衛線です。
+> **Hotfixes:** Branch directly from `main`, apply the fix, and open a PR. Do not bypass the PR process — the `bundle validate` gate is the last line of defense before production.
 
 ---
 
-## 7. ローカル開発
+## 8. Local Development
 
-### 前提条件
+### Prerequisites
 
-- Python 3.11以上
-- [Databricks CLI v0.218以上](https://docs.databricks.com/dev-tools/cli/databricks-cli.html)
-- Unity Catalogが有効化されたDatabricksワークスペース
+- Python 3.11 or later
+- [Databricks CLI v0.218 or later](https://docs.databricks.com/dev-tools/cli/databricks-cli.html)
+- A Databricks workspace with Unity Catalog enabled
 
-### セットアップ
+### Setup
 
 ```bash
-# 1. リポジトリをクローン
+# 1. Clone the repository
 git clone https://github.com/<your-org>/FinSage.git
 cd FinSage
 
-# 2. 仮想環境を作成
+# 2. Create a virtual environment
 python -m venv .venv
 source .venv/bin/activate
 
-# 3. 依存関係をインストール
+# 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. OAuth U2M（ブラウザベースログイン）でDatabricks CLIを設定
+# 4. Configure the Databricks CLI with OAuth U2M (browser-based login)
 databricks auth login --host https://dbc-f33010ed-00fc.cloud.databricks.com/
-# ブラウザが開き、一度だけログインが必要。PATは不要。
-# CI環境では、DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET（M2M OAuth）で認証。
+# A browser window opens for a one-time login. No PAT required.
+# In CI environments, authenticate using DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET (M2M OAuth).
 
-# 5. 個人dev環境にデプロイ
-databricks bundle deploy       # デフォルトで'dev'ターゲットにデプロイ
+# 5. Deploy to your personal dev environment
+databricks bundle deploy       # Deploys to the 'dev' target by default
 
-# 6. 手動実行をトリガー
+# 6. Trigger a manual run
 databricks bundle run finsage_daily_run
 ```
 
 ---
 
-## 8. テストの実行
+## 9. Running Tests
 
-テストは`tests/unit/`に配置されており、**Spark依存なし** — 標準ライブラリとpytestのみを使用したプレーンPythonで実行されます。
+Tests are located in `tests/unit/` and run as **plain Python with no Spark dependency** — only the standard library, `pytest`, and the `src/finsage` package are required.
 
 ```bash
-# 全ユニットテストを実行
+# Run all unit tests
 pytest tests/unit/ -v
 
-# カバレッジレポート付きで実行
+# Run with a coverage report
 pytest tests/unit/ -v --cov=databricks/notebooks --cov-report=term-missing
 
-# 単一テストファイルを実行
+# Run a single test file
 pytest tests/unit/test_normalizer.py -v
 ```
 
-### テスト対象
+### Test Coverage
 
-| テストファイル | カバレッジ内容 |
+| Test File | What It Covers |
 |---|---|
-| `test_normalizer.py` | `03_silver_decoder.py`の`TARGET_CONCEPT_MAP`。すべてのXBRLコンセプトが期待される正規化指標名に解決されること、未知のコンセプトが`None`を返すこと、マップが構造的に完全であることをアサート。 |
+| `test_normalizer.py` | `TARGET_CONCEPT_MAP` and `VALID_NORMALIZED_METRICS` (defined in `src/finsage/constants.py`). Asserts that all known XBRL concepts resolve to the expected canonical metric name, that unknown concepts return `None`, that the map contains no `None` values, and that all 11 expected financial categories are present in `VALID_NORMALIZED_METRICS`. |
 
 ---
 
-## 9. デプロイメント参照
+## 10. Deployment Reference
 
-### 初回セットアップ
+### First-Time Setup
 
 ```bash
-# バンドルを検証（YAML + ワークスペース権限チェック）
+# Validate the bundle (YAML + workspace permission check)
 databricks bundle validate
 
-# devにデプロイ
+# Deploy to dev
 databricks bundle deploy
 
-# prodにデプロイ（通常はCIが行うが、手動でも実行可能）
+# Deploy to prod (normally handled by CI, but can be triggered manually)
 databricks bundle deploy -t prod
 ```
 
-### 既存デプロイメントの更新
+### Updating an Existing Deployment
 
 ```bash
-# ノートブックまたはdatabricks.yml変更後：
+# After modifying notebooks or databricks.yml:
 git add .
 git commit -m "feat: update silver section extraction regex"
 git push origin main
-# → GitHub Actionsが残りを処理
+# → GitHub Actions handles the rest
 ```
 
-### 実行中ジョブの監視
+### Monitoring a Running Job
 
 ```bash
-# 最近のジョブ実行を一覧表示
+# List recent job runs
 databricks jobs list-runs --job-id <job-id>
 
-# 特定の実行のログを表示
+# View logs for a specific run
 databricks runs get-output --run-id <run-id>
 ```
 
 ---
 
-## 10. 環境変数とシークレット
+## 11. Environment Variables and Secrets
 
-| 名前 | 設定場所 | 目的 |
+| Name | Location | Purpose |
 |---|---|---|
-| `DATABRICKS_HOST` | GitHubシークレット | CIでのCLI認証用ワークスペースURL |
-| `DATABRICKS_CLIENT_ID` | GitHubシークレット | CIでのM2M OAuthのサービスプリンシパルクライアントID |
-| `DATABRICKS_CLIENT_SECRET` | GitHubシークレット | CIでのM2M認証のサービスプリンシパルOAuthシークレット |
-| `USER_AGENT` | ノートブックウィジェットデフォルト | SEC EDGAR APIへのFinSageの識別（SEC利用規約で必須） |
+| `DATABRICKS_HOST` | GitHub Secret | Workspace URL for CLI authentication in CI |
+| `DATABRICKS_CLIENT_ID` | GitHub Secret | Service principal client ID for M2M OAuth in CI |
+| `DATABRICKS_CLIENT_SECRET` | GitHub Secret | Service principal OAuth secret for M2M authentication in CI |
+| `USER_AGENT` | Notebook widget default | Identifies FinSage to the SEC EDGAR API (required by SEC Terms of Service) |
 
-> **シークレットをGitにコミットしないでください。** `.gitignore`はすでに`.env`ファイルを除外しています。CIにはGitHubシークレットを使用し、ノートブック内のランタイムシークレットにはDatabricksシークレットスコープ（`databricks secrets`）を使用してください。
-
----
-
-## 11. ノートブックコード詳細解説
-
-このセクションでは、5つのDatabricksノートブックそれぞれのコードを詳細に解説します。各ノートブックはメダリオンアーキテクチャの特定の役割を担い、SEC申告書データが生データから分析可能なベクターインデックスへと変換されるまでの流れを構成しています。
+> **Never commit secrets to Git.** `.gitignore` already excludes `.env` files. Use GitHub Secrets for CI and Databricks Secret Scopes (`databricks secrets`) for runtime secrets accessible within notebooks.
 
 ---
 
-### ノートブック 01 — `01_schema_setup.py`：スキーマ初期化 & SEC申告書ダウンロード
+## 12. Notebook Code Reference
 
-このノートブックはパイプライン全体の起点です。インフラを構築し、30社分のSEC申告書を並列でダウンロードします。何度実行しても安全な**冪等設計**となっています。
+This section provides a detailed walkthrough of the five Databricks notebooks that form the FinSage pipeline. Each notebook has a specific role in the Medallion architecture, transforming SEC filing data from raw bytes into a searchable vector index.
 
-#### セクション1：ランタイムパラメータ設定
+---
+
+### Notebook 01 — `01_schema_setup.py`: Schema Initialization & SEC Filing Download
+
+This notebook is the entry point for the entire pipeline. It creates the infrastructure and downloads SEC filings for all 30 companies in parallel. It is **designed to be idempotent** — safe to re-run at any time without side effects.
+
+#### Section 1: Runtime Parameter Configuration
 
 ```python
 dbutils.widgets.text("catalog",       "main",       "Unity Catalog catalog")
@@ -435,20 +483,20 @@ dbutils.widgets.text("start_date",    "2020-01-01", "Earliest filing date")
 dbutils.widgets.text("ticker_filter", "",           "Comma-separated tickers (empty=all)")
 ```
 
-`dbutils.widgets`はDatabricksのパラメータ注入メカニズムです。DABジョブが`databricks.yml`の`base_parameters`を通じてこれらの値を渡します。インタラクティブな実行の場合はデフォルト値が使用されます。
+`dbutils.widgets` is Databricks' parameter injection mechanism. The DAB job passes these values via `base_parameters` in `databricks.yml`. Default values are used for interactive runs.
 
-- `catalog`：Unity Catalogのカタログ名（例：`main`）
-- `env`：実行環境。`dev`と`prod`で動作を切り替えます
-- `start_date`：`2020-01-01`以降の申告書のみを取り込む起算日
-- `ticker_filter`：処理対象のティッカーをカンマ区切りで指定。空の場合は全30社が対象
+- `catalog`: Unity Catalog name (e.g., `main`)
+- `env`: Runtime environment; switches behavior between `dev` and `prod`
+- `start_date`: Only filings dated `2020-01-01` or later are ingested
+- `ticker_filter`: Comma-separated list of tickers to process; empty means all 30 companies
 
 ```python
 TICKER_SUBSET = [t.strip() for t in TICKER_FILTER.split(",") if t.strip()] if TICKER_FILTER else []
 ```
 
-このリスト内包表記は`"AAPL, MSFT, GOOGL"`という文字列を`["AAPL", "MSFT", "GOOGL"]`というリストに変換します。空文字を除去するため`t.strip()`と`if t.strip()`の二重チェックを行っています。
+This list comprehension converts `"AAPL, MSFT, GOOGL"` into `["AAPL", "MSFT", "GOOGL"]`. The double check `t.strip()` and `if t.strip()` removes empty strings that result from trailing commas.
 
-#### セクション2：メダリオンスキーマの作成（SQL）
+#### Section 2: Medallion Schema Creation (SQL)
 
 ```sql
 CREATE SCHEMA IF NOT EXISTS main.finsage_bronze;
@@ -456,9 +504,9 @@ CREATE SCHEMA IF NOT EXISTS main.finsage_silver;
 CREATE SCHEMA IF NOT EXISTS main.finsage_gold;
 ```
 
-`IF NOT EXISTS`によって何度実行しても安全です。3つのスキーマはデータ品質の3層（生データ→クリーニング済み→分析用）を表します。
+`IF NOT EXISTS` makes each statement idempotent. The three schemas represent the three data quality tiers (raw → cleaned → analytical).
 
-#### セクション3：ダウンロードログテーブルの作成（SQL）
+#### Section 3: Download Log Table Creation (SQL)
 
 ```sql
 CREATE TABLE IF NOT EXISTS main.finsage_bronze.sec_filings_download_log (
@@ -472,17 +520,17 @@ CREATE TABLE IF NOT EXISTS main.finsage_bronze.sec_filings_download_log (
 ) USING DELTA;
 ```
 
-このテーブルはジョブ実行間の冪等性を保証するための状態管理テーブルです。同じ日に同じ（ticker, form_type）の組み合わせを二重ダウンロードしないよう制御します。
+This table manages state across job runs to guarantee idempotency. It prevents a given `(ticker, form_type)` combination from being downloaded twice on the same day.
 
-#### セクション4：ボリュームの作成
+#### Section 4: Volume Creation
 
 ```sql
 CREATE VOLUME IF NOT EXISTS main.finsage_bronze.raw_filings;
 ```
 
-Unity Catalogのボリュームはオブジェクトストレージ上のファイルシステムパスです。SEC申告書の生HTMLファイルはここに保存されます。アクセスパスは`/Volumes/main/finsage_bronze/raw_filings/`となります。
+A Unity Catalog volume is a filesystem path backed by object storage. Raw SEC filing HTML files are stored here. The access path is `/Volumes/main/finsage_bronze/raw_filings/`.
 
-#### セクション5：設定定数と30社ティッカーリスト
+#### Section 5: Configuration Constants and 30-Ticker List
 
 ```python
 VOLUME_PATH = f"/Volumes/{CATALOG}/finsage_bronze/raw_filings"
@@ -498,11 +546,11 @@ _ALL_TICKERS = [
 ]
 ```
 
-- `USER_AGENT`：SEC EDGAR APIの利用規約（ToS）に従い、すべてのリクエストヘッダーに含めます
-- `MAX_CONCURRENT_WORKERS = 3`：SECは1秒あたり10リクエストのレートリミットを設けており、安全マージンを持って3並列に制限しています
-- 30社は、テクノロジー・金融・ヘルスケア・消費財・自動車・SaaSと分散されており、セクターバランスの取れた分析が可能です
+- `USER_AGENT`: Included in all request headers per SEC EDGAR Terms of Service
+- `MAX_CONCURRENT_WORKERS = 3`: SEC enforces a rate limit of 10 requests per second; 3 parallel workers provides a safe margin
+- The 30 tickers span Technology, Finance, Healthcare, Consumer Staples, Automotive, and SaaS, enabling cross-sector analysis
 
-#### セクション6：事前チェック（プリフライト冪等性確認）
+#### Section 6: Pre-flight Idempotency Check
 
 ```python
 today = date.today()
@@ -515,9 +563,9 @@ except Exception:
     completed_tasks = set()
 ```
 
-ダウンロード開始前に、本日すでに成功している（ticker, form_type）のペアをセットとして取得します。`try/except`で囲んでいるのは、初回実行時にログテーブルが空の場合の例外を安全に処理するためです。後のスレッドワーカーでこのセットを参照することで、Sparkセッションのスレッドアンセーフ問題を回避しています。
+Before downloads begin, this fetches all `(ticker, form_type)` pairs that already succeeded today as a set. The `try/except` safely handles the case where the log table is empty on first run. The set is referenced by worker threads to avoid Spark session thread-safety issues.
 
-#### セクション7：スレッドセーフなダウンロードワーカー
+#### Section 7: Thread-Safe Download Worker
 
 ```python
 def download_filing(ticker, form_type):
@@ -546,14 +594,14 @@ def download_filing(ticker, form_type):
             sys.stdout = old_stdout
 ```
 
-このワーカー関数には複数の巧妙な設計があります：
+This worker has several deliberate design choices:
 
-1. **標準出力のキャプチャ**：`sec-edgar-downloader`ライブラリはエラーを例外ではなく標準出力に出力します。`sys.stdout`を`StringIO`バッファにリダイレクトして出力をキャプチャし、エラーキーワードを検出しています
-2. **指数バックオフ**：`time.sleep(10 * retries)` — 1回目失敗で10秒待機、2回目で20秒、3回目で30秒。SEC APIの一時的な負荷を考慮した設計です
-3. **`finally`節**：エラーが発生しても必ず標準出力を元に戻します。これがないとノートブック全体の出力が壊れます
-4. **冪等性チェック**：関数の最初に`completed_tasks`を確認し、すでに完了済みならスキップ
+1. **stdout capture**: The `sec-edgar-downloader` library prints errors to stdout rather than raising exceptions. `sys.stdout` is redirected to a `StringIO` buffer to capture and inspect the output for error keywords.
+2. **Exponential backoff**: `time.sleep(10 * retries)` — 10 seconds after the first failure, 20 after the second, 30 after the third. This accommodates temporary SEC API load spikes.
+3. **`finally` clause**: Restores stdout even when an exception occurs, preventing corrupted notebook output.
+4. **Idempotency check**: The function's first action is to check `completed_tasks` and return early if the download already completed.
 
-#### セクション8：並列実行と結果の収集
+#### Section 8: Parallel Execution and Result Collection
 
 ```python
 with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_WORKERS) as executor:
@@ -562,9 +610,9 @@ with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_WORKERS) as executor:
         results.append(future.result())
 ```
 
-`ThreadPoolExecutor`で最大3つのスレッドを並列実行します。`as_completed()`はスレッドが完了した順に結果を受け取るためのイテレータで、すべてのスレッドの完了を待ちます。2種類のフォームタイプ（10-K、10-Q）× 30社 = 最大60タスクが3並列で処理されます。
+`ThreadPoolExecutor` runs up to 3 threads in parallel. `as_completed()` yields results as each thread finishes. With 2 form types (10-K, 10-Q) × 30 tickers, up to 60 tasks are processed 3 at a time.
 
-#### セクション9：Delta Lakeへのアトミックな状態更新
+#### Section 9: Atomic State Update in Delta Lake
 
 ```python
 if processed_results:
@@ -581,15 +629,15 @@ if processed_results:
     ).whenMatchedUpdateAll().whenNotMatchedInsertAll().execute()
 ```
 
-Delta LakeのMERGE操作（UPSERTとも呼ばれます）を使用して状態を更新します。既存の（ticker, form_type）レコードは更新され、新しいものは挿入されます。`IF(status = 'SUCCESS', current_date(), null)`により、失敗した場合は`last_successful_run`を更新しません。これにより次回実行時に再試行対象として残ります。
+A Delta Lake MERGE (upsert) updates state atomically. Existing `(ticker, form_type)` records are updated; new ones are inserted. `IF(status = 'SUCCESS', current_date(), null)` ensures `last_successful_run` is only updated on success, leaving failed records eligible for retry on the next run.
 
 ---
 
-### ノートブック 02 — `02_bronze_autoloader.py`：ブロンズ層 Auto Loader & SEC API取り込み
+### Notebook 02 — `02_bronze_autoloader.py`: Bronze Layer Auto Loader & SEC API Ingestion
 
-このノートブックはブロンズ層の中心です。2つの独立したデータソースからデータを取り込みます：（1）ボリューム上の物理ファイルをDatabricks Auto Loaderでストリーミング取り込み、（2）SEC EDGAR CompanyFacts APIからXBRL JSONデータをバッチ取得します。
+This notebook is the core of the Bronze layer. It ingests data from two independent sources: (1) physical files on the volume via Databricks Auto Loader streaming, and (2) XBRL JSON data from the SEC EDGAR CompanyFacts API in batch.
 
-#### セクション1：リセットフラグ（緊急用）
+#### Section 1: Reset Flag (Emergency Use)
 
 ```python
 RESET_PIPELINE = False
@@ -600,9 +648,9 @@ if RESET_PIPELINE:
     dbutils.fs.rm(f"/Volumes/{CATALOG}/finsage_bronze/checkpoints", recurse=True)
 ```
 
-`RESET_PIPELINE = True`にすると全テーブルとAuto Loaderのチェックポイントが削除され、ゼロから再取り込みが可能になります。通常はFalseのままにします。このフラグはコードレビューで意図的なリセットを明示するための安全装置です。
+Setting `RESET_PIPELINE = True` drops all Bronze tables and Auto Loader checkpoints, enabling a full re-ingestion from scratch. This flag serves as a safety mechanism — its presence in code makes any intentional reset explicit and visible in code review.
 
-#### セクション2：ブロンズテーブルの作成（SQL）
+#### Section 2: Bronze Table Creation (SQL)
 
 ```sql
 CREATE TABLE IF NOT EXISTS main.finsage_bronze.filings (
@@ -612,16 +660,16 @@ CREATE TABLE IF NOT EXISTS main.finsage_bronze.filings (
     accession_number  STRING,
     fiscal_year       INT,
     file_path         STRING,
-    content           BINARY,       -- 生ファイルの全バイナリ内容
+    content           BINARY,       -- raw binary content of the file
     file_size_bytes   LONG,
     ingestion_status  STRING,
     ingested_at       TIMESTAMP
 ) TBLPROPERTIES (delta.enableChangeDataFeed = true);
 ```
 
-`content BINARY`カラムがHTMLファイル全体をバイナリとして格納します。シルバー層でテキスト処理するために`decode(col("content"), "UTF-8")`でデコードします。`delta.enableChangeDataFeed = true`により、このテーブルへの変更（INSERT/UPDATE/DELETE）をダウンストリームで追跡できるChange Data Capture（CDC）が有効化されます。
+The `content BINARY` column stores the entire HTML file as binary. The Silver layer decodes it with `decode(col("content"), "UTF-8")`. `delta.enableChangeDataFeed = true` enables Change Data Capture (CDC) on this table, allowing downstream layers to track inserts, updates, and deletes.
 
-#### セクション3：Auto Loaderによるファイルストリーミング（核心部分）
+#### Section 3: Auto Loader File Streaming (Core Logic)
 
 ```python
 df_bronze = (
@@ -645,25 +693,26 @@ df_bronze = (
 )
 ```
 
-**Auto Loader（cloudFiles）の仕組み：**
-- `format("cloudFiles")`：Databricksのネイティブなインクリメンタルストリームプロセッサ。ディレクトリの新着ファイルを自動検出します
-- `cloudFiles.format = "binaryFile"`：ファイルを生バイナリとして読み込みます。Auto Loaderは`_metadata`という組み込みカラムにファイルパスやサイズなどのメタデータを提供します
-- `cloudFiles.schemaLocation`：スキーマ情報をチェックポイントに保存し、スキーマの進化（列の追加など）を自動管理します
-- `recursiveFileLookup = true`：サブディレクトリを再帰的に探索します
+**How Auto Loader (`cloudFiles`) works:**
 
-**ファイルパスからのメタデータ抽出：**
+- `format("cloudFiles")`: Databricks' native incremental stream processor. Automatically detects new files in a directory.
+- `cloudFiles.format = "binaryFile"`: Reads files as raw binary. Auto Loader provides file metadata (path, size, modification time) in the built-in `_metadata` column.
+- `cloudFiles.schemaLocation`: Persists schema information to a checkpoint path and manages schema evolution (e.g., new columns) automatically.
+- `recursiveFileLookup = true`: Searches subdirectories recursively.
 
-SEC申告書のダウンロード後のファイルパス構造は：
+**Metadata extraction from the file path:**
+
+The path structure after `sec-edgar-downloader` completes is:
 `/Volumes/main/finsage_bronze/raw_filings/sec-edgar-filings/AAPL/10-K/0000320193-21-000105/...`
 
-`split(col("file_path"), "/")`でスラッシュ区切りの配列に分割し、インデックスで各要素を取得：
-- インデックス6 → ティッカー（例：`AAPL`）
-- インデックス7 → フォームタイプ（例：`10-K`）
-- インデックス8 → アクセッション番号（例：`0000320193-21-000105`）
+`split(col("file_path"), "/")` splits on slashes, then index positions extract each element:
+- Index 6 → ticker (e.g., `AAPL`)
+- Index 7 → form type (e.g., `10-K`)
+- Index 8 → accession number (e.g., `0000320193-21-000105`)
 
-アクセッション番号の`-21-`部分（インデックス1）は申告年度の下2桁。`concat(lit("20"), col("year_short")).cast("int")`で`21` → `"2021"` → `2021`に変換します。
+The `"-21-"` segment (index 1) of the accession number is the two-digit filing year. `concat(lit("20"), col("year_short")).cast("int")` converts `"21"` → `"2021"` → `2021`.
 
-**ストリームの書き込み設定：**
+**Stream write configuration:**
 
 ```python
 df_bronze.writeStream
@@ -676,14 +725,14 @@ df_bronze.writeStream
     .toTable(target_table)
 ```
 
-- `outputMode("append")`：ブロンズは追記専用のため、既存データを上書きしません
-- `checkpointLocation`：exactly-once処理を保証するためのチェックポイント。同じファイルが2回取り込まれることを防ぎます
-- `badRecordsPath`：パースに失敗したレコードをストリームを止めずに別パスに退避します
-- `trigger(availableNow=True)`：「現時点で利用可能なすべてのファイルを処理したら停止」というバッチ的な動作。継続的なストリームにはなりません。これにより本番バッチジョブとして安全に使えます
+- `outputMode("append")`: Bronze is append-only; existing data is never overwritten.
+- `checkpointLocation`: Ensures exactly-once processing. The same file cannot be ingested twice.
+- `badRecordsPath`: Failed records are written to a separate path without stopping the stream.
+- `trigger(availableNow=True)`: Processes all currently available files and then stops — batch-like behavior suitable for a daily scheduled job.
 
-#### セクション4：SEC EDGAR CompanyFacts API取り込み
+#### Section 4: SEC EDGAR CompanyFacts API Ingestion
 
-**Step 0 — 本日分のスキップチェック：**
+**Step 0 — Skip check for today's data:**
 
 ```python
 df_existing = spark.sql("""
@@ -693,9 +742,9 @@ df_existing = spark.sql("""
 already_fetched_today = [row["ticker"] for row in df_existing.collect()]
 ```
 
-冪等性のため、本日すでに正常取得済みのティッカーはスキップします。毎日一度だけAPIを叩く設計です。
+Tickers already successfully fetched today are skipped. The API is called at most once per ticker per day.
 
-**Step 1 — ティッカー→CIKマッピングの構築：**
+**Step 1 — Build ticker-to-CIK mapping:**
 
 ```python
 company_map_url = "https://www.sec.gov/files/company_tickers.json"
@@ -708,9 +757,9 @@ for item in company_map.values():
         ticker_to_cik[ticker] = str(item.get("cik_str", "")).zfill(10)
 ```
 
-SECはすべての登録企業のティッカー→CIK（Central Index Key）マッピングを公開しています。CIKはSECのシステム内で企業を一意に識別する数値IDです。`zfill(10)`で10桁のゼロ埋め（例：`320193` → `0000320193`）を行います。これはSECのAPI URLフォーマットの要件です。
+The SEC publishes a mapping of all registered company tickers to their CIK (Central Index Key) numbers. CIK is the SEC's unique numeric identifier for each registrant. `zfill(10)` zero-pads to 10 digits (e.g., `320193` → `0000320193`), the format required by SEC API URLs.
 
-**Step 2 — CompanyFacts JSONの取得：**
+**Step 2 — Fetch CompanyFacts JSON:**
 
 ```python
 source_url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
@@ -725,9 +774,9 @@ if resp.status_code == 200:
     ))
 ```
 
-`raw_json=resp.text`でJSONペイロード全体を文字列としてブロンズに保存します。シルバー層でPythonの`json.loads()`によって解析されます。`uuid4()`でユニークな`snapshot_id`を生成し、同じティッカーの複数日分のスナップショットを区別します。
+`raw_json=resp.text` stores the entire JSON payload as a string in Bronze. The Silver layer parses it with `json.loads()`. `uuid4()` generates a unique `snapshot_id` to distinguish multiple daily snapshots of the same ticker.
 
-**Step 3 & 4 — スキーマ定義とDelta書き込み：**
+**Steps 3 & 4 — Schema definition and Delta write:**
 
 ```python
 api_schema = StructType([
@@ -742,17 +791,17 @@ spark.createDataFrame(api_rows, schema=api_schema)
     .saveAsTable(f"{CATALOG}.finsage_bronze.xbrl_companyfacts_raw")
 ```
 
-明示的なSparkスキーマを定義することで型の一貫性を保証します。`.mode("append")`でブロンズの追記専用原則を維持します。`current_timestamp()`でSparkサーバーの現在時刻を`fetched_at`として記録します。
+An explicit Spark schema ensures type consistency. `.mode("append")` upholds the Bronze append-only principle. `current_timestamp()` records the Spark server time as `fetched_at`.
 
 ---
 
-### ノートブック 03 — `03_silver_decoder.py`：シルバー層 XBRLデコード & テキスト抽出
+### Notebook 03 — `03_silver_decoder.py`: Silver Layer XBRL Decoding & Text Extraction
 
-このノートブックはブロンズの生データから有用な構造化情報を抽出する「解析エンジン」です。2つの完全に独立したパス（A: XBRL数値データ、B: 10-Kテキストセクション）で処理します。
+This notebook is the parsing engine of the pipeline. It extracts structured information from raw Bronze data through two completely independent paths: (A) XBRL numeric data, and (B) 10-K text sections.
 
-#### パート A：XBRL CompanyFacts → `financial_statements`テーブル
+#### Part A: XBRL CompanyFacts → `financial_statements` Table
 
-**TARGET_CONCEPT_MAP — 正規化の中心：**
+**`TARGET_CONCEPT_MAP` — the core of normalization:**
 
 ```python
 TARGET_CONCEPT_MAP = {
@@ -772,9 +821,9 @@ TARGET_CONCEPT_MAP = {
 }
 ```
 
-これがFinSageの正規化の核心です。SEC XBRLでは同じ概念（例：売上高）が企業によって異なるタグ名で報告されます。このマップは30以上の異なるXBRLコンセプト名を11の統一された指標名に変換します。`tests/unit/test_normalizer.py`でこのマップの網羅性がテストされています。
+This map is the canonical source of truth for metric normalization. Because SEC XBRL filings use different tag names for the same concept across companies and time periods, this map unifies 27 XBRL concept names into 11 normalized metric names. The map is defined in `src/finsage/constants.py` and covered by tests in `tests/unit/test_normalizer.py`.
 
-**flatten_companyfacts関数 — JSONの深いネスト構造を展開：**
+**`flatten_companyfacts` function — unwrapping the deeply nested JSON:**
 
 ```python
 def flatten_companyfacts(row):
@@ -784,7 +833,7 @@ def flatten_companyfacts(row):
     for concept, concept_body in us_gaap.items():
         normalized_line_item = TARGET_CONCEPT_MAP.get(concept)
         if not normalized_line_item:
-            continue  # TARGET_CONCEPT_MAPにないXBRLコンセプトは無視
+            continue  # Skip XBRL concepts not in TARGET_CONCEPT_MAP
         units_map = concept_body.get("units", {})
         for unit, entries in units_map.items():
             for e in entries:
@@ -803,14 +852,15 @@ def flatten_companyfacts(row):
     return out
 ```
 
-SEC CompanyFacts APIのJSON構造は深くネストされています：
+The SEC CompanyFacts JSON is deeply nested:
+
 ```
 facts → us-gaap → Revenues → units → USD → [{filed: "2021-10-29", fy: 2021, fp: "FY", val: 365817000000, ...}]
 ```
 
-この関数は`rdd.flatMap()`で各ブロンズ行に対して呼び出され、1行のJSONを多数の財務指標行に展開します。`TARGET_CONCEPT_MAP.get(concept)`でNoneが返ったコンセプトはスキップすることで、関心のある財務指標のみを抽出します。
+This function is called via `rdd.flatMap()`, expanding one Bronze row (one JSON blob) into many normalized financial metric rows.
 
-**SHA-256による決定論的な重複排除：**
+**Deterministic deduplication via SHA-256:**
 
 ```python
 .withColumn(
@@ -826,9 +876,9 @@ facts → us-gaap → Revenues → units → USD → [{filed: "2021-10-29", fy: 
 )
 ```
 
-`statement_id`は（ticker + accession + XBRLコンセプト + 単位 + 期末日）のハッシュです。同じ事実が複数回APIから返ってきても、このIDは同じになります。`||`区切り文字を使うことで、異なるフィールドの組み合わせが同じハッシュを生成する衝突（例：`"A" + "B"` = `"AB"` = `"A" + "B"`）を防いでいます。
+`statement_id` is a hash of `(ticker + accession + XBRL concept + unit + period end date)`. The `||` separator prevents hash collisions that could arise if different field combinations produced the same concatenated string.
 
-**最新スナップショットを優先するウィンドウ関数：**
+**Window function to select the most recent snapshot:**
 
 ```python
 window_spec = Window.partitionBy("statement_id").orderBy(
@@ -843,9 +893,9 @@ df_financials_latest = (
 )
 ```
 
-同じ`statement_id`を持つ複数の行（複数日のAPIスナップショットから来る）の中で最新のものだけを保持します。`row_number()`は各グループ内で1から始まる番号を付け、`.filter(col("rn") == 1)`で最上位の1行だけを残します。
+Among rows with the same `statement_id` (from multiple daily API snapshots), only the most recent is retained. `row_number()` assigns a rank within each group; `.filter(col("rn") == 1)` keeps only the top-ranked row.
 
-**冪等なMERGE書き込み：**
+**Idempotent MERGE write:**
 
 ```python
 if spark.catalog.tableExists(silver_table):
@@ -856,11 +906,11 @@ else:
     df_financials_latest.write.format("delta").saveAsTable(silver_table)
 ```
 
-テーブルが存在する場合はMERGE（既存レコードを更新、新規レコードを挿入）、初回実行時は直接書き込みます。これによりパイプラインを何度再実行してもデータが重複しません。
+If the table already exists, a MERGE (upsert) updates existing records and inserts new ones. On first run, a direct write is used. This ensures no data duplication regardless of how many times the pipeline is re-run.
 
-#### パート B：10-Kテキストセクション → `filing_sections`テーブル
+#### Part B: 10-K Text Sections → `filing_sections` Table
 
-**SECTION_RULES — 正規表現による境界定義：**
+**`SECTION_RULES` — regex-based boundary definitions:**
 
 ```python
 SECTION_RULES = {
@@ -882,13 +932,14 @@ SECTION_RULES = {
 }
 ```
 
-各正規表現の解析：
-- `(?im)`：`i`は大文字小文字を区別しない、`m`は`^`が各行の先頭にマッチ
-- `[\s>\-\.\(\)\d]{0,12}`：行頭の最大12文字のノイズ（空白、`>`、`-`、数字など）を許容。10-KのHTMLは多様なフォーマットを持つため必要
-- `item\s+1\b`：`\s+`で1つ以上の空白、`\b`で単語境界（`item 1a`の`1`にはマッチしない）
-- `(?!\s*[ab]\b)`：ネガティブ先読み。「item 1a」や「item 1b」の後ろではマッチしない。Item 1（事業概要）のみを開始点とするため
+Regex breakdown:
 
-**HTMLクリーニングパイプライン：**
+- `(?im)`: Case-insensitive (`i`) and multiline (`m`) — `^` matches the start of each line.
+- `[\s>\-\.\(\)\d]{0,12}`: Tolerates up to 12 leading noise characters (whitespace, `>`, `-`, digits) — necessary because 10-K HTML formatting varies across filers.
+- `item\s+1\b`: One or more whitespace characters followed by a word boundary, preventing a match on `item 1a`.
+- `(?!\s*[ab]\b)`: Negative lookahead — does not match "item 1a" or "item 1b", anchoring the start to Item 1 (Business) only.
+
+**HTML cleaning pipeline:**
 
 ```python
 df_processed = (
@@ -906,16 +957,17 @@ df_processed = (
 )
 ```
 
-クリーニングの段階的なパイプライン：
-1. `decode(content, "UTF-8")`：バイナリをテキストに変換
-2. `substring_index(raw_text, '</DOCUMENT>', 1)`：SEC EDGARファイルには複数のドキュメントが含まれているため、最初のドキュメント（主文書）だけを抽出
-3. `<img...data:image/...>`の削除：Base64エンコードされた埋め込み画像は巨大で、テキスト処理に不要
-4. `<script>`と`<style>`タグの削除：JavaScriptとCSSはテキストノイズになる
-5. 構造タグ（`<div>`, `<p>`, `<br>`, `<tr>`など）を改行`\n`に変換：段落構造を保持しながらHTMLを除去
-6. 残りのすべてのHTMLタグを半角スペースに置換
-7. `\u00a0`（ノンブレーキングスペース）を通常スペースに変換
+The cleaning pipeline proceeds in stages:
 
-**セクション抽出UDF：**
+1. `decode(content, "UTF-8")`: Converts binary to text.
+2. `substring_index(raw_text, '</DOCUMENT>', 1)`: SEC EDGAR files may contain multiple embedded documents; only the first (the main filing document) is extracted.
+3. Removal of Base64-encoded inline images — large and irrelevant to text processing.
+4. Removal of `<script>` and `<style>` tags (JavaScript and CSS are noise).
+5. Structural tags (`<div>`, `<p>`, `<br>`, `<tr>`, etc.) are replaced with newlines to preserve paragraph structure.
+6. Remaining HTML tags are replaced with spaces.
+7. Non-breaking spaces (`\u00a0`) are normalized to regular spaces.
+
+**Section extraction UDF:**
 
 ```python
 split_udf = udf(
@@ -931,9 +983,9 @@ split_udf = udf(
 )
 ```
 
-Sparkの`udf()`でPython関数をSparkの分散処理に組み込みます。戻り値型は明示的なスキーマで定義されており、`sections`（セクション情報の配列）と`error`（エラーメッセージまたはNull）を返します。
+Spark's `udf()` integrates this Python function into distributed processing. The return schema is explicit: `sections` (an array of section records) and `error` (an error message or null).
 
-**_choose_best_block — 最良ブロックの選択ロジック：**
+**`_choose_best_block` — best-match selection logic:**
 
 ```python
 def _choose_best_block(text, rule):
@@ -956,20 +1008,19 @@ def _choose_best_block(text, rule):
     return best
 ```
 
-10-Kのような複雑な文書には、目次と本文の両方に「Item 1」が現れます。目次の「Item 1」を誤って開始点として取り込まないよう、スコアリングシステムを使います：
-- `word_count`が`min_words`（250または400語）未満のブロックは除外（目次の1行は単語数が少ない）
-- `score = word_count + ((s / doc_len) * 250)`：文書後半に位置するほど（目次は前方にある）スコアが上がるように設計
-- 最高スコアのブロックを「真のセクション」として採用
+Complex filings like 10-Ks contain "Item 1" in both the table of contents and the body. A scoring system prevents selecting a table of contents entry as the section start:
 
-最終的にすべてのセクションをexplodeして1セクション1行に変換し、`overwrite`モードでシルバーテーブルに書き込みます。
+- Blocks with fewer than `min_words` (250 or 400) are excluded (table of contents entries have very few words).
+- `score = word_count + ((s / doc_len) * 250)`: Blocks positioned later in the document (the body appears after the table of contents) score higher.
+- The highest-scoring block is selected as the true section.
 
 ---
 
-### ノートブック 04 — `04_gold_metrics.py`：ゴールド層 財務指標集計
+### Notebook 04 — `04_gold_metrics.py`: Gold Layer Financial Metric Aggregation
 
-このノートブックはシルバーの正規化済み財務指標をさらに精錬し、分析に即座に使える広いテーブルを生成します。厳密な品質フィルタリングと前年比成長率などの派生KPIを計算します。
+This notebook refines Silver normalized financial metrics into a wide, immediately analytics-ready table. It applies strict quality filters, selects canonical accession numbers, and computes derived KPIs including year-over-year growth rates.
 
-#### セクション1：時間軸フィルタリング
+#### Section 1: Time-Period Filtering
 
 ```python
 df = (
@@ -982,12 +1033,12 @@ df = (
 )
 ```
 
-- `filing_type.rlike("^10-K")`：年次申告書のみ。`rlike`は正規表現マッチ（`10-K/A`など修正版も含む）
-- `fiscal_period == "FY"`：XBRLの"FY"は完全な会計年度を意味します。Q1〜Q4の四半期データは除外
-- `fiscal_year >= 2020`：直近5年分の分析に絞ります
-- `duration_days`：`period_start`から`period_end`までの日数。期間が正確に1年間（350〜380日）かどうか検証するために計算します
+- `filing_type.rlike("^10-K")`: Annual filings only; `rlike` supports regex, so amended filings (e.g., `10-K/A`) are also included.
+- `fiscal_period == "FY"`: XBRL "FY" denotes a complete fiscal year; Q1–Q4 quarterly data is excluded.
+- `fiscal_year >= 2020`: Analysis is scoped to the most recent 5 years.
+- `duration_days`: Computed to verify that the period is exactly one year (350–380 days), filtering out quarterly or multi-year periods.
 
-#### セクション2：コンセプト優先度によるデータ重複排除
+#### Section 2: Concept Priority-Based Deduplication
 
 ```python
 concept_priority = (
@@ -1002,9 +1053,9 @@ concept_priority = (
 )
 ```
 
-同じ正規化指標（例：`revenue`）に複数のXBRLコンセプトがマッピングされている場合、どれを優先するかを決定します。優先度1が最優先です。`RevenueFromContractWithCustomerExcludingAssessedTax`（ASC 606準拠の最新基準）を最優先にすることで、会計基準の変更に対応した一貫性のある比較が可能になります。
+When multiple XBRL concepts map to the same normalized metric (e.g., `revenue`), this defines which concept takes precedence. Priority 1 is highest. `RevenueFromContractWithCustomerExcludingAssessedTax` (the post-ASC 606 standard) is the preferred revenue concept because it reflects the current accounting standard.
 
-#### セクション3：期間フィット検証
+#### Section 3: Period Fit Validation
 
 ```python
 .withColumn("annual_fit_score", when(
@@ -1020,13 +1071,12 @@ concept_priority = (
 ).otherwise(lit(0)))
 ```
 
-2種類の指標を区別します：
-- **フロー指標**（`is_duration_metric`）：収益・利益など、期間中の累積値。1年間（350〜380日）の期間でなければなりません。`< 350`は四半期、`> 380`は調整期間の可能性があるため除外
-- **瞬間指標**（`is_instant_metric`）：総資産・負債など、特定の時点の残高。会計年度末時点の値であればよい
+Two types of metrics are handled differently:
 
-ウォルマートのような1月決算の企業は、会計年度2023が翌年1月末（2024年）に終わります。そのため`period_end_year == fiscal_year`の厳密チェックのみでなく、`+1`オフセットを許容する設計もあります（コメント参照）。
+- **Flow metrics** (`is_duration_metric`): Revenue, profit, etc. — cumulative values over a period. The period must be exactly one year (350–380 days). Periods shorter than 350 days are likely quarterly; periods longer than 380 days may be transition or restatement periods.
+- **Instant metrics** (`is_instant_metric`): Total assets, liabilities, etc. — point-in-time balances at the end of the fiscal year.
 
-#### セクション4：正規アクセッション番号の選択（最重要）
+#### Section 4: Canonical Accession Number Selection
 
 ```python
 df_accession_quality = (
@@ -1048,14 +1098,15 @@ accession_window = Window.partitionBy("ticker", "fiscal_year").orderBy(
 )
 ```
 
-同じ（ticker, fiscal_year）に複数のアクセッション番号（修正申告など）が存在する場合、どれが「最も良い」申告書かを判定します：
-1. `required_metric_hits`：売上高・純利益・営業利益など必須6指標のカバレッジ数（最優先）
-2. `distinct_metric_coverage`：使用可能な指標の総数
-3. `latest_filing_date`：最も新しい申告書（タイブレーカー）
+When multiple accession numbers exist for the same `(ticker, fiscal_year)` (e.g., original and amended filings), the "best" filing is selected by:
 
-この選択により、集計前に1つの「正規」申告書を確定させ、異なる修正申告のデータが混在することを防ぎます。
+1. `required_metric_hits`: Number of the 6 required metrics covered (highest priority).
+2. `distinct_metric_coverage`: Total number of usable distinct metrics.
+3. `latest_filing_date`: Most recent filing as a tiebreaker.
 
-#### セクション5：指標の集計（ピボット）
+This guarantees that a single canonical filing is used for aggregation, preventing data from different amended filings from mixing.
+
+#### Section 5: Metric Aggregation (Pivot)
 
 ```python
 df_base = (
@@ -1072,9 +1123,9 @@ df_base = (
 )
 ```
 
-`spark_max(when(condition, value))`パターンは**条件付き集計**のイディオムです。`GROUP BY`で1行にまとめながら、指標名をカラム名に変換するピボット操作です。各`normalized_line_item`が異なるカラムになります。
+`spark_max(when(condition, value))` is the idiomatic Spark conditional aggregation pattern for pivoting normalized rows into named columns. Each `normalized_line_item` value becomes a separate column in the resulting wide table.
 
-#### セクション6：派生指標の計算
+#### Section 6: Derived Metric Computation
 
 ```python
 df_metrics = (
@@ -1090,11 +1141,11 @@ df_metrics = (
 )
 ```
 
-- `gross_profit`：XBRLで直接報告されている場合はその値を使用、ない場合は`revenue - cost_of_revenue`で計算（`coalesce`でフォールバック）
-- `total_debt`：両方がNullの場合は合計もNull（データなし）、それ以外はNullを0として足し合わせ
-- `gross_margin_pct`：0除算を防ぐため、`revenue != 0`チェックを含んだ安全な除算
+- `gross_profit`: Uses the directly reported XBRL value if available; falls back to `revenue - cost_of_revenue` via `coalesce`.
+- `total_debt`: If both short-term and long-term debt are null, the result is null (no data); otherwise, null values are treated as zero before summing.
+- `gross_margin_pct`: Guards against division by zero with an explicit `revenue != 0` check.
 
-**前年比成長率（YoY）の計算：**
+**Year-over-year (YoY) growth calculation:**
 
 ```python
 yoy_window = Window.partitionBy("ticker").orderBy("fiscal_year")
@@ -1110,9 +1161,9 @@ df_metrics = (
 )
 ```
 
-`lag("revenue")`は同じティッカーの前年度の売上高を取得するウィンドウ関数です。`partitionBy("ticker")`で企業ごとに分割し、`orderBy("fiscal_year")`で年度順に並べ、1年前（デフォルト`lag`のオフセット=1）の値を参照します。`(revenue - prior_year_revenue) / prior_year_revenue`で成長率を計算します。
+`lag("revenue")` retrieves the prior fiscal year's revenue for the same ticker. `partitionBy("ticker")` ensures the window operates within each company. The growth rate formula is `(current − prior) / prior`, guarded against null and zero divisors.
 
-#### セクション7：データ品質スコアと最終書き込み
+#### Section 7: Data Quality Score and Final Write
 
 ```python
 validated_metric_count = (
@@ -1129,15 +1180,15 @@ df_gold = (
 )
 ```
 
-9つのコア指標それぞれについて、値が存在する場合に1、Nullの場合に0を加算します。9で割ることで0〜1のスコアを得ます。`data_quality_score = 1.0`は9指標すべてが揃っていることを意味します。このスコアにより、下流の分析でデータ完全性の低いレコードをフィルタリングできます。
+For each of the 9 core metrics, a value of 1 is added if the metric is non-null. Dividing by 9.0 yields a score in the range [0, 1]. A `data_quality_score` of 1.0 means all 9 metrics are populated. This score allows downstream consumers to filter for high-completeness records.
 
 ---
 
-### ノートブック 05 — `05_vector_chunker.py`：ベクター化チャンク生成 & Vector Searchインデックス
+### Notebook 05 — `05_vector_chunker.py`: Vector Chunk Generation & Vector Search Index
 
-このノートブックはFinSageのRAG（検索拡張生成）基盤を構築します。テキストセクションをLLMが扱えるサイズのチャンクに分割し、Databricks Vector Searchインデックスに登録して、意味的な類似検索を可能にします。
+This notebook builds the RAG (Retrieval-Augmented Generation) foundation of FinSage. It splits text sections into LLM-compatible chunks and registers them in a Databricks Vector Search index for semantic similarity search.
 
-#### セクション1：チャンキング設定
+#### Section 1: Chunking Configuration
 
 ```python
 SOURCE_TABLE          = "main.finsage_silver.filing_sections"
@@ -1148,11 +1199,11 @@ CHUNK_OVERLAP_TOKENS  = 64
 CHUNK_VERSION         = f"tok_{CHUNK_TOKENS}_{CHUNK_OVERLAP_TOKENS}_v1"
 ```
 
-- `CHUNK_TOKENS = 512`：1チャンクのトークン数上限。OpenAIの`text-embedding-3-large`モデルは最大8,192トークンを処理できますが、512トークンが検索精度と文脈保持のバランスの良いサイズです
-- `CHUNK_OVERLAP_TOKENS = 64`：連続するチャンク間のオーバーラップ。チャンク境界でセンテンスが切れることによる意味の損失を防ぎます
-- `CHUNK_VERSION`：チャンキング設定のバージョン文字列。パラメータを変更した際に既存チャンクとの区別に使用
+- `CHUNK_TOKENS = 512`: Maximum tokens per chunk. While `text-embedding-3-large` supports up to 8,192 tokens, 512 tokens balances retrieval precision and context retention.
+- `CHUNK_OVERLAP_TOKENS = 64`: Overlap between consecutive chunks prevents semantic loss at chunk boundaries.
+- `CHUNK_VERSION`: A version string encoding the chunking configuration. Changing chunking parameters updates this string, distinguishing new chunks from existing ones in idempotent merges.
 
-#### セクション2：tiktokenエンコーダーの遅延初期化
+#### Section 2: Lazy Initialization of the tiktoken Encoder
 
 ```python
 _ENCODING = None
@@ -1167,9 +1218,9 @@ def get_encoding():
     return _ENCODING
 ```
 
-`tiktoken`はOpenAIが開発したトークナイザーです。テキストをトークン（モデルの語彙単位）に変換します。遅延初期化（初回呼び出し時のみ初期化）にすることで、Sparkの分散実行環境でのシリアライゼーション問題を回避します。`cl100k_base`はGPT-4で使用されるエンコーディングで、フォールバックとして使用します。
+`tiktoken` is OpenAI's tokenizer library. Lazy initialization (creating the encoder only on first call) avoids serialization issues in Spark's distributed execution environment. `cl100k_base` (used by GPT-4) is the fallback encoding.
 
-#### セクション3：決定論的チャンクID生成
+#### Section 3: Deterministic Chunk ID Generation
 
 ```python
 def deterministic_chunk_id(
@@ -1190,12 +1241,11 @@ def deterministic_chunk_id(
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 ```
 
-この関数はチャンクの内容と位置情報から決定論的なIDを生成します：
-- `json.dumps(sort_keys=True)`：キーの順序を固定して、同じ内容なら常に同じJSON文字列になるようにします
-- `separators=(",", ":")`：余分な空白を除去してコンパクトなJSON（バイト単位での一意性を保証）
-- SHA-256ハッシュ：同じ入力からは常に同じID。これによりパイプラインを再実行してもチャンクのIDが変わらず、Vector SearchインデックスのMERGEが正確に機能します
+- `json.dumps(sort_keys=True)`: Sorts dictionary keys to ensure the same content always produces the same JSON string.
+- `separators=(",", ":")`: Removes whitespace from the JSON output for compact, unambiguous serialization.
+- SHA-256 hash: Identical inputs always produce the same ID. This allows the pipeline to be re-run without changing chunk IDs, enabling accurate Vector Search index MERGEs.
 
-#### セクション4：Pandas UDF によるトークンベースチャンキング
+#### Section 4: Token-Based Chunking via Pandas UDF
 
 ```python
 @F.pandas_udf(chunk_array_schema)
@@ -1231,24 +1281,25 @@ def chunk_sections_udf(
         out.append(row_chunks)
 ```
 
-`@F.pandas_udf`は通常のSparkのUDFより高速なベクトル化UDFです。通常のUDFは1行ずつ処理しますが、Pandas UDFはデータを`pd.Series`のバッチで受け取り、パフォーマンスが大幅に向上します。
+`@F.pandas_udf` is a vectorized UDF that receives data as `pd.Series` batches rather than row-by-row, providing significantly better performance than a standard Spark UDF.
 
-チャンキングアルゴリズム：
-- `step = 448`：各チャンクの開始点を448トークンずつ進める（512 - 64オーバーラップ）
-- テキスト全体をtiktokenでトークンIDのリストに変換
-- スライス`token_ids[start:end]`でトークンIDを取り出し
-- `enc.decode(chunk_ids)`でトークンIDを再びテキストに戻す
-- 最後のチャンク（`end == len(token_ids)`）で`break`
+The chunking algorithm:
 
-視覚的なチャンク構造（512トークン、64オーバーラップ）：
+- `step = 448`: Each chunk starts 448 tokens after the previous one (512 − 64 overlap).
+- The full text is tokenized into a list of token IDs by `tiktoken`.
+- Each slice `token_ids[start:end]` is decoded back to text using `enc.decode()`.
+- The loop terminates when `end == len(token_ids)` (last chunk reached).
+
+Visual representation (512 tokens, 64-token overlap):
+
 ```
-[チャンク0: トークン   0〜511]
-[チャンク1: トークン 448〜959]
-[チャンク2: トークン 896〜1407]
-              ^^^--- 64トークンのオーバーラップ
+[Chunk 0: tokens   0–511]
+[Chunk 1: tokens 448–959]
+[Chunk 2: tokens 896–1407]
+              ^^^--- 64-token overlap
 ```
 
-#### セクション5：データ品質ガード
+#### Section 5: Data Quality Guards
 
 ```python
 dup_count = (
@@ -1269,13 +1320,14 @@ if bad_rows > 0:
     raise RuntimeError("Invalid chunk rows detected. Aborting write.")
 ```
 
-書き込み前に2つのアサーションを実行します：
-1. `chunk_id`の重複チェック：決定論的IDのロジックが正しく機能しているか確認。重複があれば Vector SearchのMERGEが誤動作する
-2. 不正行チェック：`chunk_text`がNull、`token_count`が0以下、`chunk_index`が負数のいずれかが存在すれば異常データとして書き込みを中断
+Two assertions run before any write:
 
-`.limit(1).count()`の使用が重要です。`count()`は全件カウントですが、`.limit(1).count()`は1件でも存在すれば1を返すので、大量データに対しても非常に高速です。
+1. **Duplicate `chunk_id` check**: Verifies the deterministic ID logic is functioning correctly. Duplicate IDs would cause incorrect behavior in the Vector Search index MERGE.
+2. **Invalid row check**: Fails fast if any chunk has a null `chunk_text`, a non-positive `token_count`, or a negative `chunk_index`.
 
-#### セクション6：Vector Searchエンドポイントとインデックスのプロビジョニング
+`.limit(1).count()` is used deliberately — it returns 1 as soon as a single matching row is found, making the check fast even on large datasets.
+
+#### Section 6: Vector Search Endpoint and Index Provisioning
 
 ```python
 VECTOR_SEARCH_ENDPOINT_NAME  = "finsage_vs_endpoint"
@@ -1284,11 +1336,11 @@ EMBEDDING_MODEL_ENDPOINT     = "databricks-bge-large-en"
 PIPELINE_TYPE                = "TRIGGERED"
 ```
 
-- `finsage_vs_endpoint`：Databricks Vector Searchのエンドポイント（クラスターに類似したコンピュートリソース）
-- `databricks-bge-large-en`：BGE（BAAI General Embedding）Large英語モデル。Databricksがホストするモデルサービングエンドポイントでテキストをベクターに変換します
-- `TRIGGERED`パイプライン：インデックスの更新は明示的にトリガーされるまで自動では更新されません（コスト効率的）
+- `finsage_vs_endpoint`: The Databricks Vector Search endpoint (a compute resource similar to a cluster).
+- `databricks-bge-large-en`: BGE (BAAI General Embedding) Large English model, served by Databricks Model Serving, which converts text to vector embeddings.
+- `TRIGGERED` pipeline: Index updates are triggered explicitly rather than running continuously — cost-efficient for a daily batch pipeline.
 
-**リトライロジック（指数バックオフ + ジッター）：**
+**Retry logic with exponential backoff and jitter:**
 
 ```python
 def _retryable_call(fn, retries: int = 8, base_sleep: float = 1.5, max_sleep: float = 20.0):
@@ -1305,9 +1357,9 @@ def _retryable_call(fn, retries: int = 8, base_sleep: float = 1.5, max_sleep: fl
     raise last_exc
 ```
 
-`2 ** (attempt - 1)`で指数バックオフ（1.5s, 3s, 6s, 12s, 20s...）を実現します。`random.uniform(0, 0.5)`のジッター（ランダム変動）を加えることで、複数のクライアントが同時にリトライする「サンダリングハード問題」を防ぎます。
+`2 ** (attempt - 1)` implements exponential backoff (1.5s, 3s, 6s, 12s, 20s, ...). Adding `random.uniform(0, 0.5)` jitter prevents multiple clients from retrying simultaneously (the "thundering herd" problem).
 
-**エンドポイントのONLINE待機ポーリング：**
+**Endpoint online polling:**
 
 ```python
 def wait_for_endpoint_online(vsc, endpoint_name, timeout_sec):
@@ -1321,12 +1373,12 @@ def wait_for_endpoint_online(vsc, endpoint_name, timeout_sec):
             return
         if state in {"FAILED", "ERROR"}:
             raise RuntimeError(...)
-        time.sleep(POLL_SEC)  # 15秒ごとにポーリング
+        time.sleep(POLL_SEC)  # polls every 15 seconds
 ```
 
-Vector Searchエンドポイントの起動には数分かかります。15秒ごとにステータスをポーリングし、ONLINE状態になるまで最大30分待ちます。`_nested_get`でAPIレスポンスの異なる構造（SDKバージョンの違い）を吸収します。
+Vector Search endpoints take several minutes to start. This function polls every 15 seconds, waiting up to 30 minutes. `_nested_get` handles differences in API response structure across SDK versions.
 
-**類似検索デモ：**
+**Similarity search demonstration:**
 
 ```python
 def search_financial_filings(query: str, num_results: int = 3):
@@ -1344,10 +1396,23 @@ def search_financial_filings(query: str, num_results: int = 3):
 print(search_financial_filings("What did Apple say about supply chain or manufacturing risks?"))
 ```
 
-インデックスが構築されると、自然言語クエリでサプライチェーンリスクについてAppleが言及した部分を検索できます。`similarity_search`はクエリテキストを同じ埋め込みモデル（BGE Large）でベクター化し、コサイン類似度で最近傍のチャンクを返します。これがRAGシステムの検索（Retrieval）コンポーネントです。
+Once the index is built, natural language queries can retrieve the most semantically relevant filing sections. `similarity_search` embeds the query text using the same BGE Large model and returns the nearest neighbors by cosine similarity. This is the retrieval (R) component of a RAG system.
 
 ---
 
-## ライセンス
+## 13. Future Work
 
-社内プロジェクト — Arsaga Partners。全権利留保。
+The following items are defined in the repository structure or configuration files but are **not yet implemented**:
+
+- **`src/agent/`, `src/app/`, `src/monitoring/`, `src/processing/`, `src/retrieval/`, `src/serving/`**: These directories exist as stubs. A RAG agent, application serving layer, and monitoring module are planned but not yet built.
+- **`databricks/workflows/`**: Reserved for future Databricks Workflow YAML definitions (e.g., Delta Live Tables pipelines).
+- **Terraform remote state backend**: `terraform/main.tf` includes a commented-out `azurerm` backend block. Remote state storage must be configured before Terraform is used in a multi-engineer or CI context.
+- **Production `run_as` service principal**: `databricks.yml` includes commented-out `run_as` configuration for the `prod` target. Once the `finsage-service-principal` is provisioned in the Databricks Admin Console with its numeric application ID, this should be uncommented to decouple job execution from a human identity.
+- **Cluster policy integration into DAB**: `terraform/main.tf` creates a `finsage_cluster_policy`, but `databricks.yml` does not yet reference it via `policy_id`. This is noted as future work in the Terraform file.
+- **Terraform in CI**: Terraform is not part of the GitHub Actions pipeline. Infrastructure changes (cluster policies, secret scopes) must currently be applied manually.
+
+---
+
+## License
+
+Internal project — Arsaga Partners. All rights reserved.
