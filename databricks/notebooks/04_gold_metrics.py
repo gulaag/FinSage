@@ -32,11 +32,6 @@ print(f"[CONFIG] catalog={CATALOG} | env={ENV} | start_date={START_DATE} | ticke
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC DROP TABLE IF EXISTS main.finsage_gold.company_metrics;
-
-# COMMAND ----------
-
 from pyspark.sql.functions import (
     col, when, lit, row_number, coalesce, current_timestamp, lag,
     datediff, to_date, year, month, lower, trim,
