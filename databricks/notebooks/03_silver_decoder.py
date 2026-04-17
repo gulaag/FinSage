@@ -26,12 +26,6 @@ print(f"[CONFIG] catalog={CATALOG} | env={ENV} | start_date={START_DATE} | ticke
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC DROP TABLE IF EXISTS main.finsage_silver.filing_sections;
-# MAGIC DROP TABLE IF EXISTS main.finsage_silver.financial_statements;
-
-# COMMAND ----------
-
 # ── A) XBRL CompanyFacts → financial_statements ─────────────────────────────
 
 from pyspark.sql import Row
@@ -391,9 +385,16 @@ df_final_sections = (
     )
 )
 
-df_final_sections.write.format("delta").mode("overwrite").option("overwriteSchema", "true") \
-    .saveAsTable(f"{CATALOG}.finsage_silver.filing_sections")
-print("Silver filing_sections table overwritten successfully.")
+filing_sections_table = f"{CATALOG}.finsage_silver.filing_sections"
+if spark.catalog.tableExists(filing_sections_table):
+    DeltaTable.forName(spark, filing_sections_table).alias("t").merge(
+        df_final_sections.alias("s"), "t.section_id = s.section_id"
+    ).whenMatchedUpdateAll().whenNotMatchedInsertAll().execute()
+    print("Silver filing_sections merge complete.")
+else:
+    df_final_sections.write.format("delta").saveAsTable(filing_sections_table)
+    spark.sql(f"ALTER TABLE {filing_sections_table} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)")
+    print("Silver filing_sections table created with CDF enabled.")
 df_processed.unpersist()
 
 # COMMAND ----------
