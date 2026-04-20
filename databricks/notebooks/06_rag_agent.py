@@ -573,9 +573,9 @@ from databricks.sdk.service.serving import (
 w = WorkspaceClient()
 
 # Get the latest registered model version
-client      = mlflow.tracking.MlflowClient()
-latest_ver  = client.get_registered_model(UC_MODEL_NAME).latest_versions
-model_version = max(latest_ver, key=lambda v: int(v.version)).version
+client        = mlflow.tracking.MlflowClient()
+all_versions  = client.search_model_versions(f"name='{UC_MODEL_NAME}'")
+model_version = max(all_versions, key=lambda v: int(v.version)).version
 print(f"[DEPLOY] Deploying {UC_MODEL_NAME} version {model_version} → {AGENT_ENDPOINT}")
 
 served_entity = ServedEntityInput(
