@@ -484,9 +484,7 @@ class _FakeContext:
     }
 
 fake_ctx = _FakeContext()
-fake_ctx.artifacts = type("A", (), {
-    "metrics_cache": "/tmp/metrics_cache.json"
-})()
+fake_ctx.artifacts = {"metrics_cache": "/tmp/metrics_cache.json"}
 
 # Save cache to temp file (mimics what MLflow will do)
 import json, os
