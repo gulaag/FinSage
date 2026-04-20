@@ -564,11 +564,8 @@ with mlflow.start_run(run_name=f"finsage_rag_agent_{ENV}") as run:
 # ── 10. Deploy to Databricks Model Serving ────────────────────────────────────
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.serving import (
-    EndpointCoreConfigInput,
-    ServedEntityInput,
-    AutoCaptureConfigInput,
-)
+from databricks.sdk.service.serving import EndpointCoreConfigInput, ServedEntityInput
+from databricks.sdk.errors import ResourceDoesNotExist
 
 w = WorkspaceClient()
 
@@ -587,25 +584,15 @@ served_entity = ServedEntityInput(
 
 endpoint_config = EndpointCoreConfigInput(name=AGENT_ENDPOINT, served_entities=[served_entity])
 
-inference_table_config = AutoCaptureConfigInput(
-    catalog_name=CATALOG,
-    schema_name="finsage_gold",
-    table_name_prefix="rag_agent_inference",
-    enabled=True,
-)
-
 try:
     existing = w.serving_endpoints.get(AGENT_ENDPOINT)
     print(f"[DEPLOY] Endpoint exists (state={existing.state.ready}). Updating config...")
     w.serving_endpoints.update_config(name=AGENT_ENDPOINT, served_entities=[served_entity])
     print("[DEPLOY] Update submitted.")
-except Exception:
+except ResourceDoesNotExist:
     print("[DEPLOY] Creating new endpoint...")
-    w.serving_endpoints.create(
-        name=AGENT_ENDPOINT,
-        config=endpoint_config,
-        inference_table_config=inference_table_config,
-    )
+    w.serving_endpoints.create(name=AGENT_ENDPOINT, config=endpoint_config)
+    print("[DEPLOY] Creation submitted.")
     print("[DEPLOY] Creation submitted.")
 
 print(f"[DEPLOY] Monitor at: https://dbc-f33010ed-00fc.cloud.databricks.com/ml/endpoints/{AGENT_ENDPOINT}")
