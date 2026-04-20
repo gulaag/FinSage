@@ -106,7 +106,6 @@ print(f"[CACHE] {len(METRICS_CACHE)} tickers loaded. Sample: {list(METRICS_CACHE
 
 # ── 4. Tool: search_filings ───────────────────────────────────────────────────
 
-@mlflow.trace(name="search_filings", span_type="TOOL")
 def search_filings(
     query: str,
     ticker: str = None,
@@ -170,7 +169,6 @@ print("[search_filings test]", _test[:300])
 
 # ── 5. Tool: get_company_metrics ──────────────────────────────────────────────
 
-@mlflow.trace(name="get_company_metrics", span_type="TOOL")
 def get_company_metrics(
     ticker: str,
     fiscal_year_start: int = None,
