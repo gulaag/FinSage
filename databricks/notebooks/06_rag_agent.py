@@ -628,6 +628,8 @@ while True:
     time.sleep(poll)
 
 # Live test via SDK (avoids mlflow deploy client resolving wrong workspace URL)
+from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
+
 live_test_questions = [
     "What was NVIDIA's revenue and net income in fiscal year 2024?",
     "What risks did Tesla disclose about autonomous driving in their 10-K?",
@@ -638,7 +640,7 @@ for q in live_test_questions:
     try:
         resp = w.serving_endpoints.query(
             name=AGENT_ENDPOINT,
-            messages=[{"role": "user", "content": q}],
+            messages=[ChatMessage(role=ChatMessageRole.USER, content=q)],
         )
         answer = resp.choices[0].message.content if resp.choices else str(resp)
         print(f"A: {answer[:800]}")
