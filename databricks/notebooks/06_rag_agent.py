@@ -615,9 +615,11 @@ while True:
         ep    = w.serving_endpoints.get(AGENT_ENDPOINT)
         state = str(ep.state.ready) if ep.state else "UNKNOWN"
         print(f"  Endpoint state: {state}")
-        if "READY" in state.upper():
+        if state == "EndpointStateReady.READY":
             print("Endpoint is READY.")
             break
+        if "FAILED" in state.upper() or "NOT_READY" in state.upper() and time.time() - start < 30:
+            pass  # NOT_READY is normal during startup — keep polling
         if "FAILED" in state.upper():
             print(f"Endpoint failed: {ep.state}")
             break
@@ -625,9 +627,7 @@ while True:
         print(f"  Polling error: {e}")
     time.sleep(poll)
 
-# Live test via deploy client
-deploy_client = mlflow.deployments.get_deploy_client("databricks")
-
+# Live test via SDK (avoids mlflow deploy client resolving wrong workspace URL)
 live_test_questions = [
     "What was NVIDIA's revenue and net income in fiscal year 2024?",
     "What risks did Tesla disclose about autonomous driving in their 10-K?",
@@ -636,11 +636,11 @@ live_test_questions = [
 for q in live_test_questions:
     print(f"\n{'='*70}\nQ: {q}")
     try:
-        resp = deploy_client.predict(
-            endpoint=AGENT_ENDPOINT,
-            inputs={"messages": [{"role": "user", "content": q}]},
+        resp = w.serving_endpoints.query(
+            name=AGENT_ENDPOINT,
+            messages=[{"role": "user", "content": q}],
         )
-        answer = resp.get("content") or resp.get("choices", [{}])[0].get("message", {}).get("content", str(resp))
+        answer = resp.choices[0].message.content if resp.choices else str(resp)
         print(f"A: {answer[:800]}")
     except Exception as e:
         print(f"Live test error: {e}")
