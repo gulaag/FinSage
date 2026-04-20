@@ -87,7 +87,7 @@ def _load_metrics_cache(table: str) -> dict:
         "ticker", "company_name", "fiscal_year",
         "revenue", "net_income", "gross_profit", "operating_income",
         "operating_cash_flow", "total_assets", "total_liabilities",
-        "total_debt", "rd_expense", "equity", "gross_margin_pct",
+        "total_debt", "rd_expense", "gross_margin_pct",
         "revenue_yoy_growth_pct", "debt_to_equity", "data_quality_score",
     )
     cache = {}
@@ -219,7 +219,6 @@ def get_company_metrics(
             f"\n  Operating Cash Flow:  {_fmt(m.get('operating_cash_flow'))}"
             f"\n  Total Assets:         {_fmt(m.get('total_assets'))}"
             f"\n  Total Debt:           {_fmt(m.get('total_debt'))}"
-            f"\n  Equity:               {_fmt(m.get('equity'))}"
             f"\n  Gross Margin:         {_fmt(m.get('gross_margin_pct'), pct=True)}"
             f"\n  Revenue YoY Growth:   {_fmt(m.get('revenue_yoy_growth_pct'), pct=True)}"
             f"\n  Debt/Equity:          {f\"{m['debt_to_equity']:.2f}x\" if m.get('debt_to_equity') is not None else 'N/A'}"
