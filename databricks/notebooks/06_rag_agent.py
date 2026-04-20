@@ -153,7 +153,7 @@ def search_filings(
         if score is not None and score < similarity_threshold:
             continue
         passages.append(
-            f"[Source: {ticker_val} | FY{fy} | {section}]\n{text[:1200]}"
+            f"[Source: {ticker_val} | FY{int(fy)} | {section}]\n{text[:1200]}"
         )
 
     if not passages:
@@ -214,7 +214,7 @@ def get_company_metrics(
     for fy in years:
         m = ticker_data[fy]
         lines.append(
-            f"\nFY{fy}:"
+            f"\nFY{int(fy)}:"
             f"\n  Revenue:              {_fmt(m.get('revenue'))}"
             f"\n  Net Income:           {_fmt(m.get('net_income'))}"
             f"\n  Gross Profit:         {_fmt(m.get('gross_profit'))}"
@@ -224,7 +224,7 @@ def get_company_metrics(
             f"\n  Total Debt:           {_fmt(m.get('total_debt'))}"
             f"\n  Gross Margin:         {_fmt(m.get('gross_margin_pct'), pct=True)}"
             f"\n  Revenue YoY Growth:   {_fmt(m.get('revenue_yoy_growth_pct'), pct=True)}"
-            f"\n  Debt/Equity:          {f\"{m['debt_to_equity']:.2f}x\" if m.get('debt_to_equity') is not None else 'N/A'}"
+            f"\n  Debt/Equity:          {str(round(m['debt_to_equity'], 2)) + 'x' if m.get('debt_to_equity') is not None else 'N/A'}"
             f"\n  Data Quality Score:   {m.get('data_quality_score', 0):.0%}"
         )
     return "\n".join(lines)
