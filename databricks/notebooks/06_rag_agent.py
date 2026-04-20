@@ -365,7 +365,6 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
         self._num_results     = int(context.model_config.get("num_results",     5))
         self._sim_threshold   = float(context.model_config.get("similarity_threshold", 0.6))
 
-    @mlflow.trace(name="finsage_agent", span_type="AGENT")
     def predict(self, context, model_input, params=None):
         import mlflow.deployments, json
 
@@ -385,19 +384,16 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
         deploy_client = mlflow.deployments.get_deploy_client("databricks")
 
         for iteration in range(MAX_ITERATIONS):
-            with mlflow.start_span(name=f"llm_call_iter_{iteration}", span_type="LLM") as span:
-                span.set_inputs({"messages": working_messages, "iteration": iteration})
-                response = deploy_client.predict(
-                    endpoint=self._llm_endpoint,
-                    inputs={
-                        "messages":    working_messages,
-                        "tools":       TOOL_SCHEMAS,
-                        "tool_choice": "auto",
-                        "temperature": 0.1,
-                        "max_tokens":  2048,
-                    },
-                )
-                span.set_outputs(response)
+            response = deploy_client.predict(
+                endpoint=self._llm_endpoint,
+                inputs={
+                    "messages":    working_messages,
+                    "tools":       TOOL_SCHEMAS,
+                    "tool_choice": "auto",
+                    "temperature": 0.1,
+                    "max_tokens":  2048,
+                },
+            )
 
             choice      = response["choices"][0]
             finish      = choice.get("finish_reason", "")
@@ -422,27 +418,24 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
                 except json.JSONDecodeError:
                     args = {}
 
-                with mlflow.start_span(name=f"tool_{tool_name}", span_type="TOOL") as tspan:
-                    tspan.set_inputs(args)
-                    if tool_name == "search_filings":
-                        result = search_filings(
-                            query=args.get("query", ""),
-                            ticker=args.get("ticker"),
-                            section_name=args.get("section_name"),
-                            fiscal_year=args.get("fiscal_year"),
-                            num_results=args.get("num_results", self._num_results),
-                            similarity_threshold=self._sim_threshold,
-                        )
-                    elif tool_name == "get_company_metrics":
-                        result = get_company_metrics(
-                            ticker=args.get("ticker", ""),
-                            fiscal_year_start=args.get("fiscal_year_start"),
-                            fiscal_year_end=args.get("fiscal_year_end"),
-                            metrics_cache=self._metrics_cache,
-                        )
-                    else:
-                        result = f"Unknown tool: {tool_name}"
-                    tspan.set_outputs({"result": result[:500]})
+                if tool_name == "search_filings":
+                    result = search_filings(
+                        query=args.get("query", ""),
+                        ticker=args.get("ticker"),
+                        section_name=args.get("section_name"),
+                        fiscal_year=args.get("fiscal_year"),
+                        num_results=args.get("num_results", self._num_results),
+                        similarity_threshold=self._sim_threshold,
+                    )
+                elif tool_name == "get_company_metrics":
+                    result = get_company_metrics(
+                        ticker=args.get("ticker", ""),
+                        fiscal_year_start=args.get("fiscal_year_start"),
+                        fiscal_year_end=args.get("fiscal_year_end"),
+                        metrics_cache=self._metrics_cache,
+                    )
+                else:
+                    result = f"Unknown tool: {tool_name}"
 
                 working_messages.append({
                     "role":         "tool",
