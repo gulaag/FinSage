@@ -585,7 +585,7 @@ served_entity = ServedEntityInput(
     scale_to_zero_enabled=True,
 )
 
-endpoint_config = EndpointCoreConfigInput(served_entities=[served_entity])
+endpoint_config = EndpointCoreConfigInput(name=AGENT_ENDPOINT, served_entities=[served_entity])
 
 inference_table_config = AutoCaptureConfigInput(
     catalog_name=CATALOG,
