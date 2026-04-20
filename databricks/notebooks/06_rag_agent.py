@@ -47,7 +47,7 @@ print(f"[CONFIG] catalog={CATALOG} | env={ENV} | llm={LLM_ENDPOINT} | vs_index={
 
 # COMMAND ----------
 
-# ── 2. Imports ────────────────────────────────────────────────────────────────
+# ── 2. Imports + re-declare constants (required after restartPython wipes state) ──
 import json
 import logging
 import mlflow
@@ -59,6 +59,22 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s - %(me
 log = logging.getLogger("finsage-agent")
 
 mlflow.set_registry_uri("databricks-uc")
+
+# Re-read widgets — restartPython() clears all Python variables but widgets persist
+CATALOG              = dbutils.widgets.get("catalog")
+ENV                  = dbutils.widgets.get("env")
+LLM_ENDPOINT         = dbutils.widgets.get("llm_endpoint")
+VS_ENDPOINT          = dbutils.widgets.get("vs_endpoint")
+NUM_RESULTS          = int(dbutils.widgets.get("num_results"))
+SIMILARITY_THRESHOLD = float(dbutils.widgets.get("similarity_threshold"))
+
+VS_INDEX_NAME  = f"{CATALOG}.finsage_gold.filing_chunks_index"
+METRICS_TABLE  = f"{CATALOG}.finsage_gold.company_metrics"
+UC_MODEL_NAME  = f"{CATALOG}.finsage_gold.finsage_rag_agent"
+AGENT_ENDPOINT = "finsage_agent_endpoint"
+MAX_ITERATIONS = 5
+
+print(f"[CONFIG restored] catalog={CATALOG} | llm={LLM_ENDPOINT} | metrics={METRICS_TABLE}")
 
 # COMMAND ----------
 
