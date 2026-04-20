@@ -111,6 +111,7 @@ def search_filings(
     query: str,
     ticker: str = None,
     section_name: str = None,
+    fiscal_year: int = None,
     num_results: int = NUM_RESULTS,
     similarity_threshold: float = SIMILARITY_THRESHOLD,
 ) -> str:
@@ -126,6 +127,8 @@ def search_filings(
         filters["ticker"] = ticker.upper()
     if section_name and section_name in ("Business", "Risk Factors", "MD&A"):
         filters["section_name"] = section_name
+    if fiscal_year:
+        filters["fiscal_year"] = fiscal_year
 
     try:
         results = index.similarity_search(
@@ -261,6 +264,10 @@ TOOL_SCHEMAS = [
                         "enum": ["Business", "Risk Factors", "MD&A"],
                         "description": "Optional section filter. Use 'Risk Factors' for risk/threat questions, 'MD&A' for management commentary, 'Business' for strategy/products."
                     },
+                    "fiscal_year": {
+                        "type": "integer",
+                        "description": "Optional fiscal year to restrict search (e.g. 2024). Use when the question specifies 'most recent', 'latest', or a specific year. First call get_company_metrics to find the latest available year for that ticker, then pass it here."
+                    },
                     "num_results": {
                         "type": "integer",
                         "description": "Number of passages to retrieve (default 5, max 10).",
@@ -329,6 +336,14 @@ Guidelines:
 - Always cite your sources: ticker, fiscal year, and section name.
 - If data is unavailable, say so explicitly — never fabricate figures.
 - Format numbers clearly ($B, %, bps). Be concise and precise.
+- For "most recent" or "latest" filing questions: first call get_company_metrics to identify \
+the latest fiscal year available for that ticker, then call search_filings with that specific \
+fiscal_year to ensure all retrieved passages come from a single filing period.
+- When citing text from filings: prefix direct quotes with [VERBATIM] and paraphrased content \
+with [SUMMARY]. Never present a summary as a direct quote.
+- When computing or presenting any financial ratio (margins, growth rates, leverage ratios), \
+always state the formula explicitly on first use. \
+Example: "Operating Margin (GAAP) = Operating Income ÷ Revenue"
 """
 
 
@@ -414,6 +429,7 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
                             query=args.get("query", ""),
                             ticker=args.get("ticker"),
                             section_name=args.get("section_name"),
+                            fiscal_year=args.get("fiscal_year"),
                             num_results=args.get("num_results", self._num_results),
                             similarity_threshold=self._sim_threshold,
                         )
