@@ -106,6 +106,7 @@ print(f"[CACHE] {len(METRICS_CACHE)} tickers loaded. Sample: {list(METRICS_CACHE
 
 # ── 4. Tool: search_filings ───────────────────────────────────────────────────
 
+@mlflow.trace(name="search_filings", span_type="TOOL")
 def search_filings(
     query: str,
     ticker: str = None,
@@ -169,6 +170,7 @@ print("[search_filings test]", _test[:300])
 
 # ── 5. Tool: get_company_metrics ──────────────────────────────────────────────
 
+@mlflow.trace(name="get_company_metrics", span_type="TOOL")
 def get_company_metrics(
     ticker: str,
     fiscal_year_start: int = None,
@@ -506,6 +508,7 @@ for q in TEST_QUESTIONS:
 import mlflow
 from mlflow.models.signature import ModelSignature
 from mlflow.types.schema import Schema, ColSpec
+from mlflow.models.resources import DatabricksServingEndpoint, DatabricksVectorSearchIndex
 
 input_schema  = Schema([ColSpec("string", "messages")])
 output_schema = Schema([ColSpec("string", "content")])
@@ -516,6 +519,14 @@ input_example = {
         {"role": "user", "content": "What was Apple's revenue growth in fiscal year 2023?"}
     ]
 }
+
+# Resource dependencies — Databricks Agent Framework injects M2M OAuth credentials
+# into the serving container for these resources at runtime. Without this list, the
+# deployed model cannot authenticate to call the LLM endpoint or Vector Search index.
+resources = [
+    DatabricksServingEndpoint(endpoint_name=LLM_ENDPOINT),
+    DatabricksVectorSearchIndex(index_name=VS_INDEX_NAME),
+]
 
 with mlflow.start_run(run_name=f"finsage_rag_agent_{ENV}") as run:
     mlflow.log_params({
@@ -543,7 +554,8 @@ with mlflow.start_run(run_name=f"finsage_rag_agent_{ENV}") as run:
         signature=signature,
         input_example=input_example,
         registered_model_name=UC_MODEL_NAME,
-        pip_requirements=["databricks-vectorsearch", "mlflow"],
+        resources=resources,
+        pip_requirements=["databricks-vectorsearch", "databricks-sdk", "mlflow"],
     )
 
     print(f"[MLflow] Run ID: {run.info.run_id}")
@@ -618,8 +630,8 @@ while True:
         print(f"  Polling error: {e}")
     time.sleep(poll)
 
-# Live test via SDK (avoids mlflow deploy client resolving wrong workspace URL)
-from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
+# Live test via SDK — our pyfunc has a custom (non-chat) output schema,
+# so we send via dataframe_records and read from resp.predictions.
 
 live_test_questions = [
     "What was NVIDIA's revenue and net income in fiscal year 2024?",
@@ -631,9 +643,11 @@ for q in live_test_questions:
     try:
         resp = w.serving_endpoints.query(
             name=AGENT_ENDPOINT,
-            messages=[ChatMessage(role=ChatMessageRole.USER, content=q)],
+            dataframe_records=[{"messages": [{"role": "user", "content": q}]}],
         )
-        answer = resp.choices[0].message.content if resp.choices else str(resp)
+        preds = resp.predictions
+        pred  = preds[0] if isinstance(preds, list) and preds else preds
+        answer = pred.get("content", str(pred)) if isinstance(pred, dict) else str(pred)
         print(f"A: {answer[:800]}")
     except Exception as e:
-        print(f"Live test error: {e}")
+        print(f"Live test error: {type(e).__name__}: {e}")
