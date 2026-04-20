@@ -526,7 +526,7 @@ input_example = {
     ]
 }
 
-mlflow.set_experiment("/FinSage/rag_agent")
+mlflow.set_experiment("/Users/digvijay@arsaga.jp/FinSage/rag_agent")
 
 with mlflow.start_run(run_name=f"finsage_rag_agent_{ENV}") as run:
     mlflow.log_params({
