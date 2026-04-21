@@ -97,15 +97,20 @@ df = (
     ))
     # Discrete-quarter flow: 80–100 day window excludes 6-month/YTD cumulative
     # disclosures that share the same fiscal_period label.
+    #
+    # Do NOT gate on period_end_year == fiscal_year. Fiscal-year-offset companies
+    # (AAPL/MSFT/NKE/V/WMT with Sep/Jun/May/Jan/Jan year-ends) legitimately have
+    # Q1 quarter-ends falling in fiscal_year-1 on the calendar. That check drops
+    # ~100% of their 90-day discrete facts. Prior-period comparatives embedded in
+    # the same 10-Q (stamped with the current fiscal_year upstream) are instead
+    # rejected downstream by `period_end_dt DESC` in the fact_window tiebreaker.
     .withColumn("quarterly_fit_score", when(
         col("is_duration_metric") &
-        col("duration_days").between(80, 100) &
-        (col("period_end_year") == col("fiscal_year")),
+        col("duration_days").between(80, 100),
         lit(1)
     ).otherwise(lit(0)))
     .withColumn("instant_fit_score", when(
-        col("is_instant_metric") &
-        (col("period_end_year") == col("fiscal_year")),
+        col("is_instant_metric"),
         lit(1)
     ).otherwise(lit(0)))
 )
@@ -171,6 +176,11 @@ fact_window = Window.partitionBy("ticker", "fiscal_year", "fiscal_quarter", "nor
     col("is_usd").desc(),
     col("quarterly_fit_score").desc(),
     col("instant_fit_score").desc(),
+    # Prefer the latest period_end: silver contains prior-year comparatives
+    # stamped with the current fiscal_year from the same 10-Q filing. The
+    # current-period fact always has a later period_end_dt than its comparative,
+    # so this tiebreaker discards the comparative deterministically.
+    col("period_end_dt").desc_nulls_last(),
     col("concept_priority").asc(),
     col("filing_date_dt").desc_nulls_last(),
     col("source_fetched_at").desc_nulls_last(),
