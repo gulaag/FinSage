@@ -32,11 +32,12 @@ VS_ENDPOINT          = dbutils.widgets.get("vs_endpoint")
 NUM_RESULTS          = int(dbutils.widgets.get("num_results"))
 SIMILARITY_THRESHOLD = float(dbutils.widgets.get("similarity_threshold"))
 
-VS_INDEX_NAME   = f"{CATALOG}.finsage_gold.filing_chunks_index"
-METRICS_TABLE   = f"{CATALOG}.finsage_gold.company_metrics"
-UC_MODEL_NAME   = f"{CATALOG}.finsage_gold.finsage_rag_agent"
-AGENT_ENDPOINT  = "finsage_agent_endpoint"
-MAX_ITERATIONS  = 5
+VS_INDEX_NAME           = f"{CATALOG}.finsage_gold.filing_chunks_index"
+METRICS_TABLE           = f"{CATALOG}.finsage_gold.company_metrics"
+METRICS_QUARTERLY_TABLE = f"{CATALOG}.finsage_gold.company_metrics_quarterly"
+UC_MODEL_NAME           = f"{CATALOG}.finsage_gold.finsage_rag_agent"
+AGENT_ENDPOINT          = "finsage_agent_endpoint"
+MAX_ITERATIONS          = 5
 
 print(f"[CONFIG] catalog={CATALOG} | env={ENV} | llm={LLM_ENDPOINT} | vs_index={VS_INDEX_NAME}")
 
@@ -68,11 +69,12 @@ VS_ENDPOINT          = dbutils.widgets.get("vs_endpoint")
 NUM_RESULTS          = int(dbutils.widgets.get("num_results"))
 SIMILARITY_THRESHOLD = float(dbutils.widgets.get("similarity_threshold"))
 
-VS_INDEX_NAME  = f"{CATALOG}.finsage_gold.filing_chunks_index"
-METRICS_TABLE  = f"{CATALOG}.finsage_gold.company_metrics"
-UC_MODEL_NAME  = f"{CATALOG}.finsage_gold.finsage_rag_agent"
-AGENT_ENDPOINT = "finsage_agent_endpoint"
-MAX_ITERATIONS = 5
+VS_INDEX_NAME           = f"{CATALOG}.finsage_gold.filing_chunks_index"
+METRICS_TABLE           = f"{CATALOG}.finsage_gold.company_metrics"
+METRICS_QUARTERLY_TABLE = f"{CATALOG}.finsage_gold.company_metrics_quarterly"
+UC_MODEL_NAME           = f"{CATALOG}.finsage_gold.finsage_rag_agent"
+AGENT_ENDPOINT          = "finsage_agent_endpoint"
+MAX_ITERATIONS          = 5
 
 print(f"[CONFIG restored] catalog={CATALOG} | llm={LLM_ENDPOINT} | metrics={METRICS_TABLE}")
 
@@ -87,7 +89,7 @@ def _load_metrics_cache(table: str) -> dict:
         "ticker", "company_name", "fiscal_year",
         "revenue", "net_income", "gross_profit", "operating_income",
         "operating_cash_flow", "total_assets", "total_liabilities",
-        "total_debt", "rd_expense", "gross_margin_pct",
+        "total_equity", "total_debt", "rd_expense", "gross_margin_pct",
         "revenue_yoy_growth_pct", "debt_to_equity", "data_quality_score",
     )
     cache = {}
@@ -99,8 +101,36 @@ def _load_metrics_cache(table: str) -> dict:
     log.info("Metrics cache loaded: %d tickers", len(cache))
     return cache
 
-METRICS_CACHE = _load_metrics_cache(METRICS_TABLE)
-print(f"[CACHE] {len(METRICS_CACHE)} tickers loaded. Sample: {list(METRICS_CACHE.keys())[:5]}")
+def _load_quarterly_cache(table: str) -> dict:
+    """Cache shape: {ticker: {(fiscal_year, fiscal_quarter): {...metrics}}}.
+    Returns empty dict if the table doesn't exist yet — lets the agent degrade
+    gracefully before notebook 04b has run for the first time.
+    """
+    if not spark.catalog.tableExists(table):
+        log.warning("Quarterly metrics table %s does not exist — skipping cache load.", table)
+        return {}
+    df = spark.table(table).select(
+        "ticker", "company_name", "fiscal_year", "fiscal_quarter", "period_end_date",
+        "revenue", "net_income", "gross_profit", "operating_income",
+        "operating_cash_flow", "total_assets", "total_liabilities",
+        "total_equity", "total_debt", "rd_expense", "gross_margin_pct",
+        "revenue_yoy_growth_pct", "debt_to_equity", "data_quality_score",
+    )
+    cache = {}
+    for row in df.collect():
+        r = row.asDict()
+        ticker = r.pop("ticker")
+        fy = r.pop("fiscal_year")
+        fq = r.pop("fiscal_quarter")
+        if r.get("period_end_date") is not None:
+            r["period_end_date"] = str(r["period_end_date"])  # serialize for JSON artifact
+        cache.setdefault(ticker.upper(), {})[f"{int(fy)}-Q{int(fq)}"] = r
+    log.info("Quarterly cache loaded: %d tickers", len(cache))
+    return cache
+
+METRICS_CACHE           = _load_metrics_cache(METRICS_TABLE)
+QUARTERLY_METRICS_CACHE = _load_quarterly_cache(METRICS_QUARTERLY_TABLE)
+print(f"[CACHE] annual: {len(METRICS_CACHE)} tickers | quarterly: {len(QUARTERLY_METRICS_CACHE)} tickers")
 
 # COMMAND ----------
 
@@ -236,6 +266,102 @@ print("[get_company_metrics test]\n", _test2)
 
 # COMMAND ----------
 
+# ── 5b. Tool: get_quarterly_metrics ───────────────────────────────────────────
+# Parallel to get_company_metrics but backed by the 10-Q-driven quarterly table.
+# Use for interim-period questions; annual questions should still route to
+# get_company_metrics since 10-K numbers are audited.
+
+@mlflow.trace(name="get_quarterly_metrics", span_type="TOOL")
+def get_quarterly_metrics(
+    ticker: str,
+    fiscal_year: int = None,
+    fiscal_quarter: int = None,
+    fiscal_year_start: int = None,
+    fiscal_year_end: int = None,
+    metrics_cache: dict = None,
+) -> str:
+    """
+    Retrieves discrete-quarter financial metrics from the Gold quarterly table.
+    Pass fiscal_year + fiscal_quarter for a single quarter, OR a fiscal_year_start/end
+    range for a multi-quarter trend. Q4 is not currently derived from 10-K data.
+    """
+    cache = metrics_cache if metrics_cache is not None else QUARTERLY_METRICS_CACHE
+    if not cache:
+        return (
+            "Quarterly metrics are not available yet. Run notebook 04b to populate "
+            "main.finsage_gold.company_metrics_quarterly, or fall back to get_company_metrics "
+            "for annual figures."
+        )
+
+    ticker_upper = ticker.upper()
+    if ticker_upper not in cache:
+        available = sorted(cache.keys())
+        return f"No quarterly metrics for ticker '{ticker_upper}'. Available tickers: {available}"
+
+    ticker_data = cache[ticker_upper]
+
+    def _parse_key(k):
+        # keys stored as "YYYY-QN"
+        fy_str, q_str = k.split("-Q")
+        return int(fy_str), int(q_str)
+
+    keys = sorted(ticker_data.keys(), key=_parse_key)
+    filtered = []
+    for k in keys:
+        fy, fq = _parse_key(k)
+        if fiscal_year is not None and fy != fiscal_year:
+            continue
+        if fiscal_quarter is not None and fq != fiscal_quarter:
+            continue
+        if fiscal_year_start is not None and fy < fiscal_year_start:
+            continue
+        if fiscal_year_end is not None and fy > fiscal_year_end:
+            continue
+        filtered.append(k)
+
+    if not filtered:
+        return f"No quarterly data for {ticker_upper} matching the requested filters."
+
+    def _fmt(v, pct=False):
+        if v is None:
+            return "N/A"
+        if pct:
+            return f"{v * 100:.1f}%"
+        if abs(v) >= 1e9:
+            return f"${v / 1e9:.2f}B"
+        if abs(v) >= 1e6:
+            return f"${v / 1e6:.1f}M"
+        return f"${v:,.0f}"
+
+    company = ticker_data[filtered[0]].get("company_name", ticker_upper)
+    lines = [f"Quarterly financial metrics for {ticker_upper} ({company}):"]
+    for k in filtered:
+        fy, fq = _parse_key(k)
+        m = ticker_data[k]
+        lines.append(
+            f"\nFY{fy} Q{fq} (period ending {m.get('period_end_date', 'N/A')}):"
+            f"\n  Revenue:              {_fmt(m.get('revenue'))}"
+            f"\n  Net Income:           {_fmt(m.get('net_income'))}"
+            f"\n  Gross Profit:         {_fmt(m.get('gross_profit'))}"
+            f"\n  Operating Income:     {_fmt(m.get('operating_income'))}"
+            f"\n  Operating Cash Flow:  {_fmt(m.get('operating_cash_flow'))}"
+            f"\n  Total Assets:         {_fmt(m.get('total_assets'))}"
+            f"\n  Total Equity:         {_fmt(m.get('total_equity'))}"
+            f"\n  Total Debt:           {_fmt(m.get('total_debt'))}"
+            f"\n  Gross Margin:         {_fmt(m.get('gross_margin_pct'), pct=True)}"
+            f"\n  Revenue YoY (same Q): {_fmt(m.get('revenue_yoy_growth_pct'), pct=True)}"
+            f"\n  Debt/Equity:          {str(round(m['debt_to_equity'], 2)) + 'x' if m.get('debt_to_equity') is not None else 'N/A'}"
+            f"\n  Data Quality Score:   {m.get('data_quality_score', 0):.0%}"
+        )
+    return "\n".join(lines)
+
+
+# Quick smoke test (gracefully no-ops if quarterly cache is empty)
+_test3 = get_quarterly_metrics("AAPL", fiscal_year=2024)
+print("[get_quarterly_metrics test]\n", _test3[:500])
+
+# COMMAND ----------
+
 # ── 6. Tool schemas (OpenAI function-calling format) ──────────────────────────
 
 TOOL_SCHEMAS = [
@@ -283,9 +409,10 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "get_company_metrics",
             "description": (
-                "Retrieve structured financial metrics for a company from SEC XBRL data. "
-                "Use for numerical questions about revenue, profit, margins, debt, growth rates, "
-                "or any quantitative financial comparison. Covers FY2020–FY2026 for 30 companies."
+                "Retrieve ANNUAL (10-K) structured financial metrics for a company. "
+                "Use for annual numerical questions about revenue, profit, margins, debt, growth rates, "
+                "or any fiscal-year financial comparison. Covers FY2020–FY2026 for 30 companies. "
+                "For quarterly/interim-period numbers use get_quarterly_metrics instead."
             ),
             "parameters": {
                 "type": "object",
@@ -306,12 +433,53 @@ TOOL_SCHEMAS = [
                 "required": ["ticker"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_quarterly_metrics",
+            "description": (
+                "Retrieve QUARTERLY (10-Q) discrete-quarter financial metrics for a company. "
+                "Use for interim-period questions: 'Q2 2024 revenue', 'how did net income trend across Q1-Q3', "
+                "same-quarter YoY growth, intra-year balance sheet movement. Covers Q1/Q2/Q3 for 2020+. "
+                "Q4 is NOT in this table (use get_company_metrics for annual totals). Pass a specific "
+                "fiscal_year + fiscal_quarter for one quarter, or a fiscal_year_start/end range for a trend."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticker": {
+                        "type": "string",
+                        "description": "Stock ticker symbol (e.g. 'AAPL', 'MSFT')."
+                    },
+                    "fiscal_year": {
+                        "type": "integer",
+                        "description": "Specific fiscal year (e.g. 2024). Combine with fiscal_quarter."
+                    },
+                    "fiscal_quarter": {
+                        "type": "integer",
+                        "enum": [1, 2, 3],
+                        "description": "Fiscal quarter: 1, 2, or 3. Q4 is not stored in the quarterly table."
+                    },
+                    "fiscal_year_start": {
+                        "type": "integer",
+                        "description": "Optional start of fiscal year range for a trend view."
+                    },
+                    "fiscal_year_end": {
+                        "type": "integer",
+                        "description": "Optional end of fiscal year range for a trend view."
+                    }
+                },
+                "required": ["ticker"]
+            }
+        }
     }
 ]
 
 TOOL_DISPATCH = {
-    "search_filings":      lambda args: search_filings(**args),
-    "get_company_metrics": lambda args: get_company_metrics(**args),
+    "search_filings":        lambda args: search_filings(**args),
+    "get_company_metrics":   lambda args: get_company_metrics(**args),
+    "get_quarterly_metrics": lambda args: get_quarterly_metrics(**args),
 }
 
 print(f"[TOOLS] Registered: {list(TOOL_DISPATCH.keys())}")
@@ -321,24 +489,34 @@ print(f"[TOOLS] Registered: {list(TOOL_DISPATCH.keys())}")
 # ── 7. FinSageAgent — pyfunc model class ──────────────────────────────────────
 
 SYSTEM_PROMPT = """\
-You are FinSage, an expert financial analyst AI with access to SEC annual report filings (10-K) \
+You are FinSage, an expert financial analyst AI with access to SEC filings (10-K and 10-Q) \
 and structured financial metrics for 30 major public companies (2020–2026).
 
-You have two tools:
-1. search_filings — retrieves relevant passages from 10-K text sections (Risk Factors, MD&A, Business).
-2. get_company_metrics — retrieves structured financial data: revenue, margins, growth rates, debt ratios.
+You have three tools:
+1. search_filings         — retrieves relevant passages from filing text. 10-K covers Business, \
+Risk Factors, MD&A. 10-Q covers MD&A (and Risk Factors Updates when present).
+2. get_company_metrics    — retrieves ANNUAL structured financial data (revenue, margins, growth \
+rates, debt ratios) sourced from 10-K filings.
+3. get_quarterly_metrics  — retrieves QUARTERLY (Q1/Q2/Q3) discrete-quarter metrics sourced from \
+10-Q filings, including same-quarter YoY growth and intra-year balance sheet movement.
 
-Guidelines:
+Routing guidelines:
 - Always use tools to ground your answer in actual data before responding.
-- For numerical questions (revenue, growth %, margins), use get_company_metrics.
-- For qualitative questions (risks, strategy, management commentary), use search_filings.
-- For complex questions, use both tools.
-- Always cite your sources: ticker, fiscal year, and section name.
+- Annual / fiscal-year questions ("revenue in FY2024", "2023 operating margin") → get_company_metrics.
+- Interim / within-year questions ("Q2 2024 revenue", "how did margins change across Q1–Q3") → \
+get_quarterly_metrics. Q4 standalone is NOT available — for Q4 questions, fall back to annual \
+totals and note the limitation.
+- Qualitative narrative questions (risks, strategy, management commentary) → search_filings.
+- Complex questions can legitimately combine two or all three tools.
+
+Output guidelines:
+- Always cite your sources: ticker, fiscal year (and quarter when applicable), and section name.
 - If data is unavailable, say so explicitly — never fabricate figures.
 - Format numbers clearly ($B, %, bps). Be concise and precise.
-- For "most recent" or "latest" filing questions: first call get_company_metrics to identify \
-the latest fiscal year available for that ticker, then call search_filings with that specific \
-fiscal_year to ensure all retrieved passages come from a single filing period.
+- For "most recent" or "latest" filing questions: first call the appropriate metrics tool to \
+identify the latest fiscal year (and quarter if interim) available for that ticker, then call \
+search_filings with that specific fiscal_year to ensure all retrieved passages come from a \
+single filing period.
 - When citing text from filings: prefix direct quotes with [VERBATIM] and paraphrased content \
 with [SUMMARY]. Never present a summary as a direct quote.
 - When computing or presenting any financial ratio (margins, growth rates, leverage ratios), \
@@ -351,14 +529,26 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
 
     def load_context(self, context):
         import json
-        # Load the metrics cache artifact saved during logging
+        # Annual metrics cache (required)
         with open(context.artifacts["metrics_cache"], "r") as f:
             raw = json.load(f)
-        # Keys were stored as strings (JSON limitation) — restore int fiscal_year keys
         self._metrics_cache = {
             ticker: {int(fy): metrics for fy, metrics in years.items()}
             for ticker, years in raw.items()
         }
+
+        # Quarterly metrics cache (optional — absent if notebook 04b hasn't run yet)
+        self._quarterly_cache = {}
+        q_path = context.artifacts.get("quarterly_cache") if hasattr(context.artifacts, "get") else None
+        if q_path is None and isinstance(context.artifacts, dict):
+            q_path = context.artifacts.get("quarterly_cache")
+        if q_path:
+            try:
+                with open(q_path, "r") as f:
+                    self._quarterly_cache = json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError):
+                self._quarterly_cache = {}
+
         self._llm_endpoint    = context.model_config.get("llm_endpoint", "databricks-meta-llama-3-3-70b-instruct")
         self._vs_endpoint     = context.model_config.get("vs_endpoint",  "finsage_vs_endpoint")
         self._vs_index        = context.model_config.get("vs_index",     "main.finsage_gold.filing_chunks_index")
@@ -434,6 +624,15 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
                         fiscal_year_end=args.get("fiscal_year_end"),
                         metrics_cache=self._metrics_cache,
                     )
+                elif tool_name == "get_quarterly_metrics":
+                    result = get_quarterly_metrics(
+                        ticker=args.get("ticker", ""),
+                        fiscal_year=args.get("fiscal_year"),
+                        fiscal_quarter=args.get("fiscal_quarter"),
+                        fiscal_year_start=args.get("fiscal_year_start"),
+                        fiscal_year_end=args.get("fiscal_year_end"),
+                        metrics_cache=self._quarterly_cache,
+                    )
                 else:
                     result = f"Unknown tool: {tool_name}"
 
@@ -477,15 +676,20 @@ class _FakeContext:
     }
 
 fake_ctx = _FakeContext()
-fake_ctx.artifacts = {"metrics_cache": "/tmp/metrics_cache.json"}
+fake_ctx.artifacts = {
+    "metrics_cache":    "/tmp/metrics_cache.json",
+    "quarterly_cache":  "/tmp/quarterly_cache.json",
+}
 
-# Save cache to temp file (mimics what MLflow will do)
+# Save caches to temp files (mimics what MLflow will do)
 import json, os
 os.makedirs("/tmp", exist_ok=True)
 with open("/tmp/metrics_cache.json", "w") as f:
-    # Convert int keys to strings for JSON serialisation
     serialisable = {t: {str(fy): m for fy, m in yrs.items()} for t, yrs in METRICS_CACHE.items()}
     json.dump(serialisable, f)
+with open("/tmp/quarterly_cache.json", "w") as f:
+    # Quarterly keys are already strings ("YYYY-QN") so no transform needed
+    json.dump(QUARTERLY_METRICS_CACHE, f)
 
 agent.load_context(fake_ctx)
 
@@ -537,13 +741,17 @@ with mlflow.start_run(run_name=f"finsage_rag_agent_{ENV}") as run:
         "max_iterations":        MAX_ITERATIONS,
     })
 
-    # Save metrics cache as a logged artifact so load_context can access it
-    mlflow.log_artifact("/tmp/metrics_cache.json", artifact_path="artifacts")
+    # Save both caches as logged artifacts so load_context can access them
+    mlflow.log_artifact("/tmp/metrics_cache.json",   artifact_path="artifacts")
+    mlflow.log_artifact("/tmp/quarterly_cache.json", artifact_path="artifacts")
 
     model_info = mlflow.pyfunc.log_model(
         artifact_path="finsage_rag_agent",
         python_model=agent,
-        artifacts={"metrics_cache": "/tmp/metrics_cache.json"},
+        artifacts={
+            "metrics_cache":    "/tmp/metrics_cache.json",
+            "quarterly_cache":  "/tmp/quarterly_cache.json",
+        },
         model_config={
             "llm_endpoint":          LLM_ENDPOINT,
             "vs_endpoint":           VS_ENDPOINT,
@@ -595,7 +803,6 @@ try:
 except ResourceDoesNotExist:
     print("[DEPLOY] Creating new endpoint...")
     w.serving_endpoints.create(name=AGENT_ENDPOINT, config=endpoint_config)
-    print("[DEPLOY] Creation submitted.")
     print("[DEPLOY] Creation submitted.")
 
 print(f"[DEPLOY] Monitor at: https://dbc-f33010ed-00fc.cloud.databricks.com/ml/endpoints/{AGENT_ENDPOINT}")

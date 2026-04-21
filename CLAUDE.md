@@ -13,8 +13,12 @@ FinSage is a production-grade financial intelligence platform on Databricks. It 
 
 ## Notebook Pipeline (run in order)
 ```
-01_bronze_ingestor.py → 02_xbrl_parser.py → 03_silver_decoder.py → 04_gold_metrics.py → 05_vector_chunker.py → 06_rag_agent.py
+01_schema_setup.py → 02_bronze_autoloader.py → 03_silver_decoder.py →
+   ├─→ 04_gold_metrics.py            (annual, 10-K)
+   └─→ 04b_gold_quarterly_metrics.py (quarterly, 10-Q — Q1/Q2/Q3 only)
+05_vector_chunker.py (10-K + 10-Q) → 06_rag_agent.py → 07_evaluation.py
 ```
+(Actual file names on disk — the old README spelling `01_bronze_ingestor / 02_xbrl_parser` was aspirational.)
 
 ---
 
@@ -27,11 +31,14 @@ FinSage is a production-grade financial intelligence platform on Databricks. It 
 ## Layer 2: Silver (`main.finsage_silver`)
 
 ### `filing_sections`
-- Extracts exactly 3 sections from 10-K HTML: **"Business"**, **"Risk Factors"**, **"MD&A"**
-- Custom PySpark UDFs with optimized regex (`SECTION_RULES`)
+- 10-K sections: **"Business"**, **"Risk Factors"**, **"MD&A"** (regex rules `SECTION_RULES_10K`)
+- 10-Q sections: **"MD&A"** (Part I, Item 2) and optionally **"Risk Factors Updates"** (Part II, Item 1A when present) — rules `SECTION_RULES_10Q`
+- Branch in the UDF chooses ruleset by `filing_type` via `SECTION_RULES_BY_FORM`
+- `filing_type` is persisted on the row so downstream chunking / retrieval can filter annual vs. interim
 - Strips Base64 images, scripts, styles, HTML tags via `regexp_replace`
 - Records word counts per section; parsing errors go to `ingestion_errors`
-- Write strategy: **MERGE INTO on `section_id`** (idempotent)
+- Write strategy: **MERGE INTO on `section_id`** (idempotent). `section_id = sha2(filing_id || section_name)` — `filing_id` is already unique per SEC accession so no form tag needed in the hash
+- `filing_type` column was added post-v1; the write now uses `spark.databricks.delta.schema.autoMerge.enabled=true` to land the column on an existing table
 - **CDF enabled** (`delta.enableChangeDataFeed = true`) — required for Vector Search incremental sync
 
 ### `financial_statements`
@@ -41,20 +48,29 @@ FinSage is a production-grade financial intelligence platform on Databricks. It 
 
 ## Layer 3: Gold (`main.finsage_gold`)
 
-### `company_metrics`
-- **180 rows, ~30 tickers, FY2020–FY2026**
-- Only 10-K annual (`fiscal_period == 'FY'`) filings from 2020+
+### `company_metrics` (annual, 10-K-sourced)
+- **~180 rows, 30 tickers, FY2020–FY2026**
+- Only 10-K annual (`fiscal_period == 'FY'`) filings from 2020+. Quarterly data lives in the parallel `company_metrics_quarterly` table — do NOT try to fold Q data into this one.
 - `annual_fit_score`: duration_days between 350–380 for flow metrics
 - `instant_fit_score`: balance sheet point-in-time metrics
 - Canonical accession selection per ticker-year by `concept_priority` hierarchy
-- **Columns**: `ticker`, `company_name`, `fiscal_year`, `revenue`, `net_income`, `gross_profit`, `operating_income`, `operating_cash_flow`, `total_assets`, `total_liabilities`, `total_debt`, `rd_expense`, `gross_margin_pct`, `revenue_yoy_growth_pct`, `debt_to_equity`, `data_quality_score`, `updated_at`
-- **CRITICAL**: NO `equity` column in this table. Do not reference it.
+- **Columns**: `ticker`, `company_name`, `fiscal_year`, `fiscal_quarter` (always `NULL` in this table — the quarter dimension is reserved so the merge key stays uniform with the quarterly table), `revenue`, `net_income`, `gross_profit`, `operating_income`, `operating_cash_flow`, `total_assets`, `total_liabilities`, `total_equity`, `total_debt`, `rd_expense`, `gross_margin_pct`, `revenue_yoy_growth_pct`, `debt_to_equity`, `data_quality_score`, `updated_at`
+- `total_equity` was added in the robustness pass — computed as `coalesce(equity_tag, total_assets − total_liabilities)`. `debt_to_equity` now uses this derived value so the ratio populates for tickers whose XBRL omits a StockholdersEquity concept.
 - **CRITICAL**: `fiscal_year` is stored as `double` — always cast with `int(fy)` when displaying.
-- Write strategy: **MERGE INTO on `ticker + fiscal_year + fiscal_quarter`**
+- Write strategy: **MERGE INTO on `ticker + fiscal_year + fiscal_quarter`** with `schema.autoMerge.enabled=true` so the new `total_equity` column lands without a rebuild.
+
+### `company_metrics_quarterly` (interim, 10-Q-sourced)
+- Built by notebook `04b_gold_quarterly_metrics.py` — parallel pipeline, same concept-priority taxonomy as the annual table.
+- Filters `filing_type == '10-Q'` and `fiscal_period IN ('Q1','Q2','Q3')` — Q4 standalone is NOT stored (would have to be derived as `FY − (Q1+Q2+Q3)`; deferred to v2).
+- `quarterly_fit_score`: `duration_days BETWEEN 80 AND 100` — selects discrete single-quarter flows and excludes 6-month / YTD cumulative disclosures that share the same `fiscal_period` label.
+- `revenue_yoy_growth_pct` uses a **same-quarter prior-year** window (`Window.partitionBy("ticker","fiscal_quarter").orderBy("fiscal_year")`), not adjacent rows.
+- Adds `period_end_date` (actual quarter-end date) and `source_filing_type = '10-Q'` columns vs. the annual shape.
+- Merge key: **`ticker + fiscal_year + fiscal_quarter`** (disjoint from annual where `fiscal_quarter IS NULL`).
 
 ### `filing_section_chunks`
 - LangChain text splitter chunks from Silver `filing_sections`
 - Source for Vector Search index (actual table name is `filing_section_chunks`, not `filing_chunks`)
+- Now carries `filing_type` so retrieval can scope 10-K vs. 10-Q (chunker auto-backfills `'10-K'` for rows that predate the column)
 
 ### `filing_chunks_index`
 - Databricks Vector Search index (DELTA_SYNC, TRIGGERED pipeline)
@@ -84,17 +100,25 @@ FinSage is a production-grade financial intelligence platform on Databricks. It 
    - `fiscal_year` filter prevents multi-year chunk mixing
    - Output format: `[Source: TICKER | FY{int(fy)} | Section]`
 
-2. **`get_company_metrics(ticker, fiscal_year_start, fiscal_year_end)`**
+2. **`get_company_metrics(ticker, fiscal_year_start, fiscal_year_end)`** — ANNUAL
    - In-memory lookup from `METRICS_CACHE` (loaded at `load_context` — no SQL warehouse needed in serving)
    - Cache structure: `{ticker_str: {fiscal_year_int: {metric: value}}}`
+   - Sourced from `company_metrics` (10-K).
+
+3. **`get_quarterly_metrics(ticker, fiscal_year, fiscal_quarter, fiscal_year_start, fiscal_year_end)`** — INTERIM
+   - In-memory lookup from `QUARTERLY_METRICS_CACHE`
+   - Cache structure: `{ticker_str: {"YYYY-QN": {metric: value}}}` (string keys because JSON can't hold tuple keys; Q-key parsing handled by the tool)
+   - Sourced from `company_metrics_quarterly` (10-Q, Q1/Q2/Q3 only).
+   - The quarterly cache artifact is OPTIONAL at `load_context` time — if the table doesn't exist yet (e.g. fresh deployment before 04b has run), the agent logs a warning and the tool returns an actionable error instead of crashing.
 
 ### SYSTEM_PROMPT behavioral rules (do not remove these)
-- For "most recent" questions: call `get_company_metrics` first to find latest year → pass `fiscal_year` to `search_filings`
+- Annual / fiscal-year questions → `get_company_metrics`. Interim / Q-specific questions → `get_quarterly_metrics`. Q4 is unavailable in the quarterly tool — fall back to annual and flag the limitation.
+- For "most recent" questions: call the appropriate metrics tool first to find latest year (+ quarter if interim) → pass `fiscal_year` to `search_filings`
 - Citation labelling: `[VERBATIM]` for direct quotes, `[SUMMARY]` for paraphrases
 - Formula disclosure: state formula on first use — e.g. `Operating Margin (GAAP) = Operating Income ÷ Revenue`
 
 ### Smoke test (cell 8)
-- `fake_ctx.artifacts` must be a **plain dict**: `{"metrics_cache": "/tmp/metrics_cache.json"}` — NOT a class instance
+- `fake_ctx.artifacts` must be a **plain dict**, now with two keys: `{"metrics_cache": "/tmp/metrics_cache.json", "quarterly_cache": "/tmp/quarterly_cache.json"}` — NOT a class instance
 - MLflow experiment: do NOT call `mlflow.set_experiment()` inside a Git Folder notebook (raises `INVALID_PARAMETER_VALUE`) — remove it, use default experiment
 - Live endpoint test: use `w.serving_endpoints.query()` — NOT `mlflow.deployments.get_deploy_client()` (that resolves to wrong tokyo.cloud.databricks.com URL)
 
