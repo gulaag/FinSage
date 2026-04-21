@@ -1,16 +1,124 @@
 [
-    {
-      "ticker": "AAPL",
-      "year": 2024,
-      "revenue": 391035000000, 
-      "net_income": 93736000000,
-      "risk_factor_keyword": "macroeconomic"
-    },
-    {
-      "ticker": "TSLA",
-      "year": 2024,
-      "revenue": 96773000000,
-      "net_income": 14997000000,
-      "risk_factor_keyword": "lithium-ion"
-    }
-  ]
+  {
+    "question_id": "NQ-001",
+    "category": "numerical_lookup",
+    "ticker": "AAPL",
+    "fiscal_year": 2024,
+    "difficulty": "easy",
+    "question": "What was Apple's total net sales for the fiscal year ended September 28, 2024?",
+    "expected_answer": "$391,035 million (approximately $391.0 billion) — a 2% increase over FY2023 net sales of $383,285 million.",
+    "evidence_passage": "Total net sales $ 391,035 ... 2% ... $ 383,285 ... (3)% ... $ 394,328",
+    "source_doc": "AAPL-2024-10K",
+    "source_section": "MD&A"
+  },
+  {
+    "question_id": "NQ-002",
+    "category": "numerical_lookup",
+    "ticker": "NVDA",
+    "fiscal_year": 2024,
+    "difficulty": "medium",
+    "question": "What was NVIDIA's research and development expense as a percentage of total revenue in fiscal year 2024 (year ended January 28, 2024)?",
+    "expected_answer": "14.2% of net revenue — $8,675 million of R&D on $60,922 million of revenue. Down from 27.2% of revenue in fiscal 2023, reflecting revenue growth of 126% against R&D growth of only 18%.",
+    "evidence_passage": "Research and development expenses $ 8,675 ... $ 7,339 ... 18 % ... % of net revenue 14.2 % ... 27.2 %",
+    "source_doc": "NVDA-2024-10K",
+    "source_section": "MD&A"
+  },
+  {
+    "question_id": "RS-001",
+    "category": "risk_summary",
+    "ticker": "TSLA",
+    "fiscal_year": 2024,
+    "difficulty": "easy",
+    "question": "What primary risk does Tesla identify regarding the production ramp of Cybertruck and its next-generation vehicle platform?",
+    "expected_answer": "Tesla warns that ramping manufacturing capacity for new models such as Cybertruck and the next-generation platform is subject to uncertainties inherent in establishing and ramping manufacturing operations — including new product and manufacturing technologies, concurrent international projects, industry-wide component constraints, and labor shortages — any of which may delay production growth, affect capital efficiency, and harm operating results.",
+    "evidence_passage": "We are focused on growing our manufacturing capacity, which includes capacity for manufacturing new vehicle models such as our Cybertruck and next generation platform... These plans are subject to uncertainties inherent in establishing and ramping manufacturing operations, which may be exacerbated by new product and manufacturing technologies we introduce, the number of concurrent international projects, any industry-wide component constraints, labor shortages and any future impact from events outside of our control.",
+    "source_doc": "TSLA-2024-10K",
+    "source_section": "MD&A"
+  },
+  {
+    "question_id": "RS-002",
+    "category": "risk_summary",
+    "ticker": "BAC",
+    "fiscal_year": 2023,
+    "difficulty": "hard",
+    "question": "How does Bank of America describe the potential impact of elevated interest rates and a flat or inverted yield curve on its net interest income and broader financial condition?",
+    "expected_answer": "BAC states that monetary policy in response to high inflation has produced a significant increase in market interest rates and a flattening or inversion of the yield curve, which has caused — and may continue to cause — equity market volatility, wider credit spreads, recessionary concerns, and potentially higher unemployment and delinquency rates. It also explicitly flags that a future Federal Reserve shift to lower interest rates (to stimulate the economy) would likely reduce revenue through lower net interest income.",
+    "evidence_passage": "Monetary policy in response to high inflation has led to a significant increase in market interest rates and a flattening and/or inversion of the yield curve. This has resulted in and may continue to result in volatility of equity and other markets, further volatility of the U.S. dollar, a widening in credit spreads and higher interest rates and recessionary concerns... Any future change in monetary policy by the Federal Reserve, in an effort to stimulate the economy or otherwise, resulting in lower interest rates would likely result in lower revenue through lower net interest income.",
+    "source_doc": "BAC-2023-10K",
+    "source_section": "Risk Factors"
+  },
+  {
+    "question_id": "YY-001",
+    "category": "yoy_comparison",
+    "ticker": "MSFT",
+    "fiscal_year": 2024,
+    "difficulty": "medium",
+    "question": "By how much did Microsoft's Intelligent Cloud segment revenue grow in fiscal year 2024 compared to fiscal year 2023, and what was the primary driver?",
+    "expected_answer": "Intelligent Cloud revenue increased $17.5 billion, or 20%, in FY2024 over FY2023, driven primarily by server products and cloud services revenue growth of 22% — within that, Azure and other cloud services grew 30% on consumption-based demand.",
+    "evidence_passage": "Intelligent Cloud Revenue increased $17.5 billion or 20%... Server products and cloud services revenue increased $17.8 billion or 22% driven by Azure and other cloud services. Azure and other cloud services revenue grew 30% driven by growth in our consumption-based services.",
+    "source_doc": "MSFT-2024-10K",
+    "source_section": "MD&A"
+  },
+  {
+    "question_id": "YY-002",
+    "category": "yoy_comparison",
+    "ticker": "MSFT",
+    "fiscal_year": 2024,
+    "difficulty": "medium",
+    "question": "What was Microsoft's total revenue growth rate from fiscal year 2023 to fiscal year 2024?",
+    "expected_answer": "Total revenue grew from $211,915 million in FY2023 to $245,122 million in FY2024 — an increase of $33,207 million, or approximately 15.67%.",
+    "evidence_passage": "FY2024 revenue = $245,122M; FY2023 revenue = $211,915M. Growth = (245,122 − 211,915) / 211,915 = 0.1567 = 15.67%. Source: main.finsage_gold.company_metrics.",
+    "source_doc": "MSFT-2024-10K",
+    "source_section": "metrics"
+  },
+  {
+    "question_id": "MC-001",
+    "category": "multi_company",
+    "ticker": "GOOGL/MSFT",
+    "tickers": ["GOOGL", "MSFT"],
+    "fiscal_year": 2024,
+    "difficulty": "medium",
+    "question": "Which company reported a higher operating margin in fiscal year 2024: Alphabet (GOOGL) or Microsoft (MSFT)?",
+    "expected_answer": "Microsoft. MSFT operating margin = operating_income $109,433M ÷ revenue $245,122M = 44.6%. GOOGL operating margin = $112,390M ÷ $350,018M = 32.1%. Microsoft is higher by ~12.5 percentage points.",
+    "evidence_passage": "From main.finsage_gold.company_metrics (FY2024): MSFT operating_income = 109,433; revenue = 245,122. GOOGL operating_income = 112,390; revenue = 350,018.",
+    "source_doc": "MSFT-2024-10K, GOOGL-2024-10K",
+    "source_section": "metrics"
+  },
+  {
+    "question_id": "MC-002",
+    "category": "multi_company",
+    "ticker": "V/MA",
+    "tickers": ["V", "MA"],
+    "fiscal_year": 2024,
+    "difficulty": "hard",
+    "question": "Comparing the ratio of Total Assets to Total Liabilities in fiscal year 2024 for Visa (V) and Mastercard (MA), which firm appears more leveraged?",
+    "expected_answer": "Mastercard is the more leveraged of the two. V total_assets ÷ total_liabilities = 94,511 ÷ 55,374 = 1.71. MA total_assets ÷ total_liabilities = 48,081 ÷ 41,566 = 1.16. A lower ratio indicates relatively higher liabilities against the asset base, so MA carries more financial leverage.",
+    "evidence_passage": "From main.finsage_gold.company_metrics (FY2024): V total_assets = 94,511; total_liabilities = 55,374. MA total_assets = 48,081; total_liabilities = 41,566.",
+    "source_doc": "V-2024-10K, MA-2024-10K",
+    "source_section": "metrics"
+  },
+  {
+    "question_id": "CV-001",
+    "category": "citation_validation",
+    "ticker": "AAPL",
+    "fiscal_year": 2024,
+    "difficulty": "easy",
+    "question": "Does Apple still report iPhone net sales as a separately disclosed product category in its 2024 10-K, and if so, what was the amount?",
+    "expected_answer": "Yes. Apple's 2024 10-K breaks out iPhone net sales as its own product category in the 'Products and Services Performance' table, reporting $201,183 million in FY2024 — relatively flat compared to $200,583 million in FY2023.",
+    "evidence_passage": "iPhone $ 201,183 — % $ 200,583 (2) % $ 205,489 ... iPhone net sales were relatively flat during 2024 compared to 2023.",
+    "source_doc": "AAPL-2024-10K",
+    "source_section": "MD&A"
+  },
+  {
+    "question_id": "CV-002",
+    "category": "citation_validation",
+    "ticker": "NKE",
+    "fiscal_year": 2023,
+    "difficulty": "medium",
+    "question": "What specific actions did Nike take in fiscal 2023 to address elevated inventory levels, and what was the resulting inventory balance at year-end?",
+    "expected_answer": "Nike decreased future inventory purchases and increased promotional activity throughout fiscal 2023 to work down excess inventory. As of May 31, 2023, inventories were $8.5 billion — flat compared to the prior year — reflecting the normalization achieved through these actions.",
+    "evidence_passage": "Inventories as of May 31, 2023 were $8.5 billion, flat compared to the prior year, driven by the actions we took throughout fiscal 2023 to manage inventory levels ... Throughout fiscal 2023, we took action to reduce excess inventory by decreasing future inventory purchases and increasing promotional activity.",
+    "source_doc": "NKE-2023-10K",
+    "source_section": "MD&A"
+  }
+]
