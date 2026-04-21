@@ -142,6 +142,39 @@ print(f"[CACHE] annual: {len(METRICS_CACHE)} tickers | quarterly: {len(QUARTERLY
 VALID_SECTION_NAMES = ("Business", "Risk Factors", "MD&A", "Risk Factors Updates")
 VALID_FILING_TYPES  = ("10-K", "10-Q")
 
+# Probe the live VS index once at import and remember which metadata columns
+# actually exist. The source chunks table was extended with `filing_type` when
+# 10-Q support landed, but a DELTA_SYNC VS index only picks up new columns
+# after a full re-provision. If the pipeline is still serving the pre-10-Q
+# schema (or is stuck behind a stale CDF cursor), requesting `filing_type` in
+# `columns=` or `filters=` will 400. Adapt at runtime so the tool stays
+# functional on either schema.
+_VS_CANDIDATE_COLS = ("ticker", "fiscal_year", "filing_type", "section_name", "chunk_text")
+
+def _detect_index_columns():
+    try:
+        vsc = VectorSearchClient(disable_notice=True)
+        idx = vsc.get_index(endpoint_name=VS_ENDPOINT, index_name=VS_INDEX_NAME)
+        desc = idx.describe() or {}
+        schema_spec = (
+            desc.get("delta_sync_index_spec", {}).get("schema_json")
+            or desc.get("schema_json")
+        )
+        if schema_spec:
+            import json as _json
+            fields = _json.loads(schema_spec).get("fields", [])
+            return {f["name"] for f in fields}
+    except Exception as e:
+        log.warning("Could not introspect VS index schema (%s); assuming legacy columns.", e)
+    # Legacy fallback: only the original 4-column shape
+    return {"chunk_id", "ticker", "fiscal_year", "section_name", "chunk_text"}
+
+_VS_INDEX_COLS       = _detect_index_columns()
+_FILING_TYPE_IN_INDEX = "filing_type" in _VS_INDEX_COLS
+log.info("VS index columns present: %s (filing_type supported=%s)",
+         sorted(_VS_INDEX_COLS), _FILING_TYPE_IN_INDEX)
+
+
 @mlflow.trace(name="search_filings", span_type="TOOL")
 def search_filings(
     query: str,
@@ -158,7 +191,8 @@ def search_filings(
 
     10-K sections: Business, Risk Factors, MD&A.
     10-Q sections: MD&A, Risk Factors Updates (when the filer includes them).
-    Pass filing_type='10-K' or '10-Q' to scope results to annual vs interim.
+    Pass filing_type='10-K' or '10-Q' to scope results to annual vs interim
+    (only applied if the live VS index has indexed the `filing_type` column).
     """
     vsc = VectorSearchClient(disable_notice=True)
     index = vsc.get_index(endpoint_name=VS_ENDPOINT, index_name=VS_INDEX_NAME)
@@ -171,12 +205,21 @@ def search_filings(
     if fiscal_year:
         filters["fiscal_year"] = fiscal_year
     if filing_type and filing_type in VALID_FILING_TYPES:
-        filters["filing_type"] = filing_type
+        if _FILING_TYPE_IN_INDEX:
+            filters["filing_type"] = filing_type
+        else:
+            log.warning(
+                "filing_type='%s' requested but VS index has not indexed that column yet; "
+                "ignoring filter.", filing_type
+            )
+
+    # Only request columns that are actually materialized in the index.
+    columns_to_fetch = [c for c in _VS_CANDIDATE_COLS if c in _VS_INDEX_COLS]
 
     try:
         results = index.similarity_search(
             query_text=query,
-            columns=["ticker", "fiscal_year", "filing_type", "section_name", "chunk_text"],
+            columns=columns_to_fetch,
             filters=filters if filters else None,
             num_results=num_results,
             query_type="ANN",
@@ -189,15 +232,24 @@ def search_filings(
     if not data:
         return "No relevant passages found for this query."
 
+    # Map column name → positional index so we read each row robustly whether
+    # `filing_type` is present or not.
+    col_pos = {c: i for i, c in enumerate(columns_to_fetch)}
     passages = []
     for row in data:
-        ticker_val, fy, f_type, section, text = row[0], row[1], row[2], row[3], row[4]
-        score = row[5] if len(row) > 5 else None
+        score = row[len(columns_to_fetch)] if len(row) > len(columns_to_fetch) else None
         if score is not None and score < similarity_threshold:
             continue
-        passages.append(
-            f"[Source: {ticker_val} | FY{int(fy)} | {f_type} | {section}]\n{text[:1200]}"
-        )
+        ticker_val = row[col_pos["ticker"]]
+        fy         = row[col_pos["fiscal_year"]]
+        section    = row[col_pos["section_name"]]
+        text       = row[col_pos["chunk_text"]]
+        f_type     = row[col_pos["filing_type"]] if "filing_type" in col_pos else None
+        src_parts  = [ticker_val, f"FY{int(fy)}"]
+        if f_type:
+            src_parts.append(f_type)
+        src_parts.append(section)
+        passages.append(f"[Source: {' | '.join(src_parts)}]\n{text[:1200]}")
 
     if not passages:
         return "No passages met the similarity threshold. Try a broader query."
