@@ -62,9 +62,14 @@ FinSage is a production-grade financial intelligence platform on Databricks. It 
 ### `company_metrics_quarterly` (interim, 10-Q-sourced)
 - Built by notebook `04b_gold_quarterly_metrics.py` — parallel pipeline, same concept-priority taxonomy as the annual table.
 - Filters `filing_type == '10-Q'` and `fiscal_period IN ('Q1','Q2','Q3')` — Q4 standalone is NOT stored (would have to be derived as `FY − (Q1+Q2+Q3)`; deferred to v2).
-- `quarterly_fit_score`: `duration_days BETWEEN 80 AND 100` — selects discrete single-quarter flows and excludes 6-month / YTD cumulative disclosures that share the same `fiscal_period` label.
+- **Discrete Q2/Q3 flows are derived by subtraction** — most filers XBRL-tag only the cumulative concepts in Q2/Q3 10-Qs (`SixMonthsEnded`, `NineMonthsEnded`), so silver has zero 80–100 day `revenue` facts at `fiscal_period='Q2'` or `'Q3'`. The notebook classifies each fact as `period_type ∈ {discrete, ytd_6mo, ytd_9mo, instant}`, wide-aggregates per `(ticker, fy)`, then unpivots into Q1/Q2/Q3 rows with:
+  - `Q1 = discrete`
+  - `Q2 = coalesce(Q2_90d_tagged, Q2_YTD_6mo − Q1_90d)`
+  - `Q3 = coalesce(Q3_90d_tagged, Q3_YTD_9mo − Q2_YTD_6mo)`
+  - F/GM/RIVN are the only tickers in the current set that directly tag discrete Q2/Q3 flows; the `coalesce` prefers their direct value over the subtraction when available.
+- `period_end_dt DESC` is the primary `fact_window` tiebreaker — silver contains prior-year comparatives stamped with the current `fiscal_year` (embedded in the same 10-Q); the current-period fact always has a later `period_end_dt` than its comparative, so this deterministically discards the comparative. Do NOT gate on `period_end_year == fiscal_year` — that would drop ~100% of fiscal-year-offset companies' (AAPL/MSFT/NKE/V/WMT) legitimate Q1 discrete facts.
 - `revenue_yoy_growth_pct` uses a **same-quarter prior-year** window (`Window.partitionBy("ticker","fiscal_quarter").orderBy("fiscal_year")`), not adjacent rows.
-- Adds `period_end_date` (actual quarter-end date) and `source_filing_type = '10-Q'` columns vs. the annual shape.
+- Adds `period_end_date` (actual quarter-end date, pulled preferentially from instant facts) and `source_filing_type = '10-Q'` columns vs. the annual shape.
 - Merge key: **`ticker + fiscal_year + fiscal_quarter`** (disjoint from annual where `fiscal_quarter IS NULL`).
 
 ### `filing_section_chunks`
