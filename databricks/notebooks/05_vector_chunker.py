@@ -164,8 +164,16 @@ def chunk_sections_udf(
 
 # --- Build chunk dataframe ---
 run_id    = str(uuid.uuid4())
-df_source = spark.table(SOURCE_TABLE).select(
-    "filing_id", "ticker", "fiscal_year", "section_name", "section_text"
+# filing_type is new on filing_sections (added when 10-Q support landed in notebook 03);
+# coalesce to '10-K' so backfilled rows that predate the column retain the legacy semantics.
+df_source = (
+    spark.table(SOURCE_TABLE)
+    .withColumn(
+        "filing_type",
+        F.coalesce(F.col("filing_type"), F.lit("10-K")) if "filing_type" in spark.table(SOURCE_TABLE).columns
+        else F.lit("10-K"),
+    )
+    .select("filing_id", "ticker", "fiscal_year", "filing_type", "section_name", "section_text")
 )
 
 df_chunks = (
@@ -179,6 +187,7 @@ df_chunks = (
         F.col("filing_id"),
         F.col("ticker"),
         F.col("fiscal_year"),
+        F.col("filing_type"),
         F.col("section_name"),
         F.col("chunk.chunk_index").alias("chunk_index"),
         F.col("chunk.chunk_text").alias("chunk_text"),
@@ -214,6 +223,9 @@ if bad_rows > 0:
     raise RuntimeError("Invalid chunk rows detected. Aborting write.")
 
 # --- Idempotent write ---
+# autoMerge ensures the new filing_type column lands on the existing table
+spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
+
 if spark.catalog.tableExists(TARGET_TABLE):
     target = DeltaTable.forName(spark, TARGET_TABLE)
     (

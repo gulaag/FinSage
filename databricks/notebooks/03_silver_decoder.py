@@ -241,7 +241,7 @@ from pyspark.sql.window import Window
 from pyspark.sql.types import ArrayType, StructType, StructField, StringType, IntegerType
 import re
 
-SECTION_RULES = {
+SECTION_RULES_10K = {
     "Business": {
         "start_patterns": [r"(?im)^[\s>\-\.\(\)\d]{0,12}item\s+1\b(?!\s*[ab]\b)"],
         "end_patterns":   [r"(?im)^[\s>\-\.\(\)\d]{0,12}item\s+1a\b",
@@ -260,6 +260,33 @@ SECTION_RULES = {
                            r"(?im)^[\s>\-\.\(\)\d]{0,12}item\s+8\b"],
         "min_words": 400, "fallback_chars": 350000,
     },
+}
+
+# 10-Q structure differs: MD&A is Part I Item 2 (not Item 7), Risk Factor updates
+# are Part II Item 1A (only if material changes since last 10-K). Item 1 in a 10-Q
+# is the condensed financial statements — not narrative Business discussion —
+# so we intentionally do NOT extract "Business" from 10-Q filings.
+SECTION_RULES_10Q = {
+    "MD&A": {
+        "start_patterns": [r"(?im)^[\s>\-\.\(\)\d]{0,12}item\s+2\b(?!\s*a\b)"],
+        "end_patterns":   [r"(?im)^[\s>\-\.\(\)\d]{0,12}item\s+3\b",
+                           r"(?im)^[\s>\-\.\(\)\d]{0,12}item\s+4\b",
+                           r"(?im)^[\s>\-\.\(\)\d]{0,12}part\s+ii\b"],
+        "min_words": 200, "fallback_chars": 300000,
+    },
+    "Risk Factors Updates": {
+        "start_patterns": [r"(?im)^[\s>\-\.\(\)\d]{0,12}part\s+ii.{0,80}item\s+1a\b",
+                           r"(?im)^[\s>\-\.\(\)\d]{0,12}item\s+1a\.\s*risk\s+factors\b"],
+        "end_patterns":   [r"(?im)^[\s>\-\.\(\)\d]{0,12}item\s+2\.\s*unregistered",
+                           r"(?im)^[\s>\-\.\(\)\d]{0,12}item\s+6\b",
+                           r"(?im)^[\s>\-\.\(\)\d]{0,12}signatures?\b"],
+        "min_words": 80, "fallback_chars": 100000,
+    },
+}
+
+SECTION_RULES_BY_FORM = {
+    "10-K": SECTION_RULES_10K,
+    "10-Q": SECTION_RULES_10Q,
 }
 
 def _collect_positions(patterns, text):
@@ -295,13 +322,16 @@ def _choose_best_block(text, rule):
             best = {"section_text": candidate, "word_count": word_count, "start_pos": s, "end_pos": e}
     return best
 
-def extract_sections_hardened(clean_text):
+def extract_sections_hardened(clean_text, filing_type):
     if not clean_text:
         return {"sections": [], "error": "Empty text after cleaning"}
+    rules = SECTION_RULES_BY_FORM.get(filing_type)
+    if rules is None:
+        return {"sections": [], "error": f"Unsupported filing_type: {filing_type}"}
     try:
         text     = _normalize_text(clean_text)
         sections = []
-        for section_name, rule in SECTION_RULES.items():
+        for section_name, rule in rules.items():
             best_block = _choose_best_block(text, rule)
             if best_block:
                 sections.append({
@@ -309,7 +339,13 @@ def extract_sections_hardened(clean_text):
                     "section_text": best_block["section_text"],
                     "word_count":   best_block["word_count"],
                 })
-        missing = sorted({"Business", "Risk Factors", "MD&A"} - {s["section_name"] for s in sections})
+        # For 10-K all three sections are required; for 10-Q only MD&A is required
+        # ("Risk Factors Updates" is present only when management flags changes).
+        if filing_type == "10-K":
+            required = {"Business", "Risk Factors", "MD&A"}
+        else:
+            required = {"MD&A"}
+        missing = sorted(required - {s["section_name"] for s in sections})
         if missing:
             return {"sections": sections, "error": f"Missing sections: {', '.join(missing)}"}
         return {"sections": sections, "error": None}
@@ -330,7 +366,7 @@ split_udf = udf(
 
 df_bronze_clean = (
     spark.table(f"{CATALOG}.finsage_bronze.filings")
-    .filter(col("filing_type") == "10-K")  # quarterly filings have no Item 1/7 sections
+    .filter(col("filing_type").isin("10-K", "10-Q"))
     .withColumn("rn", row_number().over(
         Window.partitionBy("filing_id").orderBy(col("ingested_at").desc())
     ))
@@ -352,8 +388,8 @@ df_processed = (
     .withColumn("clean_text",     regexp_replace(col("no_html"),   "\u00a0", " "))
     .withColumn("clean_text",     regexp_replace(col("clean_text"), r"[\t\x0B\f\r ]+", " "))
     .withColumn("clean_text",     regexp_replace(col("clean_text"), r"\n{3,}", "\n\n"))
-    .withColumn("udf_result",     split_udf(col("clean_text")))
-    .select("filing_id", "ticker", "fiscal_year", "file_path",
+    .withColumn("udf_result",     split_udf(col("clean_text"), col("filing_type")))
+    .select("filing_id", "ticker", "fiscal_year", "filing_type", "file_path",
             "udf_result.sections", "udf_result.error")
 )
 df_processed.cache()
@@ -376,14 +412,19 @@ df_final_sections = (
     df_processed.filter(col("error").isNull())
     .withColumn("sec", explode("sections"))
     .select(
+        # filing_id is already unique per SEC accession, so (filing_id, section_name)
+        # yields a unique section_id even across 10-K/10-Q without an explicit form tag.
         sha2(concat_ws("||", col("filing_id"), col("sec.section_name")), 256).alias("section_id"),
-        "filing_id", "ticker", "fiscal_year",
+        "filing_id", "ticker", "fiscal_year", "filing_type",
         col("sec.section_name").alias("section_name"),
         col("sec.section_text").alias("section_text"),
         col("sec.word_count").alias("word_count"),
         current_timestamp().alias("parsed_at"),
     )
 )
+
+# Enable schema autoMerge so adding filing_type on an existing table is a no-op rebuild
+spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
 
 filing_sections_table = f"{CATALOG}.finsage_silver.filing_sections"
 if spark.catalog.tableExists(filing_sections_table):
