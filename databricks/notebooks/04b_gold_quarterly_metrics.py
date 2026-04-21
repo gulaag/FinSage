@@ -36,6 +36,7 @@ from pyspark.sql.functions import (
     datediff, to_date, year, lower, trim,
     sum as spark_sum, countDistinct, max as spark_max,
 )
+from functools import reduce as _reduce
 from pyspark.sql.window import Window
 from delta.tables import DeltaTable
 
@@ -84,135 +85,173 @@ concept_priority = (
     .otherwise(lit(99))
 )
 
+FLOW_METRICS = [
+    "revenue", "net_income", "gross_profit", "operating_income",
+    "operating_cash_flow", "rd_expense", "cost_of_revenue",
+]
+INSTANT_METRICS = [
+    "total_assets", "total_liabilities", "short_term_debt",
+    "long_term_debt", "equity",
+]
+
+# --- 3. Classify period_type per fact ---
+# Most filers XBRL-tag ONLY the cumulative flow concepts in Q2/Q3 10-Qs
+# (SixMonthsEnded, NineMonthsEnded) and NOT the discrete three-months-ended
+# variant. Silver confirms this: zero 80–100 day revenue facts exist at
+# fiscal_period='Q2' or 'Q3' across all 30 tickers. We therefore keep both
+# discrete and cumulative facts, then derive the discrete Q2/Q3 flows by
+# subtraction downstream:
+#   Q2_discrete = coalesce(Q2_90d_tagged, Q2_YTD_6mo − Q1_90d)
+#   Q3_discrete = coalesce(Q3_90d_tagged, Q3_YTD_9mo − Q2_YTD_6mo)
+#
+# Do NOT gate on period_end_year == fiscal_year. Fiscal-year-offset companies
+# (AAPL/MSFT/NKE/V/WMT with Sep/Jun/May/Jan/Jan year-ends) legitimately have
+# quarter-ends falling in fiscal_year ± 1 on the calendar. Prior-period
+# comparatives embedded in the same 10-Q (stamped upstream with the current
+# fiscal_year) are instead rejected downstream by `period_end_dt DESC` in the
+# fact_window tiebreaker.
 df = (
     df
     .withColumn("concept_priority", concept_priority)
-    .withColumn("is_duration_metric", col("normalized_line_item").isin(
-        "revenue", "net_income", "gross_profit", "operating_income",
-        "operating_cash_flow", "rd_expense", "cost_of_revenue",
-    ))
-    .withColumn("is_instant_metric", col("normalized_line_item").isin(
-        "total_assets", "total_liabilities", "short_term_debt",
-        "long_term_debt", "equity",
-    ))
-    # Discrete-quarter flow: 80–100 day window excludes 6-month/YTD cumulative
-    # disclosures that share the same fiscal_period label.
-    #
-    # Do NOT gate on period_end_year == fiscal_year. Fiscal-year-offset companies
-    # (AAPL/MSFT/NKE/V/WMT with Sep/Jun/May/Jan/Jan year-ends) legitimately have
-    # Q1 quarter-ends falling in fiscal_year-1 on the calendar. That check drops
-    # ~100% of their 90-day discrete facts. Prior-period comparatives embedded in
-    # the same 10-Q (stamped with the current fiscal_year upstream) are instead
-    # rejected downstream by `period_end_dt DESC` in the fact_window tiebreaker.
-    .withColumn("quarterly_fit_score", when(
-        col("is_duration_metric") &
-        col("duration_days").between(80, 100),
-        lit(1)
-    ).otherwise(lit(0)))
-    .withColumn("instant_fit_score", when(
-        col("is_instant_metric"),
-        lit(1)
-    ).otherwise(lit(0)))
-)
-
-df = df.filter((col("quarterly_fit_score") == 1) | (col("instant_fit_score") == 1))
-
-# --- 3. Canonical accession per (ticker, fiscal_year, fiscal_quarter) ---
-required_metric_flag = when(
-    col("normalized_line_item").isin(
-        "revenue", "net_income", "operating_income",
-        "operating_cash_flow", "total_assets", "equity",
-    ), lit(1)
-).otherwise(lit(0))
-
-df_accession_quality = (
-    df
-    .withColumn("usable_fact_flag", when(
-        (
-            (col("is_duration_metric") & col("quarterly_fit_score").eqNullSafe(1)) |
-            (col("is_instant_metric")  & col("instant_fit_score").eqNullSafe(1))
-        ) & col("is_usd"),
-        lit(1)
-    ).otherwise(lit(0)))
-    .groupBy("ticker", "company_name", "fiscal_year", "fiscal_quarter", "accession")
-    .agg(
-        spark_sum(when(required_metric_flag == 1, col("usable_fact_flag")).otherwise(lit(0))).alias("required_metric_hits"),
-        countDistinct(when(col("usable_fact_flag") == 1, col("normalized_line_item"))).alias("distinct_metric_coverage"),
-        spark_max("filing_date_dt").alias("latest_filing_date"),
+    .withColumn("is_duration_metric", col("normalized_line_item").isin(FLOW_METRICS))
+    .withColumn("is_instant_metric",  col("normalized_line_item").isin(INSTANT_METRICS))
+    .withColumn("period_type",
+        when(col("is_duration_metric") & col("duration_days").between(80, 100), lit("discrete"))
+        .when(col("is_duration_metric") & col("duration_days").between(170, 195) & (col("fiscal_period") == "Q2"), lit("ytd_6mo"))
+        .when(col("is_duration_metric") & col("duration_days").between(260, 285) & (col("fiscal_period") == "Q3"), lit("ytd_9mo"))
+        .when(col("is_instant_metric"), lit("instant"))
     )
+    .filter(col("period_type").isNotNull() & col("is_usd"))
 )
 
-accession_window = Window.partitionBy("ticker", "fiscal_year", "fiscal_quarter").orderBy(
-    col("required_metric_hits").desc(),
-    col("distinct_metric_coverage").desc(),
-    col("latest_filing_date").desc(),
-)
-
-df_canonical_accession = (
-    df_accession_quality
-    .withColumn("rn", row_number().over(accession_window))
-    .filter(col("rn") == 1)
-    .select("ticker", "fiscal_year", "fiscal_quarter", "accession")
-)
-
-df_canonical = (
-    df.alias("f")
-    .join(
-        df_canonical_accession.alias("a"),
-        on=[
-            col("f.ticker")         == col("a.ticker"),
-            col("f.fiscal_year")    == col("a.fiscal_year"),
-            col("f.fiscal_quarter") == col("a.fiscal_quarter"),
-            col("f.accession")      == col("a.accession"),
-        ],
-        how="inner",
-    )
-    .select("f.*")
-)
-df_canonical = df_canonical.filter((col("quarterly_fit_score") == 1) | (col("instant_fit_score") == 1))
-
-# --- 4. One best fact per metric within the canonical accession ---
-fact_window = Window.partitionBy("ticker", "fiscal_year", "fiscal_quarter", "normalized_line_item").orderBy(
-    col("is_usd").desc(),
-    col("quarterly_fit_score").desc(),
-    col("instant_fit_score").desc(),
-    # Prefer the latest period_end: silver contains prior-year comparatives
-    # stamped with the current fiscal_year from the same 10-Q filing. The
-    # current-period fact always has a later period_end_dt than its comparative,
-    # so this tiebreaker discards the comparative deterministically.
+# --- 4. One best fact per (ticker, fy, fiscal_period, period_type, metric) ---
+# period_end_dt DESC discards prior-year comparatives from the same 10-Q.
+# concept_priority ASC prefers canonical raw_line_item per normalized metric.
+fact_window = Window.partitionBy(
+    "ticker", "fiscal_year", "fiscal_period", "period_type", "normalized_line_item"
+).orderBy(
     col("period_end_dt").desc_nulls_last(),
     col("concept_priority").asc(),
     col("filing_date_dt").desc_nulls_last(),
     col("source_fetched_at").desc_nulls_last(),
 )
 
-df_best_fact = (
-    df_canonical
+df_best = (
+    df
     .withColumn("rn", row_number().over(fact_window))
     .filter(col("rn") == 1)
     .drop("rn")
 )
 
-# --- 5. Aggregate base metrics ---
-df_base = (
-    df_best_fact
-    .groupBy("ticker", "company_name", "fiscal_year", "fiscal_quarter")
-    .agg(
-        spark_max(when(col("normalized_line_item") == "revenue",             col("value"))).alias("revenue"),
-        spark_max(when(col("normalized_line_item") == "net_income",          col("value"))).alias("net_income"),
-        spark_max(when(col("normalized_line_item") == "gross_profit",        col("value"))).alias("gross_profit_raw"),
-        spark_max(when(col("normalized_line_item") == "cost_of_revenue",     col("value"))).alias("cost_of_revenue"),
-        spark_max(when(col("normalized_line_item") == "operating_income",    col("value"))).alias("operating_income"),
-        spark_max(when(col("normalized_line_item") == "operating_cash_flow", col("value"))).alias("operating_cash_flow"),
-        spark_max(when(col("normalized_line_item") == "total_assets",        col("value"))).alias("total_assets"),
-        spark_max(when(col("normalized_line_item") == "total_liabilities",   col("value"))).alias("total_liabilities_raw"),
-        spark_max(when(col("normalized_line_item") == "short_term_debt",     col("value"))).alias("short_term_debt"),
-        spark_max(when(col("normalized_line_item") == "long_term_debt",      col("value"))).alias("long_term_debt"),
-        spark_max(when(col("normalized_line_item") == "rd_expense",          col("value"))).alias("rd_expense"),
-        spark_max(when(col("normalized_line_item") == "equity",              col("value"))).alias("equity"),
-        spark_max(col("period_end_dt")).alias("period_end_date"),
-    )
+# --- 5. Wide aggregation per (ticker, fy): 53 slot columns ---
+def _pick_value(metric: str, fp: str, pt: str):
+    return spark_max(when(
+        (col("normalized_line_item") == metric) &
+        (col("fiscal_period") == fp) &
+        (col("period_type") == pt),
+        col("value"),
+    ))
+
+def _pick_period_end(fp: str):
+    # Prefer instant (which is the actual quarter-end) then discrete, then cumulative.
+    return spark_max(when(
+        (col("fiscal_period") == fp) &
+        (col("period_type").isin("instant", "discrete", "ytd_6mo", "ytd_9mo")),
+        col("period_end_dt"),
+    ))
+
+_agg_exprs = []
+# Q1: discrete flows only (Q1 10-Qs never emit ytd concepts)
+for m in FLOW_METRICS:
+    _agg_exprs.append(_pick_value(m, "Q1", "discrete").alias(f"q1_{m}_disc"))
+# Q2: discrete (rare — F/GM/RIVN only) + ytd_6mo
+for m in FLOW_METRICS:
+    _agg_exprs.append(_pick_value(m, "Q2", "discrete").alias(f"q2_{m}_disc"))
+    _agg_exprs.append(_pick_value(m, "Q2", "ytd_6mo").alias(f"q2_{m}_ytd6"))
+# Q3: discrete + ytd_9mo
+for m in FLOW_METRICS:
+    _agg_exprs.append(_pick_value(m, "Q3", "discrete").alias(f"q3_{m}_disc"))
+    _agg_exprs.append(_pick_value(m, "Q3", "ytd_9mo").alias(f"q3_{m}_ytd9"))
+# Instants per quarter (point-in-time balance sheet values)
+for q in ["Q1", "Q2", "Q3"]:
+    qn = q.lower()
+    for m in INSTANT_METRICS:
+        _agg_exprs.append(_pick_value(m, q, "instant").alias(f"{qn}_{m}"))
+# Per-quarter period_end_date (quarter-end, from instant preferentially)
+for q in ["Q1", "Q2", "Q3"]:
+    _agg_exprs.append(_pick_period_end(q).alias(f"{q.lower()}_period_end"))
+
+df_wide = df_best.groupBy("ticker", "company_name", "fiscal_year").agg(*_agg_exprs)
+
+# --- 6. Unpivot into 3 rows per ticker/fy with discrete-first + YTD fallback ---
+def _derive_q2(m):
+    # If a filer tagged the 90-day Q2 concept directly, use it; otherwise
+    # back it out from YTD_6mo − Q1_90d.
+    return coalesce(col(f"q2_{m}_disc"), col(f"q2_{m}_ytd6") - col(f"q1_{m}_disc"))
+
+def _derive_q3(m):
+    # Q3 standalone = YTD_9mo − YTD_6mo (or direct discrete if tagged).
+    return coalesce(col(f"q3_{m}_disc"), col(f"q3_{m}_ytd9") - col(f"q2_{m}_ytd6"))
+
+df_q1 = df_wide.select(
+    col("ticker"), col("company_name"), col("fiscal_year"),
+    lit(1).alias("fiscal_quarter"),
+    col("q1_period_end").alias("period_end_date"),
+    col("q1_revenue_disc").alias("revenue"),
+    col("q1_net_income_disc").alias("net_income"),
+    col("q1_gross_profit_disc").alias("gross_profit_raw"),
+    col("q1_cost_of_revenue_disc").alias("cost_of_revenue"),
+    col("q1_operating_income_disc").alias("operating_income"),
+    col("q1_operating_cash_flow_disc").alias("operating_cash_flow"),
+    col("q1_rd_expense_disc").alias("rd_expense"),
+    col("q1_total_assets").alias("total_assets"),
+    col("q1_total_liabilities").alias("total_liabilities_raw"),
+    col("q1_equity").alias("equity"),
+    col("q1_short_term_debt").alias("short_term_debt"),
+    col("q1_long_term_debt").alias("long_term_debt"),
 )
+
+df_q2 = df_wide.select(
+    col("ticker"), col("company_name"), col("fiscal_year"),
+    lit(2).alias("fiscal_quarter"),
+    col("q2_period_end").alias("period_end_date"),
+    _derive_q2("revenue").alias("revenue"),
+    _derive_q2("net_income").alias("net_income"),
+    _derive_q2("gross_profit").alias("gross_profit_raw"),
+    _derive_q2("cost_of_revenue").alias("cost_of_revenue"),
+    _derive_q2("operating_income").alias("operating_income"),
+    _derive_q2("operating_cash_flow").alias("operating_cash_flow"),
+    _derive_q2("rd_expense").alias("rd_expense"),
+    col("q2_total_assets").alias("total_assets"),
+    col("q2_total_liabilities").alias("total_liabilities_raw"),
+    col("q2_equity").alias("equity"),
+    col("q2_short_term_debt").alias("short_term_debt"),
+    col("q2_long_term_debt").alias("long_term_debt"),
+)
+
+df_q3 = df_wide.select(
+    col("ticker"), col("company_name"), col("fiscal_year"),
+    lit(3).alias("fiscal_quarter"),
+    col("q3_period_end").alias("period_end_date"),
+    _derive_q3("revenue").alias("revenue"),
+    _derive_q3("net_income").alias("net_income"),
+    _derive_q3("gross_profit").alias("gross_profit_raw"),
+    _derive_q3("cost_of_revenue").alias("cost_of_revenue"),
+    _derive_q3("operating_income").alias("operating_income"),
+    _derive_q3("operating_cash_flow").alias("operating_cash_flow"),
+    _derive_q3("rd_expense").alias("rd_expense"),
+    col("q3_total_assets").alias("total_assets"),
+    col("q3_total_liabilities").alias("total_liabilities_raw"),
+    col("q3_equity").alias("equity"),
+    col("q3_short_term_debt").alias("short_term_debt"),
+    col("q3_long_term_debt").alias("long_term_debt"),
+)
+
+df_base = _reduce(lambda a, b: a.unionByName(b), [df_q1, df_q2, df_q3])
+# Drop (ticker, fy, fq) rows that have no period_end_date — i.e. the quarter
+# was never filed. Keeps the output tight and avoids ghost rows with all-NULL
+# balance sheet values.
+df_base = df_base.filter(col("period_end_date").isNotNull())
 
 # --- 6. Derived metrics ---
 df_metrics = (
