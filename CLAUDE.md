@@ -52,9 +52,9 @@ FinSage is a production-grade financial intelligence platform on Databricks. It 
 - **CRITICAL**: `fiscal_year` is stored as `double` — always cast with `int(fy)` when displaying.
 - Write strategy: **MERGE INTO on `ticker + fiscal_year + fiscal_quarter`**
 
-### `filing_chunks`
+### `filing_section_chunks`
 - LangChain text splitter chunks from Silver `filing_sections`
-- Source for Vector Search index
+- Source for Vector Search index (actual table name is `filing_section_chunks`, not `filing_chunks`)
 
 ### `filing_chunks_index`
 - Databricks Vector Search index (DELTA_SYNC, TRIGGERED pipeline)
@@ -64,8 +64,9 @@ FinSage is a production-grade financial intelligence platform on Databricks. It 
 - Filterable columns: `ticker`, `section_name`, `fiscal_year`
 
 ### `finsage_rag_agent`
-- UC-registered MLflow pyfunc model (current version: 4)
-- Deployed to Model Serving endpoint: `finsage_agent_endpoint`
+- UC-registered MLflow pyfunc model (current version: **8**, deployed and serving)
+- Deployed to Model Serving endpoint: `finsage_agent_endpoint` (state: `READY`, scaled-to-zero)
+- Redeploys are automated via the `finsage-log-and-deploy-agent` job (id `790463778829808`, created via AI Dev Kit 2026-04-20) — runs notebook `06_rag_agent.py` end-to-end on serverless
 
 ---
 
@@ -126,8 +127,8 @@ CATALOG = dbutils.widgets.get("catalog")
 ---
 
 ## What's Next (Pending)
-1. **Cell 12 live test** — verify `finsage_agent_endpoint` (version 4) answers correctly
-2. **`07_evaluation.py`** — MLflow RAG evaluation using `src/evaluation/ground_test.json` (10 questions, real answers need populating from Gold/Silver tables)
+1. ~~Cell 12 live test — verify `finsage_agent_endpoint` answers correctly~~ **DONE** (endpoint `READY`, serving v8)
+2. **Run `07_evaluation.py`** — MLflow GenAI eval over the 10-question curated set. Dataset coverage constraint: only 6 tickers have both metrics + vector chunks (AAPL, GOOGL, MA, MSFT, NVDA, TSLA); questions have been reshaped accordingly — do not re-introduce META, NFLX, WMT, JPM, AMZN, V for retrieval-based questions. Judge: `databricks-meta-llama-3-3-70b-instruct`. Custom scorers: `numerical_tolerance` (±1% on `numerical_lookup`), `citation_format` ([VERBATIM]/[SUMMARY] + [Source: ...] line).
 3. **`08_knowledge_graph.py`** — Entity extraction from MD&A/Risk Factors using Graphify
 4. **CI/CD** — GitHub Actions DAB pipeline (`.github/workflows/`) — deprioritized until core pipeline is stable
 
