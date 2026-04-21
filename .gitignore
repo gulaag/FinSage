@@ -15,3 +15,18 @@ raw_filings/
 .vscode/
 .idea/
 .DS_Store
+
+# AI dev tooling (local only)
+.agents/
+.ai-dev-kit/
+.claude/
+.cursor/
+.mcp.json
+.databricks-resources.json
+
+# Stray local artifacts
+april.html
+docs/file_list.html
+
+# Local-only symlink to sibling repo
+graphify_module
