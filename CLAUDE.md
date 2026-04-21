@@ -100,10 +100,12 @@ FinSage is a production-grade financial intelligence platform on Databricks. It 
 - **Tool loop**: max 5 iterations before forcing final answer
 
 ### Tools
-1. **`search_filings(query, ticker, section_name, fiscal_year, num_results, similarity_threshold)`**
-   - Semantic search over `filing_chunks_index`
+1. **`search_filings(query, ticker, section_name, fiscal_year, filing_type, num_results, similarity_threshold)`**
+   - Semantic search over `filing_chunks_index` (10-K + 10-Q chunks)
    - `fiscal_year` filter prevents multi-year chunk mixing
-   - Output format: `[Source: TICKER | FY{int(fy)} | Section]`
+   - `filing_type` ∈ {`10-K`, `10-Q`} scopes to annual vs interim; omit to search both
+   - `section_name` enum: `Business`, `Risk Factors` (10-K only), `MD&A` (both), `Risk Factors Updates` (10-Q Part II Item 1A)
+   - Output format: `[Source: TICKER | FY{int(fy)} | FilingType | Section]`
 
 2. **`get_company_metrics(ticker, fiscal_year_start, fiscal_year_end)`** — ANNUAL
    - In-memory lookup from `METRICS_CACHE` (loaded at `load_context` — no SQL warehouse needed in serving)

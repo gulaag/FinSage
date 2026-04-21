@@ -136,18 +136,29 @@ print(f"[CACHE] annual: {len(METRICS_CACHE)} tickers | quarterly: {len(QUARTERLY
 
 # ── 4. Tool: search_filings ───────────────────────────────────────────────────
 
+# Section names valid across both filing types. Business and Risk Factors are
+# 10-K-only; MD&A appears in both 10-K and 10-Q; Risk Factors Updates is 10-Q
+# Part II Item 1A (only present when the filer actually updates risks mid-year).
+VALID_SECTION_NAMES = ("Business", "Risk Factors", "MD&A", "Risk Factors Updates")
+VALID_FILING_TYPES  = ("10-K", "10-Q")
+
 @mlflow.trace(name="search_filings", span_type="TOOL")
 def search_filings(
     query: str,
     ticker: str = None,
     section_name: str = None,
     fiscal_year: int = None,
+    filing_type: str = None,
     num_results: int = NUM_RESULTS,
     similarity_threshold: float = SIMILARITY_THRESHOLD,
 ) -> str:
     """
-    Semantic search over SEC 10-K filing sections.
+    Semantic search over SEC 10-K and 10-Q filing sections.
     Returns relevant passages with source metadata.
+
+    10-K sections: Business, Risk Factors, MD&A.
+    10-Q sections: MD&A, Risk Factors Updates (when the filer includes them).
+    Pass filing_type='10-K' or '10-Q' to scope results to annual vs interim.
     """
     vsc = VectorSearchClient(disable_notice=True)
     index = vsc.get_index(endpoint_name=VS_ENDPOINT, index_name=VS_INDEX_NAME)
@@ -155,15 +166,17 @@ def search_filings(
     filters = {}
     if ticker:
         filters["ticker"] = ticker.upper()
-    if section_name and section_name in ("Business", "Risk Factors", "MD&A"):
+    if section_name and section_name in VALID_SECTION_NAMES:
         filters["section_name"] = section_name
     if fiscal_year:
         filters["fiscal_year"] = fiscal_year
+    if filing_type and filing_type in VALID_FILING_TYPES:
+        filters["filing_type"] = filing_type
 
     try:
         results = index.similarity_search(
             query_text=query,
-            columns=["ticker", "fiscal_year", "section_name", "chunk_text"],
+            columns=["ticker", "fiscal_year", "filing_type", "section_name", "chunk_text"],
             filters=filters if filters else None,
             num_results=num_results,
             query_type="ANN",
@@ -178,12 +191,12 @@ def search_filings(
 
     passages = []
     for row in data:
-        ticker_val, fy, section, text = row[0], row[1], row[2], row[3]
-        score = row[4] if len(row) > 4 else None
+        ticker_val, fy, f_type, section, text = row[0], row[1], row[2], row[3], row[4]
+        score = row[5] if len(row) > 5 else None
         if score is not None and score < similarity_threshold:
             continue
         passages.append(
-            f"[Source: {ticker_val} | FY{int(fy)} | {section}]\n{text[:1200]}"
+            f"[Source: {ticker_val} | FY{int(fy)} | {f_type} | {section}]\n{text[:1200]}"
         )
 
     if not passages:
@@ -370,9 +383,11 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "search_filings",
             "description": (
-                "Semantically search SEC 10-K filing text (Business, Risk Factors, MD&A sections). "
+                "Semantically search SEC 10-K and 10-Q filing text. 10-K sections: Business, "
+                "Risk Factors, MD&A. 10-Q sections: MD&A and (when present) Risk Factors Updates. "
                 "Use for qualitative questions about strategy, risks, products, competition, regulation, "
-                "supply chain, or anything requiring direct quotes from annual reports."
+                "supply chain, or anything requiring direct quotes from annual or interim filings. "
+                "Scope to filing_type='10-K' for annual language and '10-Q' for interim commentary."
             ),
             "parameters": {
                 "type": "object",
@@ -387,12 +402,26 @@ TOOL_SCHEMAS = [
                     },
                     "section_name": {
                         "type": "string",
-                        "enum": ["Business", "Risk Factors", "MD&A"],
-                        "description": "Optional section filter. Use 'Risk Factors' for risk/threat questions, 'MD&A' for management commentary, 'Business' for strategy/products."
+                        "enum": ["Business", "Risk Factors", "MD&A", "Risk Factors Updates"],
+                        "description": (
+                            "Optional section filter. 'Business' (10-K only): strategy, products, "
+                            "segments. 'Risk Factors' (10-K only): annual risk disclosure. "
+                            "'MD&A' (both 10-K and 10-Q): management's discussion of results. "
+                            "'Risk Factors Updates' (10-Q Part II Item 1A): mid-year amendments "
+                            "to the annual risk factors."
+                        )
+                    },
+                    "filing_type": {
+                        "type": "string",
+                        "enum": ["10-K", "10-Q"],
+                        "description": (
+                            "Optional filing-type filter. Use '10-K' for annual-report language, "
+                            "'10-Q' for interim/quarterly commentary. Omit to search both."
+                        )
                     },
                     "fiscal_year": {
                         "type": "integer",
-                        "description": "Optional fiscal year to restrict search (e.g. 2024). Use when the question specifies 'most recent', 'latest', or a specific year. First call get_company_metrics to find the latest available year for that ticker, then pass it here."
+                        "description": "Optional fiscal year to restrict search (e.g. 2024). Use when the question specifies 'most recent', 'latest', or a specific year. First call get_company_metrics (or get_quarterly_metrics for interim questions) to find the latest available year for that ticker, then pass it here."
                     },
                     "num_results": {
                         "type": "integer",
