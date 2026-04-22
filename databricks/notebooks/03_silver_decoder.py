@@ -26,10 +26,7 @@ print(f"[CONFIG] catalog={CATALOG} | env={ENV} | start_date={START_DATE} | ticke
 
 # COMMAND ----------
 
-# ── Install sec-parser (DOM-aware SEC 10-K / 10-Q section extractor) ─────────
-# Used in Section B. Section A (XBRL flattening) has no new deps but the pip
-# install is placed here so a single restartPython covers both sections.
-# MAGIC %pip install --quiet sec-parser lxml
+# MAGIC %pip install --quiet sec-parser
 # MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------

@@ -41,7 +41,7 @@ FinSage is a production-grade financial intelligence platform on Databricks. It 
 - Write strategy: **MERGE INTO on `section_id`** (idempotent). `section_id = sha2(filing_id || section_name)` — `filing_id` is already unique per SEC accession so no form tag needed in the hash
 - `filing_type` column was added post-v1; the write uses `spark.databricks.delta.schema.autoMerge.enabled=true` to land the column on an existing table
 - **CDF enabled** (`delta.enableChangeDataFeed = true`) — required for Vector Search incremental sync
-- Cluster dependency: `sec-parser>=0.58.0` and `lxml>=5.0.0` installed via `%pip install` at the top of notebook 03. Also pinned in `requirements.txt`.
+- Cluster dependency: `sec-parser>=0.58.0` installed via `%pip install` at the top of notebook 03 (don't pin `lxml` — Databricks runtime ships a native-extension lxml and forcing an upgrade breaks the kernel on `restartPython()` with exit code 1 and empty stdout; sec-parser's install_requires handles lxml transitively).
 
 ### `financial_statements`
 - Maps US-GAAP XBRL JSON keys → normalized canonical metrics (`revenue`, `net_income`, `equity`, etc.)
