@@ -26,7 +26,21 @@ print(f"[CONFIG] catalog={CATALOG} | env={ENV} | start_date={START_DATE} | ticke
 
 # COMMAND ----------
 
+# ── Install sec-parser (DOM-aware SEC 10-K / 10-Q section extractor) ─────────
+# Used in Section B. Section A (XBRL flattening) has no new deps but the pip
+# install is placed here so a single restartPython covers both sections.
+# MAGIC %pip install --quiet sec-parser lxml
+# MAGIC dbutils.library.restartPython()
+
+# COMMAND ----------
+
 # ── A) XBRL CompanyFacts → financial_statements ─────────────────────────────
+# Re-read widgets — restartPython() wipes Python state but widget values persist.
+CATALOG       = dbutils.widgets.get("catalog")
+ENV           = dbutils.widgets.get("env")
+START_DATE    = dbutils.widgets.get("start_date")
+TICKER_FILTER = dbutils.widgets.get("ticker_filter")
+TICKER_SUBSET = [t.strip() for t in TICKER_FILTER.split(",") if t.strip()] if TICKER_FILTER else []
 
 from pyspark.sql import Row
 from pyspark.sql.functions import (
@@ -231,16 +245,51 @@ print("Silver financial_statements processing complete.")
 
 # COMMAND ----------
 
-# ── B) 10-K text sections → filing_sections ─────────────────────────────────
+# ── B) 10-K / 10-Q section extraction → filing_sections ─────────────────────
+# Primary:  sec-parser DOM-aware extraction. Operates on the iXBRL HTML tree,
+#           so it handles inline-XBRL span fragmentation, decodes HTML entities
+#           natively (&#160;, &#8217;, &mdash; …), drops page headers/footers
+#           by semantic class, and cleanly separates Item headings from body.
+# Fallback: the legacy regex extractor on entity-decoded flat text. Retained as
+#           a safety net for any future filing shape sec-parser might refuse.
+#
+# Output schema (unchanged): section_id, filing_id, ticker, fiscal_year,
+# filing_type, section_name, section_text, word_count, parsed_at.
+# Merge key: section_id = sha256(filing_id || section_name).
 
 from pyspark.sql.functions import (
-    udf, col, decode, expr, regexp_replace, explode,
-    current_timestamp, lit, row_number, sha2, concat_ws,
+    udf, col, current_timestamp, lit, row_number, sha2, concat_ws, explode,
+    count as spark_count,
 )
 from pyspark.sql.window import Window
-from pyspark.sql.types import ArrayType, StructType, StructField, StringType, IntegerType
+from pyspark.sql.types import (
+    ArrayType, StructType, StructField, StringType, IntegerType,
+)
+from delta.tables import DeltaTable
 import re
 
+# Defensive widget re-read so Section B can be run in isolation after
+# restartPython wipes state.
+CATALOG = dbutils.widgets.get("catalog")
+
+
+# ── Canonical section taxonomy (mirrors VALID_SECTION_NAMES in 06_rag_agent) ─
+# min_words for 10-Q "Risk Factors Updates" is intentionally low: most filers
+# use 1-2 sentence pro-forma "no material change since the 10-K" boilerplate
+# when nothing has changed, and we want to capture those as valid sections.
+CANONICAL_10K = {
+    "Business":     {"item_re": re.compile(r"^\s*item\s*1\b(?![a-c])", re.I), "required": True,  "min_words": 200},
+    "Risk Factors": {"item_re": re.compile(r"^\s*item\s*1a\b",         re.I), "required": True,  "min_words": 400},
+    "MD&A":         {"item_re": re.compile(r"^\s*item\s*7\b(?!a)",      re.I), "required": True,  "min_words": 400},
+}
+CANONICAL_10Q = {
+    "MD&A":                 {"item_re": re.compile(r"^\s*item\s*2\b(?!\s*a)", re.I), "required": True,  "min_words": 150},
+    "Risk Factors Updates": {"item_re": re.compile(r"^\s*item\s*1a\b",        re.I), "required": False, "min_words": 10},
+}
+SECTIONS_BY_FORM = {"10-K": CANONICAL_10K, "10-Q": CANONICAL_10Q}
+
+
+# ── Legacy regex rules retained for the fallback path only ──────────────────
 SECTION_RULES_10K = {
     "Business": {
         "start_patterns": [r"(?im)^[\s>\-\.\(\)\d]{0,12}item\s+1\b(?!\s*[ab]\b)"],
@@ -261,11 +310,6 @@ SECTION_RULES_10K = {
         "min_words": 400, "fallback_chars": 350000,
     },
 }
-
-# 10-Q structure differs: MD&A is Part I Item 2 (not Item 7), Risk Factor updates
-# are Part II Item 1A (only if material changes since last 10-K). Item 1 in a 10-Q
-# is the condensed financial statements — not narrative Business discussion —
-# so we intentionally do NOT extract "Business" from 10-Q filings.
 SECTION_RULES_10Q = {
     "MD&A": {
         "start_patterns": [r"(?im)^[\s>\-\.\(\)\d]{0,12}item\s+2\b(?!\s*a\b)"],
@@ -283,88 +327,221 @@ SECTION_RULES_10Q = {
         "min_words": 80, "fallback_chars": 100000,
     },
 }
+SECTION_RULES_BY_FORM = {"10-K": SECTION_RULES_10K, "10-Q": SECTION_RULES_10Q}
 
-SECTION_RULES_BY_FORM = {
-    "10-K": SECTION_RULES_10K,
-    "10-Q": SECTION_RULES_10Q,
-}
+SGML_DOC_RE = re.compile(r"<DOCUMENT>.*?</DOCUMENT>", re.DOTALL)
 
-def _collect_positions(patterns, text):
-    return sorted(set([
-        match.start()
-        for pattern in patterns
-        for match in re.finditer(pattern, text)
-    ]))
 
-def _normalize_text(text):
-    if not text:
-        return ""
-    text = text.replace("\xa0", " ").replace("\r", "\n")
-    text = re.sub(r"[ \t\f\v]+", " ", text)
-    return re.sub(r"\n{3,}", "\n\n", text).strip()
+def _extract_main_doc(sgml_text, form_type):
+    """Unwrap the SEC SGML submission and return the main iXBRL HTML document.
 
-def _choose_best_block(text, rule):
-    starts     = _collect_positions(rule["start_patterns"], text)
-    ends       = _collect_positions(rule["end_patterns"],   text)
-    if not starts:
-        return None
-    doc_len, best, best_score = max(len(text), 1), None, -1
-    for s in starts:
-        end_candidates = [e for e in ends if e > s + 25]
-        e = end_candidates[0] if end_candidates else min(len(text), s + rule["fallback_chars"])
-        candidate  = text[s:e].strip()
-        word_count = len(candidate.split())
-        if word_count < rule["min_words"]:
+    A `full-submission.txt` can contain many <DOCUMENT> blocks (cover page,
+    exhibits, XBRL schemas). We match by <TYPE> to pick the 10-K or 10-Q
+    body deterministically — safer than the previous 'first document wins'
+    heuristic, which could grab a cover-page doc before the main filing.
+    """
+    for block in SGML_DOC_RE.findall(sgml_text):
+        m_type = re.search(r"<TYPE>([^\s<]+)", block)
+        if not m_type or m_type.group(1).strip().upper() != form_type.upper():
             continue
-        score = word_count + ((s / doc_len) * 250)
-        if score > best_score:
-            best_score = score
-            best = {"section_text": candidate, "word_count": word_count, "start_pos": s, "end_pos": e}
-    return best
+        m_text = re.search(r"<TEXT>(.*?)</TEXT>", block, re.DOTALL)
+        if m_text:
+            body = m_text.group(1)
+            body = re.sub(r"^\s*<XBRL>", "", body, count=1)
+            body = re.sub(r"</XBRL>\s*$", "", body, count=1)
+            return body.strip()
+    return ""
 
-def extract_sections_hardened(clean_text, filing_type):
-    if not clean_text:
-        return {"sections": [], "error": "Empty text after cleaning"}
-    rules = SECTION_RULES_BY_FORM.get(filing_type)
-    if rules is None:
-        return {"sections": [], "error": f"Unsupported filing_type: {filing_type}"}
+
+def _sec_parser_extract(html, form_type):
+    """DOM-aware section extraction via sec-parser.
+
+    sec-parser v0.58 ships one Edgar10QParser that handles both forms; the
+    10-K parse emits benign 'Invalid section type for part2itemN' warnings
+    (its section-type enum is scoped to 10-Q Items 1-6) which we suppress —
+    the elements are still classified correctly as TitleElement / TextElement.
+    """
+    import warnings
+    import sec_parser as sp
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        elements = sp.Edgar10QParser().parse(html)
+
+    skip_types = (
+        sp.PageHeaderElement,
+        sp.PageNumberElement,
+        sp.EmptyElement,
+        sp.IrrelevantElement,
+        sp.NotYetClassifiedElement,
+    )
+    item_re = re.compile(r"^\s*(?:part\s+i?i?i?\s+)?item\s*\d+[a-c]?\b", re.I)
+
+    # sec-parser only promotes some Items to TopSectionTitle (Items 1, 2, 5, 6
+    # for 10-K; all Items for 10-Q). For 10-K Items 1A / 7 / 7A etc. we scan
+    # TitleElement as well. The union, ordered by doc position, is our anchor
+    # list.
+    headings = []
+    for i, el in enumerate(elements):
+        if isinstance(el, sp.TopSectionTitle):
+            headings.append((i, el))
+        elif isinstance(el, sp.TitleElement) and item_re.match(el.text or ""):
+            headings.append((i, el))
+    headings.sort(key=lambda pair: pair[0])
+
+    def _find_heading(rule_re):
+        for i, el in headings:
+            if rule_re.search(el.text or ""):
+                return i, el
+        return None, None
+
+    def _body_between(start_idx):
+        out = []
+        for j in range(start_idx + 1, len(elements)):
+            el = elements[j]
+            if isinstance(el, sp.TopSectionTitle):
+                break
+            if isinstance(el, sp.TitleElement) and item_re.match(el.text or ""):
+                break
+            if isinstance(el, skip_types):
+                continue
+            if hasattr(el, "text") and el.text:
+                out.append(el.text.strip())
+        return "\n".join(out).strip()
+
+    results = []
+    for name, rule in SECTIONS_BY_FORM.get(form_type, {}).items():
+        idx, heading = _find_heading(rule["item_re"])
+        if heading is None:
+            continue
+        body = _body_between(idx)
+        wc = len(body.split())
+        if wc < rule["min_words"]:
+            continue
+        results.append({"section_name": name, "section_text": body, "word_count": wc})
+    return results
+
+
+def _regex_fallback_extract(raw_text, form_type):
+    """Legacy regex extractor on entity-decoded, tag-stripped flat text.
+
+    Used only when sec-parser returns zero sections or raises. The critical
+    fix vs. the old in-flow cleaner is html.unescape() upfront — that alone
+    would have recovered AMZN / V / MCD / JPM coverage, but sec-parser still
+    wins on page-footer removal and heading / body separation.
+    """
+    import html as _html
+
+    text = _html.unescape(raw_text or "")
+    text = re.sub(r"(?is)<img[^>]*src=[\"']data:image/[^>]*>", " ", text)
+    text = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", text)
+    text = re.sub(r"(?is)<style[^>]*>.*?</style>",   " ", text)
+    text = re.sub(
+        r"(?i)</?(div|p|br|tr|li|table|tbody|thead|tfoot|td|th|h1|h2|h3|h4|h5|h6)[^>]*>",
+        "\n",
+        text,
+    )
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = text.replace("\xa0", " ")
+    text = re.sub(r"[\t\x0B\f\r ]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+
+    rules = SECTION_RULES_BY_FORM.get(form_type, {})
+    results = []
+    for name, rule in rules.items():
+        starts = sorted({m.start() for p in rule["start_patterns"] for m in re.finditer(p, text)})
+        ends   = sorted({m.start() for p in rule["end_patterns"]   for m in re.finditer(p, text)})
+        if not starts:
+            continue
+        best, best_score = None, -1
+        doc_len = max(len(text), 1)
+        for s in starts:
+            end_candidates = [e for e in ends if e > s + 25]
+            e = end_candidates[0] if end_candidates else min(len(text), s + rule["fallback_chars"])
+            candidate = text[s:e].strip()
+            wc = len(candidate.split())
+            if wc < rule["min_words"]:
+                continue
+            score = wc + ((s / doc_len) * 250)
+            if score > best_score:
+                best_score = score
+                best = {"section_name": name, "section_text": candidate, "word_count": wc}
+        if best:
+            results.append(best)
+    return results
+
+
+def extract_sections(content_bytes, filing_type):
+    """Row UDF: returns (sections[], error, extractor_used).
+
+    Tries sec-parser first. On empty result or exception, falls back to the
+    legacy regex extractor. `extractor_used` is one of
+    {"sec-parser", "regex-fallback", None} — None means neither path yielded
+    any sections (error_message is populated).
+    """
+    if content_bytes is None:
+        return ([], "Empty content", None)
     try:
-        text     = _normalize_text(clean_text)
-        sections = []
-        for section_name, rule in rules.items():
-            best_block = _choose_best_block(text, rule)
-            if best_block:
-                sections.append({
-                    "section_name": section_name,
-                    "section_text": best_block["section_text"],
-                    "word_count":   best_block["word_count"],
-                })
-        # For 10-K all three sections are required; for 10-Q only MD&A is required
-        # ("Risk Factors Updates" is present only when management flags changes).
-        if filing_type == "10-K":
-            required = {"Business", "Risk Factors", "MD&A"}
-        else:
-            required = {"MD&A"}
-        missing = sorted(required - {s["section_name"] for s in sections})
-        if missing:
-            return {"sections": sections, "error": f"Missing sections: {', '.join(missing)}"}
-        return {"sections": sections, "error": None}
+        raw = (
+            content_bytes.decode("utf-8", errors="replace")
+            if isinstance(content_bytes, (bytes, bytearray))
+            else str(content_bytes)
+        )
     except Exception as e:
-        return {"sections": [], "error": f"Section extraction error: {str(e)}"}
+        return ([], f"Decode error: {e}", None)
 
-split_udf = udf(
-    extract_sections_hardened,
-    StructType([
-        StructField("sections", ArrayType(StructType([
-            StructField("section_name", StringType()),
-            StructField("section_text", StringType()),
-            StructField("word_count",   IntegerType()),
-        ]))),
-        StructField("error", StringType()),
-    ])
-)
+    if filing_type not in SECTIONS_BY_FORM:
+        return ([], f"Unsupported filing_type: {filing_type}", None)
 
-df_bronze_clean = (
+    html = _extract_main_doc(raw, filing_type)
+    if not html:
+        return ([], "Main iXBRL document not found in SGML wrapper", None)
+
+    sec_parser_err = None
+    try:
+        sections = _sec_parser_extract(html, filing_type)
+    except Exception as e:
+        sec_parser_err = f"sec-parser error: {type(e).__name__}: {e}"
+        sections = []
+
+    if sections:
+        required = {n for n, r in SECTIONS_BY_FORM[filing_type].items() if r["required"]}
+        missing = sorted(required - {s["section_name"] for s in sections})
+        err = f"Missing required sections: {', '.join(missing)}" if missing else None
+        return (sections, err, "sec-parser")
+
+    # Fallback path
+    try:
+        sections = _regex_fallback_extract(raw, filing_type)
+    except Exception as e:
+        return (
+            [],
+            f"Both extractors failed. sec_parser_err={sec_parser_err}; regex_err={e}",
+            None,
+        )
+
+    if not sections:
+        err = sec_parser_err or "No sections found by either extractor"
+        return ([], err, None)
+
+    required = {n for n, r in SECTIONS_BY_FORM[filing_type].items() if r["required"]}
+    missing = sorted(required - {s["section_name"] for s in sections})
+    err = f"Missing required sections (fallback): {', '.join(missing)}" if missing else None
+    return (sections, err, "regex-fallback")
+
+
+extract_udf_schema = StructType([
+    StructField("sections", ArrayType(StructType([
+        StructField("section_name", StringType()),
+        StructField("section_text", StringType()),
+        StructField("word_count",   IntegerType()),
+    ]))),
+    StructField("error",          StringType()),
+    StructField("extractor_used", StringType()),
+])
+extract_udf = udf(extract_sections, extract_udf_schema)
+
+df_bronze = (
     spark.table(f"{CATALOG}.finsage_bronze.filings")
     .filter(col("filing_type").isin("10-K", "10-Q"))
     .withColumn("rn", row_number().over(
@@ -374,46 +551,57 @@ df_bronze_clean = (
     .drop("rn")
 )
 
-df_processed = (
-    df_bronze_clean
-    .withColumn("raw_text",       decode(col("content"), "UTF-8"))
-    .withColumn("main_doc",       expr("substring_index(raw_text, '</DOCUMENT>', 1)"))
-    # Strip base64-encoded images, scripts, and styles before text extraction
-    .withColumn("no_images",      regexp_replace(col("main_doc"),  r"(?is)<img[^>]*src=[\"']data:image/[^>]*>", " "))
-    .withColumn("no_script",      regexp_replace(col("no_images"), r"(?is)<script[^>]*>.*?</script>",          " "))
-    .withColumn("no_style",       regexp_replace(col("no_script"), r"(?is)<style[^>]*>.*?</style>",            " "))
-    .withColumn("text_with_breaks", regexp_replace(col("no_style"),
-        r"(?i)</?(div|p|br|tr|li|table|tbody|thead|tfoot|td|th|h1|h2|h3|h4|h5|h6)[^>]*>", "\n"))
-    .withColumn("no_html",        regexp_replace(col("text_with_breaks"), "<[^>]+>", " "))
-    .withColumn("clean_text",     regexp_replace(col("no_html"),   "\u00a0", " "))
-    .withColumn("clean_text",     regexp_replace(col("clean_text"), r"[\t\x0B\f\r ]+", " "))
-    .withColumn("clean_text",     regexp_replace(col("clean_text"), r"\n{3,}", "\n\n"))
-    .withColumn("udf_result",     split_udf(col("clean_text"), col("filing_type")))
-    .select("filing_id", "ticker", "fiscal_year", "filing_type", "file_path",
-            "udf_result.sections", "udf_result.error")
+# The UDF now consumes raw BINARY content directly — all SGML unwrap, entity
+# decoding, and iXBRL tree parsing happens inside sec-parser, so the earlier
+# chain of Spark SQL regexp_replace cleaning steps is gone.
+df_extracted = (
+    df_bronze
+    .withColumn("udf_result", extract_udf(col("content"), col("filing_type")))
+    .select(
+        "filing_id", "ticker", "fiscal_year", "filing_type", "file_path",
+        col("udf_result.sections").alias("sections"),
+        col("udf_result.error").alias("error"),
+        col("udf_result.extractor_used").alias("extractor_used"),
+    )
 )
-df_processed.cache()
+df_extracted.cache()
 
-df_errors = df_processed.filter(col("error").isNotNull())
-if df_errors.count() > 0:
-    print(f"Warning: {df_errors.count()} filings had missing sections. Logged to ingestion_errors.")
-    df_errors.select(
-        sha2(concat_ws("||", col("file_path"), col("error")), 256).alias("error_id"),
-        lit("silver_section_extraction").alias("source_system"),
-        lit(None).cast("string").alias("source_url"),
-        col("file_path"),
-        lit("parse_failure").alias("error_type"),
-        col("error").alias("error_message"),
-        lit(0).alias("retry_count"),
-        current_timestamp().alias("failed_at"),
-    ).write.format("delta").mode("append").saveAsTable("main.finsage_bronze.ingestion_errors")
+# Observability: how many filings did each extractor handle?
+extractor_stats = (
+    df_extracted.filter(col("extractor_used").isNotNull())
+    .groupBy("extractor_used").agg(spark_count("*").alias("n_filings"))
+    .collect()
+)
+if extractor_stats:
+    print("[EXTRACTOR USAGE]")
+    for row in extractor_stats:
+        print(f"  {row['extractor_used']:<16}: {row['n_filings']:>5} filings")
+
+df_errors = df_extracted.filter(col("error").isNotNull())
+n_errors = df_errors.count()
+if n_errors > 0:
+    print(f"Warning: {n_errors} filings hit section extraction errors. Logging to ingestion_errors.")
+    (
+        df_errors.select(
+            sha2(concat_ws("||", col("file_path"), col("error")), 256).alias("error_id"),
+            lit("silver_section_extraction").alias("source_system"),
+            lit(None).cast("string").alias("source_url"),
+            col("file_path"),
+            lit("parse_failure").alias("error_type"),
+            col("error").alias("error_message"),
+            lit(0).alias("retry_count"),
+            current_timestamp().alias("failed_at"),
+        )
+        .write.format("delta").mode("append")
+        .saveAsTable(f"{CATALOG}.finsage_bronze.ingestion_errors")
+    )
 
 df_final_sections = (
-    df_processed.filter(col("error").isNull())
+    df_extracted.filter(col("sections").isNotNull())
     .withColumn("sec", explode("sections"))
     .select(
-        # filing_id is already unique per SEC accession, so (filing_id, section_name)
-        # yields a unique section_id even across 10-K/10-Q without an explicit form tag.
+        # filing_id is already unique per SEC accession, so
+        # (filing_id, section_name) yields a unique section_id across 10-K/10-Q.
         sha2(concat_ws("||", col("filing_id"), col("sec.section_name")), 256).alias("section_id"),
         "filing_id", "ticker", "fiscal_year", "filing_type",
         col("sec.section_name").alias("section_name"),
@@ -423,7 +611,6 @@ df_final_sections = (
     )
 )
 
-# Enable schema autoMerge so adding filing_type on an existing table is a no-op rebuild
 spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
 
 filing_sections_table = f"{CATALOG}.finsage_silver.filing_sections"
@@ -436,7 +623,8 @@ else:
     df_final_sections.write.format("delta").saveAsTable(filing_sections_table)
     spark.sql(f"ALTER TABLE {filing_sections_table} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)")
     print("Silver filing_sections table created with CDF enabled.")
-df_processed.unpersist()
+
+df_extracted.unpersist()
 
 # COMMAND ----------
 

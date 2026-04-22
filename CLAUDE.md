@@ -31,15 +31,17 @@ FinSage is a production-grade financial intelligence platform on Databricks. It 
 ## Layer 2: Silver (`main.finsage_silver`)
 
 ### `filing_sections`
-- 10-K sections: **"Business"**, **"Risk Factors"**, **"MD&A"** (regex rules `SECTION_RULES_10K`)
-- 10-Q sections: **"MD&A"** (Part I, Item 2) and optionally **"Risk Factors Updates"** (Part II, Item 1A when present) — rules `SECTION_RULES_10Q`
-- Branch in the UDF chooses ruleset by `filing_type` via `SECTION_RULES_BY_FORM`
+- 10-K sections: **"Business"**, **"Risk Factors"**, **"MD&A"** (taxonomy `CANONICAL_10K`)
+- 10-Q sections: **"MD&A"** (Part I, Item 2) and optionally **"Risk Factors Updates"** (Part II, Item 1A when present) — taxonomy `CANONICAL_10Q`
+- **Extractor**: `sec-parser` (DOM-aware iXBRL parser) is the primary path; a legacy regex extractor on entity-decoded flat text is retained as a fallback if sec-parser returns zero sections or raises. `extractor_used ∈ {"sec-parser", "regex-fallback"}` is logged per filing for observability (printed by notebook 03, not persisted).
+- Why the swap: the old regex-on-flattened-HTML path was 100% broken on AMZN/V (0 sections for ~50 filings each) and had thousands of partial failures across the other 28 tickers. Root causes: unescaped `&#160;`/`&#8217;` entities breaking the `item\s+1\b` anchors; iXBRL span fragmentation putting "Item" and "1" in separate DOM elements; page-footer leakage into section bodies. sec-parser operates on the DOM so all three fall away. See `03_silver_decoder.py` module docstring for the full rationale.
+- SGML unwrap is now by `<TYPE>` match (picks the main 10-K/10-Q DOCUMENT block deterministically) rather than "first document wins" — matters for filings where a cover-page iXBRL doc precedes the main body.
 - `filing_type` is persisted on the row so downstream chunking / retrieval can filter annual vs. interim
-- Strips Base64 images, scripts, styles, HTML tags via `regexp_replace`
-- Records word counts per section; parsing errors go to `ingestion_errors`
+- Records word counts per section; parsing errors go to `ingestion_errors` with `error_type='parse_failure'` and a message that distinguishes sec-parser-only vs. fallback-path failures
 - Write strategy: **MERGE INTO on `section_id`** (idempotent). `section_id = sha2(filing_id || section_name)` — `filing_id` is already unique per SEC accession so no form tag needed in the hash
-- `filing_type` column was added post-v1; the write now uses `spark.databricks.delta.schema.autoMerge.enabled=true` to land the column on an existing table
+- `filing_type` column was added post-v1; the write uses `spark.databricks.delta.schema.autoMerge.enabled=true` to land the column on an existing table
 - **CDF enabled** (`delta.enableChangeDataFeed = true`) — required for Vector Search incremental sync
+- Cluster dependency: `sec-parser>=0.58.0` and `lxml>=5.0.0` installed via `%pip install` at the top of notebook 03. Also pinned in `requirements.txt`.
 
 ### `financial_statements`
 - Maps US-GAAP XBRL JSON keys → normalized canonical metrics (`revenue`, `net_income`, `equity`, etc.)
