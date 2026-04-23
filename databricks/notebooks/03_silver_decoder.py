@@ -26,7 +26,7 @@ print(f"[CONFIG] catalog={CATALOG} | env={ENV} | start_date={START_DATE} | ticke
 
 # COMMAND ----------
 
-# MAGIC %pip install --quiet sec-parser
+# MAGIC %pip install --quiet sec-parser "numpy<2"
 # MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------

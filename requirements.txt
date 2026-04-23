@@ -24,11 +24,18 @@ langchain-text-splitters>=0.0.1
 # SEC filing parsing (Silver section extractor)
 # DOM-aware iXBRL / HTML parser — replaces the legacy regex extractor in
 # 03_silver_decoder.py. Handles HTML entities, inline-XBRL span fragmentation,
-# and page-header/footer removal natively. Do NOT pin lxml here: Databricks
-# runtime ships a native-extension lxml and forcing an upgrade breaks the
-# kernel (exit code 1 on restartPython). sec-parser's own install_requires
-# handles lxml transitively.
+# and page-header/footer removal natively.
+#
+# Two constraints are necessary on Databricks runtime (DBR 14.x–15.x):
+#   - Do NOT pin lxml: the runtime ships a native-extension lxml and forcing
+#     an upgrade breaks the kernel. sec-parser handles lxml transitively.
+#   - Pin numpy<2: sec-parser pulls in pandas, and a fresh pandas install
+#     transitively upgrades NumPy to 2.x. The runtime pyarrow C extension is
+#     compiled for NumPy 1.x ABI and fails to import under NumPy 2.x, which
+#     crashes the kernel on restartPython. Remove this pin when DBR ships
+#     a NumPy-2.x-compatible pyarrow (DBR 16+).
 sec-parser>=0.58.0
+numpy<2
 
 # ---------------------------------------------------------------------------
 # PDF / document parsing

@@ -41,7 +41,9 @@ FinSage is a production-grade financial intelligence platform on Databricks. It 
 - Write strategy: **MERGE INTO on `section_id`** (idempotent). `section_id = sha2(filing_id || section_name)` — `filing_id` is already unique per SEC accession so no form tag needed in the hash
 - `filing_type` column was added post-v1; the write uses `spark.databricks.delta.schema.autoMerge.enabled=true` to land the column on an existing table
 - **CDF enabled** (`delta.enableChangeDataFeed = true`) — required for Vector Search incremental sync
-- Cluster dependency: `sec-parser>=0.58.0` installed via `%pip install` at the top of notebook 03 (don't pin `lxml` — Databricks runtime ships a native-extension lxml and forcing an upgrade breaks the kernel on `restartPython()` with exit code 1 and empty stdout; sec-parser's install_requires handles lxml transitively).
+- Cluster dependency: `sec-parser>=0.58.0` installed via `%pip install --quiet sec-parser "numpy<2"` at the top of notebook 03. Two gotchas the pin guards against:
+  - **Don't pin `lxml`** — DBR ships a native-extension lxml; forcing an upgrade replaces the binary with an ABI-mismatched wheel and breaks the kernel on `restartPython()` with exit code 1 and empty stdout.
+  - **`numpy<2` is critical** — `sec-parser` declares `pandas` as a dep, and pip's resolver will transitively upgrade NumPy to 2.x when installing a fresh pandas. DBR 14.x's pyarrow C extension is compiled against NumPy 1.x ABI and fails to import under NumPy 2.x (`AttributeError: _ARRAY_API not found`), which crashes the kernel on boot when `dbruntime.PipMagicOverrides` imports pandas → pyarrow. Pinning `numpy<2` keeps the runtime's NumPy 1.x and forces pip to resolve a pandas compatible with it. Remove this pin only after the cluster runtime advertises pyarrow compiled for NumPy 2.x (DBR 16+).
 
 ### `financial_statements`
 - Maps US-GAAP XBRL JSON keys → normalized canonical metrics (`revenue`, `net_income`, `equity`, etc.)
