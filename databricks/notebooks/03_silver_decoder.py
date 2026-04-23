@@ -387,10 +387,23 @@ def _sec_parser_extract(html, form_type):
     headings.sort(key=lambda pair: pair[0])
 
     def _find_heading(rule_re):
-        for i, el in headings:
-            if rule_re.search(el.text or ""):
-                return i, el
-        return None, None
+        # Prefer descriptive full-text headings over TOC-style stubs.
+        # MSFT's 10-Q places a bare "Item 2" TopSectionTitle (6 chars) near the
+        # top of the document ahead of the real "ITEM 2. MANAGEMENT'S DISCUSSION
+        # AND ANALYSIS OF FINANCIAL CONDITION ..." TitleElement deeper down.
+        # First-match-wins returned the stub, so `_body_between` stopped at the
+        # next heading one element later and produced a near-empty body that
+        # failed the 150-word minimum — silently dropping MD&A for every MSFT
+        # 10-Q. Filtering anchors whose text is a trivially short stub (≤ 12
+        # chars) lets us pick the descriptive heading whose body actually
+        # starts the section. Falls back to the original behavior if no
+        # substantive match exists so previously-working filers are unaffected.
+        matches = [(i, el) for i, el in headings if rule_re.search(el.text or "")]
+        if not matches:
+            return None, None
+        substantive = [m for m in matches if len((m[1].text or "").strip()) > 12]
+        chosen = substantive[0] if substantive else matches[0]
+        return chosen
 
     def _body_between(start_idx):
         out = []
@@ -422,10 +435,13 @@ def _sec_parser_extract(html, form_type):
 def _regex_fallback_extract(raw_text, form_type):
     """Legacy regex extractor on entity-decoded, tag-stripped flat text.
 
-    Used only when sec-parser returns zero sections or raises. The critical
-    fix vs. the old in-flow cleaner is html.unescape() upfront — that alone
-    would have recovered AMZN / V / MCD / JPM coverage, but sec-parser still
-    wins on page-footer removal and heading / body separation.
+    Used as a tier-2 fill for any REQUIRED section sec-parser missed — not
+    as a whole-filing fallback. The merge in `extract_sections` keeps
+    sec-parser's cleaner wins and only drops this extractor's output in
+    for the still-missing sections. Retains the page-footer / ToC-collision
+    weaknesses of the pre-sec-parser implementation, but html.unescape()
+    upfront makes it reliable enough to recover JPM / BAC / MA / V 10-K
+    MD&A and Risk Factors where sec-parser's classifier skipped them.
     """
     import html as _html
 
@@ -469,15 +485,46 @@ def _regex_fallback_extract(raw_text, form_type):
 
 
 def extract_sections(content_bytes, filing_type):
-    """Row UDF: returns (sections[], error, extractor_used).
+    """Row UDF: returns (sections[], error).
 
-    Tries sec-parser first. On empty result or exception, falls back to the
-    legacy regex extractor. `extractor_used` is one of
-    {"sec-parser", "regex-fallback", None} — None means neither path yielded
-    any sections (error_message is populated).
+    Two-tier extraction with a **per-section partial-fallback merge**:
+
+    1. Run sec-parser over the DOM and collect whatever sections it finds.
+       Each section is tagged ``extractor_used = "sec-parser"``.
+    2. If any REQUIRED section is still missing (or sec-parser yielded zero
+       sections outright), run the regex fallback. Only sections that
+       sec-parser did NOT already find get added; sec-parser wins ties.
+       These additions carry ``extractor_used = "regex-fallback"``.
+
+    Rationale. The previous all-or-nothing fallback only kicked in when
+    sec-parser returned exactly zero sections. For financial-institution
+    filers (JPM, BAC, MA, PFE, some of V) sec-parser correctly promoted
+    "Item 1. Business" to a TopSectionTitle but its classifier missed
+    "Item 1A" and "Item 7" — so sec-parser returned {Business} and the
+    pipeline accepted that as "extraction succeeded", silently dropping
+    MD&A and Risk Factors. Per-section merge preserves sec-parser's clean
+    wins and only enlists the regex fallback for the sections still missing,
+    which is where its page-footer / ToC collision weaknesses do the least
+    damage.
+
+    Failure vocabulary (for `ingestion_errors.error_message`):
+      * "Empty content"                        — null bronze row
+      * "Unsupported filing_type: ..."         — non 10-K/10-Q
+      * "Main iXBRL document not found in SGML wrapper"
+                                               — full-submission.txt is
+                                                 malformed or truncated
+                                                 (see DDOG 2022-Q1)
+      * "No sections found by either extractor"
+                                               — structurally bare filing
+                                                 (see MCD, which incorporates
+                                                 its content from Part III /
+                                                 proxy by reference)
+      * "Missing required sections: X, Y"      — partial hit; after both
+                                                 tiers ran, X and Y are
+                                                 still absent
     """
     if content_bytes is None:
-        return ([], "Empty content", None)
+        return ([], "Empty content")
     try:
         raw = (
             content_bytes.decode("utf-8", errors="replace")
@@ -485,56 +532,66 @@ def extract_sections(content_bytes, filing_type):
             else str(content_bytes)
         )
     except Exception as e:
-        return ([], f"Decode error: {e}", None)
+        return ([], f"Decode error: {e}")
 
     if filing_type not in SECTIONS_BY_FORM:
-        return ([], f"Unsupported filing_type: {filing_type}", None)
+        return ([], f"Unsupported filing_type: {filing_type}")
 
     html = _extract_main_doc(raw, filing_type)
     if not html:
-        return ([], "Main iXBRL document not found in SGML wrapper", None)
-
-    sec_parser_err = None
-    try:
-        sections = _sec_parser_extract(html, filing_type)
-    except Exception as e:
-        sec_parser_err = f"sec-parser error: {type(e).__name__}: {e}"
-        sections = []
-
-    if sections:
-        required = {n for n, r in SECTIONS_BY_FORM[filing_type].items() if r["required"]}
-        missing = sorted(required - {s["section_name"] for s in sections})
-        err = f"Missing required sections: {', '.join(missing)}" if missing else None
-        return (sections, err, "sec-parser")
-
-    # Fallback path
-    try:
-        sections = _regex_fallback_extract(raw, filing_type)
-    except Exception as e:
-        return (
-            [],
-            f"Both extractors failed. sec_parser_err={sec_parser_err}; regex_err={e}",
-            None,
-        )
-
-    if not sections:
-        err = sec_parser_err or "No sections found by either extractor"
-        return ([], err, None)
+        return ([], "Main iXBRL document not found in SGML wrapper")
 
     required = {n for n, r in SECTIONS_BY_FORM[filing_type].items() if r["required"]}
-    missing = sorted(required - {s["section_name"] for s in sections})
-    err = f"Missing required sections (fallback): {', '.join(missing)}" if missing else None
-    return (sections, err, "regex-fallback")
+    merged = {}  # section_name -> dict(section_name, section_text, word_count, extractor_used)
+
+    # Tier 1: sec-parser (DOM-aware)
+    sec_parser_err = None
+    try:
+        for s in _sec_parser_extract(html, filing_type):
+            s["extractor_used"] = "sec-parser"
+            merged[s["section_name"]] = s
+    except Exception as e:
+        sec_parser_err = f"sec-parser error: {type(e).__name__}: {e}"
+
+    # Tier 2: regex fallback, but only for sections sec-parser missed.
+    # Runs when any required section is still absent OR when sec-parser
+    # produced nothing at all — the latter keeps the old "zero-sections"
+    # safety net in place for edge cases.
+    fallback_err = None
+    if (required - set(merged.keys())) or not merged:
+        try:
+            for s in _regex_fallback_extract(raw, filing_type):
+                if s["section_name"] not in merged:
+                    s["extractor_used"] = "regex-fallback"
+                    merged[s["section_name"]] = s
+        except Exception as e:
+            fallback_err = f"regex-fallback error: {type(e).__name__}: {e}"
+
+    sections = list(merged.values())
+    if not sections:
+        err = sec_parser_err or "No sections found by either extractor"
+        if fallback_err:
+            err = f"{err}; {fallback_err}"
+        return ([], err)
+
+    still_missing = sorted(required - set(merged.keys()))
+    err = f"Missing required sections: {', '.join(still_missing)}" if still_missing else None
+    return (sections, err)
 
 
+# UDF schema carries `extractor_used` *inside* each section struct so the
+# attribution is row-level on silver (not per-filing). With per-section merge
+# a single filing can contribute both sec-parser and regex-fallback rows, and
+# we want the chunker / VS index to be able to filter by extractor at section
+# granularity.
 extract_udf_schema = StructType([
     StructField("sections", ArrayType(StructType([
-        StructField("section_name", StringType()),
-        StructField("section_text", StringType()),
-        StructField("word_count",   IntegerType()),
+        StructField("section_name",   StringType()),
+        StructField("section_text",   StringType()),
+        StructField("word_count",     IntegerType()),
+        StructField("extractor_used", StringType()),
     ]))),
-    StructField("error",          StringType()),
-    StructField("extractor_used", StringType()),
+    StructField("error", StringType()),
 ])
 extract_udf = udf(extract_sections, extract_udf_schema)
 
@@ -558,21 +615,25 @@ df_extracted = (
         "filing_id", "ticker", "fiscal_year", "filing_type", "file_path",
         col("udf_result.sections").alias("sections"),
         col("udf_result.error").alias("error"),
-        col("udf_result.extractor_used").alias("extractor_used"),
     )
 )
 df_extracted.cache()
 
-# Observability: how many filings did each extractor handle?
+# Observability: section-level breakdown (not filing-level, because a single
+# filing can now produce a mix — sec-parser wins for the sections it finds,
+# regex-fallback fills the still-missing required sections). explode on a
+# zero-length array drops the row cleanly, so error-only filings are excluded.
 extractor_stats = (
-    df_extracted.filter(col("extractor_used").isNotNull())
-    .groupBy("extractor_used").agg(spark_count("*").alias("n_filings"))
+    df_extracted
+    .withColumn("sec", explode("sections"))
+    .groupBy(col("sec.extractor_used").alias("extractor_used"))
+    .agg(spark_count("*").alias("n_sections"))
     .collect()
 )
 if extractor_stats:
-    print("[EXTRACTOR USAGE]")
+    print("[EXTRACTOR USAGE — per section]")
     for row in extractor_stats:
-        print(f"  {row['extractor_used']:<16}: {row['n_filings']:>5} filings")
+        print(f"  {row['extractor_used']:<16}: {row['n_sections']:>5} sections")
 
 df_errors = df_extracted.filter(col("error").isNotNull())
 n_errors = df_errors.count()
@@ -604,6 +665,12 @@ df_final_sections = (
         col("sec.section_name").alias("section_name"),
         col("sec.section_text").alias("section_text"),
         col("sec.word_count").alias("word_count"),
+        # Per-row extractor attribution — lets downstream (chunker, VS index,
+        # audit SQL) filter by extractor_used. With autoMerge enabled below,
+        # the column lands on an existing silver table without a rebuild;
+        # rows that predate this column stay NULL and are cleanly identifiable
+        # as stale-regex-era survivors.
+        col("sec.extractor_used").alias("extractor_used"),
         current_timestamp().alias("parsed_at"),
     )
 )
