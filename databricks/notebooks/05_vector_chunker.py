@@ -227,14 +227,25 @@ if bad_rows > 0:
 spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
 
 if spark.catalog.tableExists(TARGET_TABLE):
+    # chunk_id is hashed over chunk_text, so any upstream silver change (e.g. the
+    # sec-parser swap) produces entirely new chunk_ids for the same section. A plain
+    # MERGE on chunk_id would insert the new chunks without deleting the prior-run
+    # rows, leaving stale orphans side-by-side in the index. Instead, delete every
+    # target chunk whose (filing_id, section_name) pair is being rewritten, then
+    # append the fresh chunks. This keeps unrelated filings (e.g. during a
+    # ticker-filtered run) untouched.
     target = DeltaTable.forName(spark, TARGET_TABLE)
+    affected_pairs = df_chunks.select("filing_id", "section_name").distinct()
     (
         target.alias("t")
-        .merge(df_chunks.alias("s"), "t.chunk_id = s.chunk_id")
-        .whenMatchedUpdateAll()
-        .whenNotMatchedInsertAll()
+        .merge(
+            affected_pairs.alias("p"),
+            "t.filing_id = p.filing_id AND t.section_name = p.section_name",
+        )
+        .whenMatchedDelete()
         .execute()
     )
+    df_chunks.write.format("delta").mode("append").saveAsTable(TARGET_TABLE)
 else:
     df_chunks.write.format("delta").mode("overwrite").saveAsTable(TARGET_TABLE)
 
