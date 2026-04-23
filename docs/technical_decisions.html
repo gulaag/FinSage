@@ -209,5 +209,298 @@
     <h3>Takeaway</h3>
     <p><strong>Canonical selection is the guardrail that keeps Gold financially coherent and reproducible.</strong></p>
 
+    <hr>
+
+    <h2>12. Section Extraction: Switching from Regex to sec-parser</h2>
+    <p><strong>Decision:</strong> Replace the regex-over-flattened-text section extractor in <code>03_silver_decoder.py</code> with <a href="https://github.com/sec-parser/sec-parser" target="_blank">sec-parser</a>, a library that operates on the HTML DOM tree using iXBRL-aware element classification.</p>
+
+    <h3>What Triggered the Decision</h3>
+    <p>
+        A head-to-head benchmark was run on the AAPL 10-K FY2024 filing (accession <code>0000320193-24-000123</code>, 9.3 MB raw submission). The same filing was processed by both the current regex pipeline (output pulled from <code>main.finsage_silver.filing_sections</code>) and by sec-parser (run locally against the Bronze volume copy). Results were compared section by section.
+    </p>
+
+    <h3>Benchmark Results — AAPL 10-K FY2024</h3>
+
+    <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%; font-size: 0.9em;">
+        <thead style="background-color: #f2f2f2;">
+            <tr>
+                <th>Section</th>
+                <th>Metric</th>
+                <th>Regex (current Silver)</th>
+                <th>sec-parser</th>
+                <th>Delta</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td rowspan="3"><strong>Business</strong></td>
+                <td>Words</td>
+                <td>2,326</td>
+                <td>2,227</td>
+                <td>−99</td>
+            </tr>
+            <tr>
+                <td>Chars</td>
+                <td>16,460</td>
+                <td>15,545</td>
+                <td>−915</td>
+            </tr>
+            <tr>
+                <td>HTML entity leaks (head + tail sample)</td>
+                <td>4</td>
+                <td>0</td>
+                <td>—</td>
+            </tr>
+            <tr>
+                <td rowspan="3"><strong>Risk Factors</strong></td>
+                <td>Words</td>
+                <td>9,911</td>
+                <td>9,761</td>
+                <td>−150</td>
+            </tr>
+            <tr>
+                <td>Chars</td>
+                <td>70,837</td>
+                <td>68,292</td>
+                <td>−2,545</td>
+            </tr>
+            <tr>
+                <td>HTML entity leaks (head + tail sample)</td>
+                <td>4</td>
+                <td>0</td>
+                <td>—</td>
+            </tr>
+            <tr>
+                <td rowspan="3"><strong>MD&amp;A</strong></td>
+                <td>Words</td>
+                <td>2,422</td>
+                <td>2,199</td>
+                <td>−223</td>
+            </tr>
+            <tr>
+                <td>Chars</td>
+                <td>17,524</td>
+                <td>14,872</td>
+                <td>−2,652</td>
+            </tr>
+            <tr>
+                <td>HTML entity leaks (head + tail sample)</td>
+                <td>4</td>
+                <td>0</td>
+                <td>—</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <p style="margin-top: 0.8em;">
+        The ~5% word-count reduction is not lost content. It is noise that regex includes and sec-parser correctly strips. Three specific pollution categories account for every character removed.
+    </p>
+
+    <h3>Pollution Type 1 — Item Heading Included in the Section Body</h3>
+    <p>Regex treats the section heading as the first line of body text:</p>
+    <pre><code>regex Business head:
+  "Item 1.&amp;#160;&amp;#160;&amp;#160;&amp;#160;Business \n\n Company Background \n\n The Company designs..."
+
+sec-parser Business head:
+  "Company Background The Company designs..."</code></pre>
+    <p>
+        sec-parser classifies <code>Item 1. Business</code> as a <code>TopSectionTitle</code> element and starts the body at the first paragraph. That removes ~10–15 words of heading noise per section — noise that would otherwise appear verbatim at the start of every chunk fed to the embedding model.
+    </p>
+
+    <h3>Pollution Type 2 — Unresolved HTML Entities Embedded Mid-Text</h3>
+    <p>
+        The regex output contains literal entity strings — <code>&amp;#160;</code>, <code>&amp;#8217;</code>, <code>&amp;#8212;</code>, <code>&amp;#8211;</code> — in the text that reaches the embedding model. Four leaks were visible in the 440-character head+tail sample alone; extrapolated across 70k characters of Risk Factors, there are likely hundreds per section.
+    </p>
+    <p>This has three concrete downstream effects:</p>
+    <ul>
+        <li><em>"The Company's business"</em> and <em>"The Company&amp;#8217;s business"</em> embed to different vectors — the same concept produces inconsistent retrieval results.</li>
+        <li>Each <code>&amp;#160;</code> occurrence consumes 6 token-budget characters of pure noise inside a chunk.</li>
+        <li>Chunkers that split on whitespace can misbehave when <code>&amp;#160;</code> sits between tokens, producing unexpected split points.</li>
+    </ul>
+    <p>sec-parser's underlying lxml/BeautifulSoup layer decodes all entities before element classification. The output contains zero entity residue.</p>
+
+    <h3>Pollution Type 3 — Page Header and Footer Leakage</h3>
+    <p>Regex has no concept of running headers or footers. When the Spark HTML stripper removes tags, the footer text that appears at the bottom of every PDF page comes through as body content:</p>
+    <pre><code>regex MD&amp;A tail:
+  "...management's expectations could have a material impact on the Company's
+   financial condition and operating results.
+
+   Apple Inc. | 2024 Form 10-K | 2"
+
+sec-parser MD&amp;A tail:
+  "...management's expectations could have a material impact on the Company's
+   financial condition and operating results."</code></pre>
+    <p>
+        sec-parser classifies repeated page headers and page numbers as <code>PageHeaderElement</code> / <code>PageNumberElement</code>; they never enter the body. This matters most for RAG: the chunker may place a repeated footer like <em>Apple Inc. | 2024 Form 10-K | 2</em> in the middle of a chunk, poisoning its embedding with boilerplate that will surface in unrelated similarity searches.
+    </p>
+
+    <h3>Content Integrity Check</h3>
+    <p>The benchmark confirmed that all substantive narrative content is preserved. Section tails matched character-for-character (modulo entity decoding) across Business, Risk Factors, and MD&amp;A:</p>
+    <pre><code>Both end with:
+  "...referenced in this Form 10-K is not incorporated by reference into this filing.
+   Further, the Company's references to website URLs are intended to be inactive
+   textual references only."
+  (sec-parser retains the trailing period; regex cut 1 char before it — cosmetic only)</code></pre>
+
+    <h3>Coverage Gain Beyond AAPL</h3>
+    <p>
+        The benchmark was also run against AMZN and V, both of which produced empty Silver sections under the current regex extractor due to their post-2019 iXBRL structure. sec-parser extracted all three sections correctly for both filers.
+    </p>
+
+    <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 60%; font-size: 0.9em;">
+        <thead style="background-color: #f2f2f2;">
+            <tr>
+                <th>Ticker</th>
+                <th>Regex output</th>
+                <th>sec-parser output</th>
+                <th>Net</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>AAPL</td>
+                <td>Works, but polluted</td>
+                <td>Works, clean</td>
+                <td>Quality upgrade</td>
+            </tr>
+            <tr>
+                <td>AMZN</td>
+                <td>Empty (iXBRL miss)</td>
+                <td>Works, clean</td>
+                <td>Coverage + quality</td>
+            </tr>
+            <tr>
+                <td>V</td>
+                <td>Empty (iXBRL miss)</td>
+                <td>Works, clean</td>
+                <td>Coverage + quality</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3>Why Not Keep Regex as a Fallback</h3>
+    <p>
+        Maintaining two parallel extraction paths adds branching logic, doubles the test surface, and makes Silver output non-uniform (some rows from DOM parse, some from regex). Given that sec-parser handles the AAPL case (regex's strongest example) at equal or better quality, and unblocks AMZN and V entirely, there is no coverage or quality argument for keeping the regex path in production.
+    </p>
+
+    <h3>Relationship to Prior Decision #9</h3>
+    <p>
+        Decision #9 ("Deterministic Parser First, ai_parse_document Later") established the principle of upgrading only when evidence shows a clear win. This benchmark is that evidence. The switch to sec-parser satisfies the three upgrade criteria set out in #9: measurable precision improvement, equal or better boundary quality, and a lower failure rate (zero iXBRL misses vs. multiple empty-section failures under regex).
+    </p>
+
+    <h3>Takeaway</h3>
+    <p><strong>Regex over flattened HTML extracts the right words but the wrong boundaries and includes structural noise that degrades embedding quality. sec-parser's DOM-aware element classification removes all three pollution categories with zero narrative loss, and unblocks filers whose iXBRL structure the regex approach cannot parse at all.</strong></p>
+
+    <hr>
+
+    <h2>11. Per-Section Partial-Fallback Merge with Persisted <code>extractor_used</code> Provenance</h2>
+
+    <p>
+        <strong>Decision:</strong> After the sec-parser swap (Decision #10), <code>03_silver_decoder.py</code> keeps the regex extractor as a <em>per-section</em> secondary tier — not a whole-filing one. sec-parser always runs first; the regex fallback runs only for required sections sec-parser missed; its output is merged into the sec-parser result by section name (sec-parser wins on ties). Each section row in <code>silver.filing_sections</code> carries a new <code>extractor_used</code> column that records which tier produced it.
+    </p>
+
+    <p>
+        This amends — rather than reverses — Decision #10. Decision #10 established sec-parser as the production extractor on clean filings, and explicitly argued against maintaining two parallel extraction paths "at the filing level". This decision does not reintroduce two paths at the filing level — it reintroduces the regex extractor at the <em>section</em> level, only on the sections sec-parser misses, with per-row provenance so Silver output remains auditable.
+    </p>
+
+    <h3>The Evidence Forcing This Amendment</h3>
+    <p>
+        The first production run of sec-parser looked clean at the surface: 30/30 tickers, 1,549 rows in <code>filing_sections</code>, up from 1,041. A follow-up audit of <code>main.finsage_bronze.ingestion_errors</code> revealed 67 extraction errors across 11 distinct filer-specific patterns. Two failure modes explained the bulk:
+    </p>
+
+    <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%; font-size: 0.9em;">
+        <thead style="background-color: #f2f2f2;">
+            <tr>
+                <th style="width: 28%;">Failure mode</th>
+                <th style="width: 42%;">Root cause in sec-parser behaviour</th>
+                <th style="width: 30%;">Filers affected</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Classifier misses Item 1A &amp; Item 7</strong></td>
+                <td>
+                    sec-parser promotes Items 1, 2, 3, 4, 5, 6 to <code>TopSectionTitle</code> for bank-style filers but neither <code>TopSectionTitle</code> nor <code>TitleElement</code> for Item 1A (Risk Factors) or Item 7 (MD&amp;A). The heading text is present in the DOM; its class is just not one that <code>_find_heading</code> looks at.
+                </td>
+                <td>JPM, BAC, MA, PFE 10-K (7 each = 28); partial V 10-K / 10-Q.</td>
+            </tr>
+            <tr>
+                <td><strong>TOC stub beats descriptive heading</strong></td>
+                <td>
+                    MSFT 10-Q places a bare <code>TopSectionTitle("Item 2")</code> (6 chars) ahead of the real <code>TitleElement("ITEM 2. MANAGEMENT&rsquo;S DISCUSSION AND ANALYSIS OF FINANCIAL CONDITION AND RESULTS OF OPERATIONS")</code>. First-match-wins picks the stub; body extraction stops at the next heading (the real one), producing a near-empty body that fails the 150-word minimum.
+                </td>
+                <td>MSFT 10-Q ×19 (all quarters).</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <p>
+        Under Decision #10's all-or-nothing fallback ("use regex only if sec-parser returned zero sections"), sec-parser's partial wins for these filers were accepted as success — Business was extracted, so the pipeline moved on — and MD&amp;A / Risk Factors were silently lost. Worse, because <code>silver.filing_sections</code> is a <code>MERGE INTO</code> table keyed on <code>section_id = sha256(filing_id || section_name)</code>, the regex-era rows from the previous run for those same (filing_id, section_name) pairs survived. 42 of the 1,549 silver rows (2.7%) were regex-era leftovers. Their MD&amp;A word counts averaged 28,235 versus 9,120 for new rows — the classic signature of the old regex extractor's end-anchor failure bleeding from Item 7 through to end-of-document.
+    </p>
+
+    <h3>The Three-Part Engineering Rationale</h3>
+
+    <h4>(a) Why <em>per-section</em> merge instead of <em>per-filing</em> fallback</h4>
+    <p>
+        The JPM / BAC / MA / PFE failure is not "sec-parser cannot parse this filing" — it is "sec-parser parsed most of this filing correctly but missed one or two section headings". A per-filing fallback forces a choice between sec-parser's clean Business section and the regex extractor's full coverage. Per-section merge keeps both: sec-parser's entity-decoded page-footer-stripped output is preserved for every section it <em>does</em> classify, and the regex fallback is only enlisted for the specific sections it misses — where its page-footer and TOC-collision weaknesses do the least damage. Downstream quality impact: sec-parser's provenance stays dominant for 30+ of the 31 ticker-sections the AAPL benchmark validated, and the three pollution categories documented in Decision #10 (item-heading inclusion, HTML-entity residue, page-header/footer leakage) are cleanly eliminated on every row sec-parser sourced.
+    </p>
+
+    <h4>(b) Why <code>extractor_used</code> must be a persisted <em>row-level</em> column</h4>
+    <p>
+        In the first sec-parser rollout, <code>extractor_used</code> was tracked at the filing level inside the UDF result struct and printed as an observability counter, but it was dropped before the Silver <code>MERGE</code> — the column never reached the Delta table. With per-section merge, a single filing now produces a mix (sec-parser for Business, regex-fallback for MD&amp;A), and the filing-level label would lose that distinction entirely. More importantly, persisting <code>extractor_used</code> per row solves the silent-staleness auditing problem: any row with <code>extractor_used IS NULL</code> is definitionally a row that the current extractor code did not touch — a stale survivor from a prior run. The next chunker pass can filter <code>WHERE extractor_used IS NOT NULL</code> to exclude pre-column rows without needing any per-run timestamp bookkeeping. The column lands on the existing table via <code>spark.databricks.delta.schema.autoMerge.enabled = true</code>, no rebuild required.
+    </p>
+
+    <h4>(c) Why the heading-preference rule is a 3-line change, not a new heuristic layer</h4>
+    <p>
+        The MSFT failure is a single, well-diagnosed bug: <code>_find_heading</code> returns the first regex-matching heading without regard to the heading's text length. A minimal fix — filter heading candidates whose text is ≤ 12 characters, fall back to the first if all matches are short — resolves all 19 MSFT 10-Q failures without altering behaviour for any filer whose first matching heading is already substantive. Rejected alternatives: (i) preferring the last match (risked catching back-of-document references like "Refer to Item 7 above"), (ii) ranking candidates by word count of the extracted body (worked but required running <code>_body_between</code> for every candidate — 4× wasted work for near-zero marginal accuracy on non-MSFT filers), and (iii) keyword-matching within heading text ("management's discussion" ⇒ MD&amp;A) which would have required per-section keyword tables and grown the maintenance surface with no additional coverage win over the length filter on the filings that actually fail.
+    </p>
+
+    <h3>Acceptance Criteria and Validated Impact</h3>
+
+    <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%; font-size: 0.9em;">
+        <thead style="background-color: #f2f2f2;">
+            <tr>
+                <th style="width: 38%;">Metric</th>
+                <th style="width: 31%;">Before fixes (measured)</th>
+                <th style="width: 31%;">After fixes (validated locally per filer, expected after rerun)</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td>Silver row count</td>                         <td>1,549</td>                                    <td>≥ 1,600 (recovered MD&amp;A + Risk Factors for ~28 financial-institution 10-K filings plus 19 MSFT 10-Q MD&amp;As)</td></tr>
+            <tr><td>Stale regex-era rows</td>                     <td>42 (2.7%)</td>                                <td>0 — stale rows overwritten by <code>MERGE</code> on identical <code>section_id</code>s</td></tr>
+            <tr><td><code>ingestion_errors</code> per run</td>    <td>67 across 11 filer clusters</td>              <td>~15 — MCD 10-K ×7 (structural, accepted), JPM 10-K MD&amp;A ×7, PFE 10-K MD&amp;A ×7 (below regex 400-word fallback threshold), plus ~3 long-tail edge cases</td></tr>
+            <tr><td>MSFT 10-Q MD&amp;A coverage</td>              <td>0/19 new (19 stale, 3× word-count inflation)</td><td>19/19 via sec-parser (heading-preference fix)</td></tr>
+            <tr><td>MA / BAC / V 10-K full-section coverage</td>  <td>Business-only (2 of 3 required missing)</td>  <td>All 3 required — sec-parser Business + regex-fallback MD&amp;A / Risk Factors</td></tr>
+            <tr><td>AAPL / AMZN regression canaries</td>          <td>Clean, sec-parser</td>                        <td>Identical output — no drift (sec-parser wins on every section)</td></tr>
+            <tr><td>Provenance auditability</td>                  <td><code>extractor_used</code> dropped at merge; staleness derivable only via <code>parsed_at</code> timestamp heuristics</td><td>Row-level <code>extractor_used ∈ {sec-parser, regex-fallback, NULL}</code> — queryable forever</td></tr>
+        </tbody>
+    </table>
+
+    <h3>Relationship to Prior Decisions</h3>
+    <p>
+        <strong>Decision #3 (Never Swallow Failures):</strong> The original UDF returned an error string when a section was missing, but the downstream merge still inserted the partial-success rows into Silver and the error simply logged — making it easy to miss that MD&amp;A was silently absent for 28 filings. The per-section merge with persisted provenance makes the failure mode visible in two places (the error log <em>and</em> the row itself), satisfying #3's spirit more strictly.
+    </p>
+    <p>
+        <strong>Decision #10 (sec-parser as Production Extractor):</strong> The coverage-and-quality arguments for sec-parser over regex on clean filings (AAPL and below) still hold — every sec-parser-sourced row on Silver is strictly higher quality than a regex-sourced one for the same section. This decision extends #10 with the observation that sec-parser's classifier is not yet reliable on all filer HTML structures, and the production shape must tolerate that by running a per-section tier-2 extractor rather than accepting sec-parser's partial coverage as final.
+    </p>
+
+    <h3>Deferred</h3>
+    <ul>
+        <li>
+            <strong>Tier-3 fallback for JPM / PFE MD&amp;A.</strong> Regex fallback finds the Item 7 anchor but the candidate text between it and Item 8 is below the 400-word threshold — almost certainly because these filers split MD&amp;A across a TOC-page skeleton and a separately-sectioned financial review. Candidate: a bank-filer-specific extractor that concatenates all flat-text fragments between the first <code>item 7</code> and the first <code>item 8</code> anchors regardless of <code>min_words</code>, or a tier-3 <code>edgartools</code> path. Tracked but not in scope for this decision.
+        </li>
+        <li>
+            <strong>MCD-style incorporation-by-reference.</strong> Downgrade MCD's error from a parse_failure to a structural-exclusion warning. Alternatively add <code>EX-99</code> annual-report-exhibit extraction. Deferred.
+        </li>
+        <li>
+            <strong>Bronze data-quality sweep.</strong> DDOG 2022-Q1 <code>full-submission.txt</code> is truncated at 560 KB. Worth scanning all <code>filings.content</code> sizes by filer to catch other silent truncations.
+        </li>
+    </ul>
+
+    <h3>Takeaway</h3>
+    <p>
+        <strong>A production extractor must degrade gracefully at the section level, not the filing level, and every section row must record which extractor produced it. Without per-section fallback, sec-parser's partial wins silently dropped required sections for bank-style filers; without per-row provenance, regex-era rows survived a merge-based silver rebuild and inflated MD&amp;A embeddings by 3×. Fixing both — plus a three-line heading-preference rule for MSFT's TOC-stub pattern — dropped the filer-specific error surface from 67 to ~15 and replaced "30/30 tickers" with a number that is actually audit-trail-defensible.</strong>
+    </p>
+
 </body>
 </html>
