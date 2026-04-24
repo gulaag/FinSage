@@ -908,25 +908,34 @@ print(f"[DEPLOY] Monitor at: https://dbc-f33010ed-00fc.cloud.databricks.com/ml/e
 
 import time
 
-print(f"Waiting for endpoint '{AGENT_ENDPOINT}' to reach READY state...")
+print(f"Waiting for endpoint '{AGENT_ENDPOINT}' to serve v{model_version}...")
 timeout, poll = 20 * 60, 20
 start = time.time()
 
+# Endpoint.state.ready stays READY while a new version rolls out in the background
+# (the previous version keeps serving traffic until the atomic swap). Exiting on
+# ready alone runs live tests against the OLD version. Require all three: service
+# ready, no in-flight config update, and the version we just deployed is the one
+# being served.
 while True:
     if time.time() - start > timeout:
         print("Timeout waiting for endpoint. Check the Serving UI manually.")
         break
     try:
-        ep    = w.serving_endpoints.get(AGENT_ENDPOINT)
-        state = str(ep.state.ready) if ep.state else "UNKNOWN"
-        print(f"  Endpoint state: {state}")
-        if state == "EndpointStateReady.READY":
-            print("Endpoint is READY.")
-            break
-        if "FAILED" in state.upper() or "NOT_READY" in state.upper() and time.time() - start < 30:
-            pass  # NOT_READY is normal during startup — keep polling
+        ep              = w.serving_endpoints.get(AGENT_ENDPOINT)
+        state           = str(ep.state.ready)         if ep.state and ep.state.ready         else "UNKNOWN"
+        config_update   = str(ep.state.config_update) if ep.state and ep.state.config_update else ""
+        served_versions = {se.entity_version for se in (ep.config.served_entities or [])} if ep.config else set()
+        print(f"  state={state} config_update={config_update} served_versions={served_versions}")
+
         if "FAILED" in state.upper():
             print(f"Endpoint failed: {ep.state}")
+            break
+
+        if (state == "EndpointStateReady.READY"
+                and "NOT_UPDATING" in config_update.upper()
+                and str(model_version) in served_versions):
+            print(f"Endpoint is READY and serving v{model_version}.")
             break
     except Exception as e:
         print(f"  Polling error: {e}")
