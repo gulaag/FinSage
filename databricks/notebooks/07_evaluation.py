@@ -122,7 +122,7 @@ print(f"[DATASET] {len(eval_dataset)} rows prepared")
 def predict_fn(messages: list) -> dict:
     chat_messages = [
         ChatMessage(
-            role=ChatMessageRole(m["role"].upper() if m["role"].upper() in ("USER","SYSTEM","ASSISTANT") else "USER"),
+            role=ChatMessageRole(m["role"].lower() if m["role"].lower() in ("user","system","assistant") else "user"),
             content=m["content"],
         )
         for m in messages
