@@ -51,7 +51,6 @@ from pathlib import Path
 import mlflow
 from mlflow.genai.scorers import scorer, Correctness, RetrievalGroundedness, Guidelines
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
 
 CATALOG         = dbutils.widgets.get("catalog")
 ENV             = dbutils.widgets.get("env")
@@ -115,24 +114,26 @@ print(f"[DATASET] {len(eval_dataset)} rows prepared")
 # COMMAND ----------
 
 # ── 5. predict_fn — queries the deployed agent ───────────────────────────────
-# Uses w.serving_endpoints.query() (SDK) to avoid the deploy-client URL bug
+# The deployed agent is an mlflow.pyfunc.PythonModel registered with a
+# {"messages": [...]} input signature, so it must be invoked via
+# `dataframe_records` (pyfunc shape), NOT the chat-protocol `messages=` param.
+# Empirically verified against finsage_agent_endpoint v16:
+#   dataframe_records=[{"messages":[{"role":"user","content":"ping"}]}]
+#   → predictions = {"content": "...", "messages": [...]}
+#
+# Using w.serving_endpoints.query() (SDK) to avoid the deploy-client URL bug
 # documented in CLAUDE.md (cell 12 live test learning).
 
 @mlflow.trace(span_type="AGENT")
 def predict_fn(messages: list) -> dict:
-    chat_messages = [
-        ChatMessage(
-            role=ChatMessageRole(m["role"].lower() if m["role"].lower() in ("user","system","assistant") else "user"),
-            content=m["content"],
-        )
-        for m in messages
-    ]
     resp = w.serving_endpoints.query(
         name=AGENT_ENDPOINT,
-        messages=chat_messages,
+        dataframe_records=[{"messages": messages}],
     )
-    # resp.choices is a list[Choice]; Choice.message has role+content
-    content = resp.choices[0].message.content if resp.choices else ""
+    pred = resp.predictions
+    if isinstance(pred, list) and pred:
+        pred = pred[0]
+    content = pred.get("content", "") if isinstance(pred, dict) else str(pred)
     return {"choices": [{"message": {"role": "assistant", "content": content}}]}
 
 # smoke-test predict_fn before full eval
