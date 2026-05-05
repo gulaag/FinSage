@@ -1,0 +1,41 @@
+# Excluded from graphify knowledge graph extraction.
+
+# Virtual env / installed deps
+venv/
+.venv/
+
+# Tooling dirs (not source)
+.claude/
+.agents/
+.databricks/
+.github/
+.pytest_cache/
+
+# Sibling-repo symlink — not part of FinSage source
+graphify_module/
+
+# Raw SEC filing binaries / payloads — opaque, would not extract usefully
+data/raw/
+src/ingestion/data/
+**/sec-edgar-filings/
+**/full-submission.txt
+**/*.htm
+**/*.json.gz
+
+# Binary assets
+assets/
+
+# Rendered HTML audit dashboards — outputs, not source
+*.html
+docs/*.html
+
+# Standard ignores
+.git/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.terraform/
+
+# graphify's own output (avoid recursive ingestion on re-runs)
+graphify-out/

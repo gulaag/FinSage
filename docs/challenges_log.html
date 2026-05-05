@@ -434,5 +434,118 @@
     <p>
         <strong>"Pipeline ran to completion" is not the same as "extraction succeeded." When a merge-based silver layer swaps extractors, staleness auditing is as important as the new extractor's accuracy — because the old extractor's wins will survive the new extractor's losses, and silently. Per-row provenance on silver (<code>extractor_used</code>), per-section partial-fallback merging, and a local-reproducer harness for every ticker-specific failure mode are the three ingredients that turn an opaque "30/30 tickers" coverage number into a trustworthy one.</strong>
     </p>
+
+    <hr>
+    <h2>Challenge 10: The Chunker Orphan Bug — When a Content-Hashed Merge Key Silently Doubles the Table</h2>
+    <p>
+        <strong>Phase:</strong> Vector chunking (<code>05_vector_chunker.py</code>) — post-silver-refactor audit
+    </p>
+
+    <h3>The Problem</h3>
+    <p>
+        After the Challenge 9 silver fixes landed (commit <code>3c6c051</code>) and notebook 05 was rerun, surface-level checks on silver looked correct — 30 tickers, 1,572 rows, a clean sec-parser + regex-fallback mix. But when I cross-checked the downstream chunks table, <code>main.finsage_gold.filing_section_chunks</code> had <strong>105,029 rows</strong>, not the ~45k that silver's new content should have produced. Per-ticker spot checks confirmed the gap: <code>BAC</code> had 8,472 chunks, <code>GS</code> 10,093, <code>NET</code> 8,013 — roughly double what the silver row counts could justify. A <code>GROUP BY (filing_id, section_name, chunk_index)</code> on AAPL-10-K-2022 returned multiple rows at the same positional index, each with a different <code>chunk_id</code>. Two generations of chunks were coexisting in the table. The Vector Search index was about to embed both.
+    </p>
+
+    <h3>Why It Happened</h3>
+    <p>
+        <code>deterministic_chunk_id</code> in <code>05_vector_chunker.py</code> hashes over five inputs:
+    </p>
+    <pre><code>chunk_id = sha256(filing_id || section_name || chunk_index || chunk_text || chunk_version)</code></pre>
+    <p>
+        Including <code>chunk_text</code> in the hash was originally a defensive choice — any change in chunk contents would produce a new ID, so downstream consumers could detect drift by ID alone. But coupled with the chunker's write pattern —
+    </p>
+    <pre><code>target.alias("t")
+    .merge(df_chunks.alias("s"), "t.chunk_id = s.chunk_id")
+    .whenMatchedUpdateAll()
+    .whenNotMatchedInsertAll()
+    .execute()</code></pre>
+    <p>
+        — it meant that <em>any</em> upstream text change broke the merge key. When sec-parser replaced the regex extractor, the same logical section (same <code>filing_id</code>, same <code>section_name</code>, same <code>chunk_index</code>) produced different <code>chunk_text</code> (cleaner, no HTML entities, no page-footer bleed), and therefore a completely different <code>chunk_id</code>. The MERGE found zero <code>t.chunk_id = s.chunk_id</code> matches, executed 45,136 inserts, and left all 59,893 regex-era rows untouched as orphans. The <code>DESCRIBE HISTORY</code> evidence was unambiguous:
+    </p>
+    <pre><code>version 21 | MERGE | numTargetRowsInserted=45136 | numTargetRowsUpdated=0 | numTargetRowsDeleted=0</code></pre>
+    <p>
+        Zero updates and zero deletes across a 45k-row "upsert" is the diagnostic signature of a content-hashed key whose content has changed upstream. The per-<code>run_id</code> breakdown confirmed the same story from the row-provenance side:
+    </p>
+    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; font-size: 0.9em;">
+        <thead style="background-color: #f2f2f2;">
+            <tr><th>run_id</th><th>chunked_at</th><th>rows</th><th>provenance</th></tr>
+        </thead>
+        <tbody>
+            <tr><td><code>aa5609e0-…</code></td><td>2026-04-21</td><td>59,893</td><td>regex-era chunks (pre-Challenge 9 fix)</td></tr>
+            <tr><td><code>b7c716da-…</code></td><td>2026-04-23 AM</td><td>45,136</td><td>sec-parser-era chunks — new IDs, stacked on top</td></tr>
+        </tbody>
+    </table>
+    <p>
+        A secondary issue surfaced during the post-fix deploy validation. The polling loop in notebook 06's final cell exited the moment <code>ep.state.ready == "READY"</code>, without checking <code>ep.state.config_update</code> or whether the version just deployed was actually in <code>ep.config.served_entities</code>. Databricks serving keeps the <em>previous</em> version marked <code>READY</code> throughout a rollout (it's still serving traffic until the atomic traffic swap), so the poll exited instantly and the notebook's post-deploy live tests ran against the old version. Easy to miss — the tests returned plausible answers from a working endpoint.
+    </p>
+
+    <h3>The Solution</h3>
+    <p>Two commits on <code>dev</code>:</p>
+    <ol>
+        <li>
+            <strong><code>8e1d478</code> — <code>fix(chunker): delete prior chunks per (filing_id, section_name) before re-append</code></strong>. Replaces the single MERGE-on-<code>chunk_id</code> write with a two-step scoped replace. The source is <code>df_chunks.select("filing_id", "section_name").distinct()</code>, which keeps the MERGE 1-to-many safe:
+            <pre><code>affected_pairs = df_chunks.select("filing_id", "section_name").distinct()
+target.alias("t")
+    .merge(affected_pairs.alias("p"),
+           "t.filing_id = p.filing_id AND t.section_name = p.section_name")
+    .whenMatchedDelete()
+    .execute()
+df_chunks.write.format("delta").mode("append").saveAsTable(TARGET_TABLE)</code></pre>
+            Every target row whose <code>(filing_id, section_name)</code> pair is being rewritten gets deleted first; the fresh chunks land clean. Idempotent per section regardless of upstream text changes. Ticker-filtered runs stay safe — the DELETE only touches pairs actually present in the current source.
+        </li>
+        <li>
+            <strong><code>8672b08</code> — <code>fix(06): poll until config_update=NOT_UPDATING and new version is in served_entities</code></strong>. Three-way exit guard on the deploy-wait loop: <code>state.ready == READY</code>, <code>state.config_update == NOT_UPDATING</code>, and <code>str(model_version) in {se.entity_version for se in ep.config.served_entities}</code>. Post-deploy live tests now provably hit the version the notebook just deployed, not the previous one. Also drops a dead precedence-bug branch on the old loop (<code>"FAILED" in state.upper() or "NOT_READY" in state.upper() and …</code> — <code>and</code> binds tighter than <code>or</code>, shadowing the intended FAILED-exit with a no-op).
+        </li>
+    </ol>
+
+    <h3>Validation</h3>
+    <p>
+        After pulling <code>8e1d478</code> and rerunning notebook 05, the chunks table's <code>DESCRIBE HISTORY</code> confirmed the intended shape of the write:
+    </p>
+    <pre><code>version 23 | MERGE | numTargetRowsDeleted=105029   (scoped delete wiped both generations)
+version 24 | WRITE | 45136 rows appended            (single fresh generation)</code></pre>
+    <p>
+        Downstream, a three-probe end-to-end audit against the redeployed agent endpoint validated every tool path:
+    </p>
+    <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 90%; font-size: 0.9em;">
+        <thead style="background-color: #f2f2f2;">
+            <tr><th>Path</th><th>Probe</th><th>Tool called</th><th>Result vs. ground truth</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><code>get_company_metrics</code></td>
+                <td>"NVIDIA revenue in fiscal year 2024?"</td>
+                <td><code>get_company_metrics(NVDA, 2024, 2024)</code></td>
+                <td>$60.92B — matches <code>company_metrics</code> row exactly</td>
+            </tr>
+            <tr>
+                <td><code>get_quarterly_metrics</code></td>
+                <td>"Apple revenue in Q2 of fiscal year 2025?"</td>
+                <td><code>get_quarterly_metrics(AAPL, 2025, 2)</code></td>
+                <td>$95.36B — matches <code>company_metrics_quarterly</code> row exactly; confirms the OPTIONAL quarterly cache loaded correctly in the redeployed model</td>
+            </tr>
+            <tr>
+                <td><code>search_filings</code></td>
+                <td>"Amazon supply chain risks in most recent 10-K?"</td>
+                <td><code>search_filings(AMZN, Risk Factors, 10-K)</code></td>
+                <td>Substantive ticker-specific content (fulfillment network, single-source suppliers, geopolitical disruption, inventory seasonality) with <code>[Source: AMZN | FY2024 | Risk Factors]</code> citations. <strong>This was impossible before Challenge 9 — AMZN had zero chunks in the index.</strong></td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3>Known Residuals and Deferred Work</h3>
+    <ul>
+        <li>
+            <strong>Silver-delete edge case.</strong> The scoped-delete fix covers sections that <em>appear</em> in the current source. If a filing is ever removed from silver (e.g. silver rows are deleted or a ticker is retired), the chunker will leave its chunks behind — it only touches <code>(filing_id, section_name)</code> pairs that are in the current source. Silver only grows today, so this is not an active problem; flagging in case silver ever gains delete semantics.
+        </li>
+        <li>
+            <strong>Agent scoping drift between annual and quarterly retrieval.</strong> The SYSTEM_PROMPT rule for "most recent" questions instructs the agent to call a metrics tool first to find the latest year, then pass that year to <code>search_filings</code>. In practice, the agent uses the <em>annual</em> metrics table's latest year (e.g. FY2024 for V) even for 10-Q retrieval, but silver tags 10-Qs filed in 2025–2026 as FY2025/FY2026. On the V 10-Q regulatory-risk probe, all four retrieval attempts (with <code>fiscal_year=2024</code>) returned below the similarity threshold; the agent fell back gracefully. A prompt-tuning target for the V0 evaluation phase — the fix is to scope latest-year resolution by <code>filing_type</code> (annual → <code>company_metrics</code>, interim → <code>company_metrics_quarterly</code>), or to drop the year filter on "most recent" questions entirely and let retrieval rank.
+        </li>
+    </ul>
+
+    <h3>Takeaway</h3>
+    <p>
+        <strong>An idempotent MERGE is only idempotent within the ID invariants it enforces. When the key hashes over content, upstream content changes silently violate idempotency — not by raising an error, but by treating updated rows as new inserts and orphaning the old ones. The only safe upsert against a content-hashed key is to scope the replace to a <em>key</em> that is actually stable across the change (here, <code>(filing_id, section_name)</code>), not the hash itself. And "endpoint READY" is a necessary, not sufficient, signal for post-deploy validation: always require that the rollout has actually landed the version you intended to test.</strong>
+    </p>
 </body>
 </html>
