@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Robustness *** Analysis</title>
+
+    <style>
+
+        :root {
+
+            --bg-color: #f9fafb;
+
+            --surface: #ffffff;
+
+            --text-main: #1f2937;
+
+            --text-muted: #4b5563;
+
+            --border: #e5e7eb;
+
+            --header-bg: #111827;
+
+            --header-text: #ffffff;
+
+        }
+
+
+
+        body {
+
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+            background-color: var(--bg-color);
+
+            color: var(--text-main);
+
+            padding: 2rem;
+
+            line-height: 1.5;
+
+        }
+
+
+
+        .table-container {
+
+            max-width: 1200px;
+
+            margin: 0 auto;
+
+            background-color: var(--surface);
+
+            border-radius: 8px;
+
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+
+            overflow: hidden;
+
+        }
+
+
+
+        .table-header {
+
+            padding: 1.5rem;
+
+            background-color: var(--surface);
+
+            border-bottom: 1px solid var(--border);
+
+        }
+
+
+
+        .table-header h2 {
+
+            margin: 0;
+
+            font-size: 1.25rem;
+
+            color: var(--text-main);
+
+        }
+
+
+
+        .table-header p {
+
+            margin: 0.25rem 0 0 0;
+
+            font-size: 0.875rem;
+
+            color: var(--text-muted);
+
+        }
+
+
+
+        table {
+
+            width: 100%;
+
+            border-collapse: collapse;
+
+            text-align: left;
+
+        }
+
+
+
+        th {
+
+            background-color: var(--header-bg);
+
+            color: var(--header-text);
+
+            font-weight: 600;
+
+            font-size: 0.875rem;
+
+            padding: 1rem 1.5rem;
+
+            letter-spacing: 0.05em;
+
+        }
+
+
+
+        td {
+
+            padding: 1rem 1.5rem;
+
+            border-bottom: 1px solid var(--border);
+
+            font-size: 0.875rem;
+
+            color: var(--text-muted);
+
+            vertical-align: top;
+
+        }
+
+
+
+        tr:last-child td {
+
+            border-bottom: none;
+
+        }
+
+
+
+        tr:hover td {
+
+            background-color: #f3f4f6;
+
+        }
+
+
+
+        .col-id {
+
+            width: 5%;
+
+            font-weight: 600;
+
+            color: var(--text-main);
+
+        }
+
+
+
+        .col-gap {
+
+            width: 45%;
+
+        }
+
+
+
+        .col-severity {
+
+            width: 10%;
+
+        }
+
+
+
+        .col-reason {
+
+            width: 40%;
+
+        }
+
+
+
+        /* Severity Badges */
+
+        .badge {
+
+            display: inline-flex;
+
+            align-items: center;
+
+            padding: 0.25rem 0.625rem;
+
+            border-radius: 9999px;
+
+            font-size: 0.75rem;
+
+            font-weight: 600;
+
+            text-transform: uppercase;
+
+        }
+
+
+
+        .badge-p0 {
+
+            background-color: #fee2e2;
+
+            color: #991b1b;
+
+        }
+
+
+
+        .badge-p1 {
+
+            background-color: #ffedd5;
+
+            color: #9a3412;
+
+        }
+
+
+
+        .badge-p2 {
+
+            background-color: #fef08a;
+
+            color: #854d0e;
+
+        }
+
+
+
+        .badge-p3 {
+
+            background-color: #e0f2fe;
+
+            color: #075985;
+
+        }
+
+
+
+        .badge-deferred {
+
+            background-color: #f3f4f6;
+
+            color: #4b5563;
+
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+
+
+    <div class="table-container">
+
+        <div class="table-header">
+
+            <h2>Robustness Gap Tracker</h2>
+
+            <p>Identifying missing or brittle components blocking deployment.</p>
+
+        </div>
+
+        <table>
+
+            <thead>
+
+                <tr>
+
+                    <th class="col-id">#</th>
+
+                    <th class="col-gap">Gap</th>
+
+                    <th class="col-severity">Severity</th>
+
+                    <th class="col-reason">Why ** blocks robustness</th>
+
+                </tr>
+
+            </thead>
+
+            <tbody>
+
+                <tr>
+
+                    <td class="col-id">1</td>
+
+                    <td class="col-gap"><strong>Ticker coverage mismatch:</strong> 30 annual vs 28 silver/chunks. 2 tickers exist ** <code>company_metrics</code> *** have no parsed ******* &rarr; can't be ********* ** the agent.</td>
+
+                    <td class="col-severity"><span class="badge badge-p0">P0</span></td>
+
+                    <td class="col-reason">**** results will ** structurally biased. ***** asking about those 2 tickers get "no data found" even though metrics exist.</td>
+
+                </tr>
+
+                <tr>
+
+                    <td class="col-id">2</td>
+
+                    <td class="col-gap"><strong>**** set ** 10 questions, not 100.</strong> 2/category, covering only 7 tickers. Blueprint &sect;8 ** ******** that 100 manually-verified questions is THE ****** differentiator.</td>
+
+                    <td class="col-severity"><span class="badge badge-p0">P0</span></td>
+
+                    <td class="col-reason">Without a **** eval set you have no V0 baseline &rarr; no iteration loop &rarr; no improvement story to tell.</td>
+
+                </tr>
+
+                <tr>
+
+                    <td class="col-id">3</td>
+
+                    <td class="col-gap"><strong>No V0 baseline run.</strong> <code>07_evaluation.py</code> ****** but hasn't been executed end-to-end.</td>
+
+                    <td class="col-severity"><span class="badge badge-p0">P0</span></td>
+
+                    <td class="col-reason">Current ***** "***** works" is anecdotal (cells 10, 13). No measured numerical precision, faithfulness, tool ********* accuracy.</td>
+
+                </tr>
+
+                <tr>
+
+                    <td class="col-id">4</td>
+
+                    <td class="col-gap"><strong><code>filing_comparison_tool</code> not built.</strong> ********* ******** 4 tools; ** have 3 (<code>search_filings</code>, <code>get_company_metrics</code>, <code>get_quarterly_metrics</code>).</td>
+
+                    <td class="col-severity"><span class="badge badge-p1">P1</span></td>
+
+                    <td class="col-reason"><code>citation_validation</code> + multi_******* eval questions about risk-factor changes can't ** answered.</td>
+
+                </tr>
+
+                <tr>
+
+                    <td class="col-id">5</td>
+
+                    <td class="col-gap"><strong><code>risk_indicators</code> gold table *** built.</strong> Blueprint &sect;5.3 &mdash; risk count, new/removed risk ******* YoY.</td>
+
+                    <td class="col-severity"><span class="badge badge-p1">P1</span></td>
+
+                    <td class="col-reason">Prerequisite for tool #4 and for risk-trend questions.</td>
+
+                </tr>
+
+                <tr>
+
+                    <td class="col-id">6</td>
+
+                    <td class="col-gap"><strong><code>search_filings</code> filing_**** ***** silently falls back.</strong> [Source: &hellip;] never shows | 10-K | / | 10-Q | ******* ** describe API doesn't expose <code>schema_json</code>, ** *** ***** returns ****** cols.</td>
+
+                    <td class="col-severity"><span class="badge badge-p1">P1</span></td>
+
+                    <td class="col-reason">Cosmetic, but ********* the citation-quality story. Fix is ~10 ***** (try a test query ******* ** parsing <code>schema_json</code>).</td>
+
+                </tr>
+
+                <tr>
+
+                    <td class="col-id">7</td>
+
+                    <td class="col-gap"><strong>No chunking experiment.</strong> Production uses a ****** ***** size, never benchmarked. ********* &sect;6.1 mandates 256/512/1024 &plusmn; overlap with Recall@k measurements.</td>
+
+                    <td class="col-severity"><span class="badge badge-p2">P2</span></td>
+
+                    <td class="col-reason">"Why 512 tokens?" has no defensible ****** in an interview.</td>
+
+                </tr>
+
+                <tr>
+
+                    <td class="col-id">8</td>
+
+                    <td class="col-gap"><strong>No hybrid search experiment.</strong> Vector-only in prod. Blueprint &sect;6.2 says compare vector vs BM25 vs ****** on 20 curated queries.</td>
+
+                    <td class="col-severity"><span class="badge badge-p2">P2</span></td>
+
+                    <td class="col-reason">**** ** above &mdash; can't ****** *** ********* design with numbers.</td>
+
+                </tr>
+
+                <tr>
+
+                    <td class="col-id">9</td>
+
+                    <td class="col-gap"><strong>No true SQL-generation tool.</strong> <code>get_company_metrics</code> is a static dict lookup &mdash; fine *** the 12 metrics, useless *** open-ended ****** questions.</td>
+
+                    <td class="col-severity"><span class="badge badge-p2">P2</span></td>
+
+                    <td class="col-reason">Blueprint Tool #1 is "Generate and ******* SQL". Limits agent to pre-******** columns only.</td>
+
+                </tr>
+
+                <tr>
+
+                    <td class="col-id">10</td>
+
+                    <td class="col-gap"><strong>DLT not used.</strong> ********* are plain notebooks with ****** <code>@dlt.expect-equivalent</code> logic in code.</td>
+
+                    <td class="col-severity"><span class="badge badge-p3">P3</span></td>
+
+                    <td class="col-reason">Works, but deviates from blueprint &sect;4.3. Certification alignment story weaker.</td>
+
+                </tr>
+
+                <tr>
+
+                    <td class="col-id">11</td>
+
+                    <td class="col-gap"><strong>No scheduled ******** *** ingestion.</strong> Only the agent-deploy *** is scheduled. Bronze&rarr;Gold ******** runs manually.</td>
+
+                    <td class="col-severity"><span class="badge badge-p3">P3</span></td>
+
+                    <td class="col-reason">"**** me **** ********** scheduling" &mdash; nothing ** show yet.</td>
+
+                </tr>
+
+                <tr>
+
+                    <td class="col-id">12</td>
+
+                    <td class="col-gap"><strong><code>src/</code> skeleton is empty.</strong> <code>src/agent/tools/</code>, <code>src/retrieval/</code>, <code>src/processing/</code>, <code>src/monitoring/</code> are ***** dirs. All code lives in <code>databricks/notebooks/</code>.</td>
+
+                    <td class="col-severity"><span class="badge badge-p3">P3</span></td>
+
+                    <td class="col-reason">Notebook-**** = **** to unit-test and hard to extract into ******** modules. Tests dir *** 2 stub tests.</td>
+
+                </tr>
+
+                <tr>
+
+                    <td class="col-id">13</td>
+
+                    <td class="col-gap"><strong>No monitoring dashboard / ********** App.</strong> Blueprint Week 9.</td>
+
+                    <td class="col-severity"><span class="badge badge-p3">P3</span></td>
+
+                    <td class="col-reason">Deferred *** original roadmap.</td>
+
+                </tr>
+
+                <tr>
+
+                    <td class="col-id">14</td>
+
+                    <td class="col-gap"><strong>** docs/architecture.md, docs/evaluation_report.md.</strong> Only v1-era HTML **** in <code>docs/</code>.</td>
+
+                    <td class="col-severity"><span class="badge badge-p3">P3</span></td>
+
+                    <td class="col-reason">Need these for the final ship.</td>
+
+                </tr>
+
+                <tr>
+
+                    <td class="col-id">15</td>
+
+                    <td class="col-gap"><strong>Transcripts scope.</strong> <code>Bronze.transcripts</code> + <code>silver.transcript_segments</code> not built.</td>
+
+                    <td class="col-severity"><span class="badge badge-deferred">Deferred</span></td>
+
+                    <td class="col-reason">Blueprint ******** it in Week 4; explicitly deprioritized in current plan.</td>
+
+                </tr>
+
+            </tbody>
+
+        </table>
+
+    </div>
+
+
+
+
+<div style="color: red">Word to HTML trial - please <a href="https://wordtohtml.net/site/payment">Go PRO</a> to get whole HTML.</div>
+</body>
+
+</html>
