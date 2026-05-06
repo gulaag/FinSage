@@ -25,6 +25,7 @@ dbutils.widgets.text("agent_endpoint",  "finsage_agent_endpoint",   "Target agen
 dbutils.widgets.text("judge_endpoint",  "databricks-meta-llama-3-3-70b-instruct", "LLM-as-judge endpoint")
 dbutils.widgets.text("ground_truth_path", "../../src/evaluation/ground_truth_v2.json", "Ground-truth JSON (workspace-relative)")
 dbutils.widgets.text("eval_name",       "finsage_eval_v2",          "MLflow eval run name")
+dbutils.widgets.text("experiment_id",   "8c0b194f632349c6bc5ebe8c7a45480c", "MLflow experiment id")
 
 CATALOG          = dbutils.widgets.get("catalog")
 ENV              = dbutils.widgets.get("env")
@@ -32,6 +33,7 @@ AGENT_ENDPOINT   = dbutils.widgets.get("agent_endpoint")
 JUDGE_ENDPOINT   = dbutils.widgets.get("judge_endpoint")
 GROUND_TRUTH     = dbutils.widgets.get("ground_truth_path")
 EVAL_NAME        = dbutils.widgets.get("eval_name")
+EXPERIMENT_ID    = dbutils.widgets.get("experiment_id")
 
 print(f"[CONFIG] agent={AGENT_ENDPOINT} | judge={JUDGE_ENDPOINT} | truth={GROUND_TRUTH}")
 
@@ -49,7 +51,7 @@ import re
 from pathlib import Path
 
 import mlflow
-from mlflow.genai.scorers import scorer, Correctness, RetrievalGroundedness, Guidelines
+from mlflow.genai.scorers import scorer, Correctness, Guidelines
 from databricks.sdk import WorkspaceClient
 
 CATALOG         = dbutils.widgets.get("catalog")
@@ -58,6 +60,7 @@ AGENT_ENDPOINT  = dbutils.widgets.get("agent_endpoint")
 JUDGE_ENDPOINT  = dbutils.widgets.get("judge_endpoint")
 GROUND_TRUTH    = dbutils.widgets.get("ground_truth_path")
 EVAL_NAME       = dbutils.widgets.get("eval_name")
+EXPERIMENT_ID   = dbutils.widgets.get("experiment_id")
 
 w = WorkspaceClient()
 
@@ -92,20 +95,35 @@ print(f"[LOAD] categories: {sorted(set(q['category'] for q in ground))}")
 # and `expectations` (ground-truth fields consumed by scorers).
 
 def to_eval_row(q: dict) -> dict:
+    expectations = {
+        "question_id": q["question_id"],
+        "category": q["category"],
+        "ticker": q["ticker"],
+        "fiscal_year": q.get("fiscal_year"),
+        "difficulty": q["difficulty"],
+        "source_doc": q["source_doc"],
+        "source_section": q.get("source_section", ""),
+    }
+
+    # MLflow Correctness scorer requires exactly one of expected_response/expected_facts.
+    category = q["category"]
+    source_section = q.get("source_section", "")
+    use_expected_response = source_section == "metrics" or category in {
+        "numerical_lookup",
+        "yoy_comparison",
+        "multi_company",
+        "refusal_test",
+    }
+    if use_expected_response:
+        expectations["expected_response"] = q["expected_answer"]
+    else:
+        expectations["expected_facts"] = [q["evidence_passage"]]
+
     return {
         "inputs": {
             "messages": [{"role": "user", "content": q["question"]}]
         },
-        "expectations": {
-            "expected_response":     q["expected_answer"],
-            "expected_facts":        [q["evidence_passage"]],
-            "question_id":           q["question_id"],
-            "category":              q["category"],
-            "ticker":                q["ticker"],
-            "fiscal_year":           q.get("fiscal_year"),
-            "difficulty":            q["difficulty"],
-            "source_doc":            q["source_doc"],
-        }
+        "expectations": expectations,
     }
 
 eval_dataset = [to_eval_row(q) for q in ground]
@@ -166,7 +184,7 @@ def _first_number(text: str) -> float | None:
     return None
 
 @scorer
-def numerical_tolerance(outputs, expectations):
+def numerical_tolerance(*, outputs=None, expectations=None, **kwargs):
     category = (expectations or {}).get("category")
     if category != "numerical_lookup":
         return None  # skip — not applicable
@@ -183,14 +201,10 @@ def numerical_tolerance(outputs, expectations):
     true_num = _first_number(expected_text)
 
     if pred_num is None or true_num is None or true_num == 0:
-        return {"value": False, "rationale": f"Could not parse numbers (pred={pred_num}, true={true_num})"}
+        return False
 
     rel_err = abs(pred_num - true_num) / abs(true_num)
-    passed = rel_err <= 0.01
-    return {
-        "value": passed,
-        "rationale": f"pred={pred_num:.2f}, true={true_num:.2f}, rel_err={rel_err:.4f} ({'PASS' if passed else 'FAIL'} @ 1% tol)"
-    }
+    return rel_err <= 0.01
 
 # COMMAND ----------
 
@@ -201,7 +215,7 @@ _CITATION_TAG = re.compile(r"\[(VERBATIM|SUMMARY)\]", re.IGNORECASE)
 _SOURCE_LINE  = re.compile(r"\[Source:\s*[A-Z]+\s*\|\s*FY\d{4}", re.IGNORECASE)
 
 @scorer
-def citation_format(outputs, expectations):
+def citation_format(*, outputs=None, expectations=None, **kwargs):
     category = (expectations or {}).get("category")
     # Only applies where retrieval happens (not pure metrics questions)
     if category not in ("risk_summary", "citation_validation", "yoy_comparison", "numerical_lookup"):
@@ -218,16 +232,13 @@ def citation_format(outputs, expectations):
 
     has_tag    = bool(_CITATION_TAG.search(response))
     has_source = bool(_SOURCE_LINE.search(response))
-    passed = has_tag and has_source
-    return {
-        "value": passed,
-        "rationale": f"[VERBATIM]/[SUMMARY] tag: {has_tag} | [Source: ...] line: {has_source}"
-    }
+    return has_tag and has_source
 
 # COMMAND ----------
 
 # ── 8. Run evaluation ────────────────────────────────────────────────────────
 mlflow.set_registry_uri("databricks-uc")
+mlflow.set_experiment(experiment_id=EXPERIMENT_ID)
 
 with mlflow.start_run(run_name=EVAL_NAME) as run:
     mlflow.log_params({
@@ -242,7 +253,8 @@ with mlflow.start_run(run_name=EVAL_NAME) as run:
         predict_fn=predict_fn,
         scorers=[
             Correctness(),
-            RetrievalGroundedness(),
+            # v2: RetrievalGroundedness disabled because current agent traces do not
+            # emit RETRIEVER-typed spans; enable once tool spans are instrumented.
             Guidelines(
                 name="cites_ticker_and_year",
                 guidelines=(
