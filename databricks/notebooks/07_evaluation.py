@@ -272,7 +272,113 @@ with mlflow.start_run(run_name=EVAL_NAME) as run:
 
 # COMMAND ----------
 
-# ── 9. Per-category breakdown ────────────────────────────────────────────────
+# ── 9. Simple evaluation summary (human-readable) ────────────────────────────
+def _normalize_feedback_value(raw):
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return 1.0 if raw else 0.0
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    if isinstance(raw, str):
+        token = raw.strip().lower()
+        if token in {"yes", "pass", "true"}:
+            return 1.0
+        if token in {"no", "fail", "false"}:
+            return 0.0
+        try:
+            return float(token)
+        except ValueError:
+            return None
+    return None
+
+
+def _print_simple_summary(eval_run_id: str) -> None:
+    """Print a concise eval-health summary from MLflow traces."""
+    api = w.api_client
+    traces_resp = api.do(
+        "GET",
+        "/api/2.0/mlflow/traces",
+        query={"experiment_ids": EXPERIMENT_ID, "max_results": 500},
+    )
+    traces = traces_resp.get("traces", [])
+    run_traces = []
+    for trace in traces:
+        tags = trace.get("tags", [])
+        if any(
+            tag.get("key", "").startswith("mlflow.assessment.")
+            and eval_run_id in tag.get("value", "")
+            for tag in tags
+        ):
+            run_traces.append(trace)
+
+    scorer_stats = {}
+    for trace in run_traces:
+        for tag in trace.get("tags", []):
+            key = tag.get("key", "")
+            if not key.startswith("mlflow.assessment."):
+                continue
+            payload = json.loads(tag.get("value", "{}"))
+            name = payload.get("assessment_name")
+            if not name:
+                continue
+            # ignore expectation echo rows, keep real scorer rows only
+            if name in {
+                "category",
+                "difficulty",
+                "expected_facts",
+                "expected_response",
+                "fiscal_year",
+                "question_id",
+                "source_doc",
+                "source_section",
+                "ticker",
+            }:
+                continue
+
+            stats = scorer_stats.setdefault(
+                name,
+                {"total": 0, "answered": 0, "passed": 0, "failed": 0, "errors": 0},
+            )
+            stats["total"] += 1
+            feedback = payload.get("feedback") or {}
+            if feedback.get("error"):
+                stats["errors"] += 1
+                continue
+            numeric = _normalize_feedback_value(feedback.get("value"))
+            if numeric is None:
+                continue
+            stats["answered"] += 1
+            if numeric >= 0.5:
+                stats["passed"] += 1
+            else:
+                stats["failed"] += 1
+
+    print("=" * 86)
+    print("EVALUATION SUMMARY")
+    print("=" * 86)
+    print(f"Run ID: {eval_run_id}")
+    print(f"Questions in dataset: {len(eval_dataset)}")
+    print(f"Traces found for this run: {len(run_traces)}")
+    print("")
+    print("Per-scorer outcome:")
+    for scorer_name in sorted(scorer_stats):
+        s = scorer_stats[scorer_name]
+        print(
+            f"- {scorer_name}: total={s['total']}, answered={s['answered']}, "
+            f"passed={s['passed']}, failed={s['failed']}, errors={s['errors']}"
+        )
+    print("=" * 86)
+
+
+try:
+    _print_simple_summary(run.info.run_id)
+except Exception as e:
+    print(f"[SUMMARY] skipped: {type(e).__name__}: {e}")
+
+# COMMAND ----------
+
+# ── 10. Per-category breakdown ───────────────────────────────────────────────
 try:
     import pandas as pd
     df = results.tables["eval_results"] if hasattr(results, "tables") else None
@@ -294,7 +400,7 @@ except Exception as e:
 
 # COMMAND ----------
 
-# ── 10. How to iterate ───────────────────────────────────────────────────────
+# ── 11. How to iterate ───────────────────────────────────────────────────────
 # 1. Open the MLflow run linked above, inspect per-row traces for failures.
 # 2. Common failure modes:
 #    - Wrong fiscal year retrieved  → tighten SYSTEM_PROMPT year-filter directive
