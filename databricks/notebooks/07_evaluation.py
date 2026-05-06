@@ -23,8 +23,8 @@ dbutils.widgets.text("catalog",         "main",                     "UC catalog"
 dbutils.widgets.text("env",             "dev",                      "Environment")
 dbutils.widgets.text("agent_endpoint",  "finsage_agent_endpoint",   "Target agent serving endpoint")
 dbutils.widgets.text("judge_endpoint",  "databricks-meta-llama-3-3-70b-instruct", "LLM-as-judge endpoint")
-dbutils.widgets.text("ground_truth_path", "../../src/evaluation/ground_test.json", "Ground-truth JSON (workspace-relative)")
-dbutils.widgets.text("eval_name",       "finsage_eval_v1",          "MLflow eval run name")
+dbutils.widgets.text("ground_truth_path", "../../src/evaluation/ground_truth_v2.json", "Ground-truth JSON (workspace-relative)")
+dbutils.widgets.text("eval_name",       "finsage_eval_v2",          "MLflow eval run name")
 
 CATALOG          = dbutils.widgets.get("catalog")
 ENV              = dbutils.widgets.get("env")
@@ -72,12 +72,12 @@ truth_path = (notebook_dir / GROUND_TRUTH).resolve() if not GROUND_TRUTH.startsw
 # /Workspace prefix for workspace files
 ws_truth_path = Path("/Workspace") / str(truth_path).lstrip("/")
 
-for candidate in (ws_truth_path, truth_path, Path(f"/Workspace/Users/digvijay@arsaga.jp/FinSage/src/evaluation/ground_test.json")):
+for candidate in (ws_truth_path, truth_path, Path(f"/Workspace/Users/digvijay@arsaga.jp/FinSage/src/evaluation/ground_truth_v2.json")):
     if candidate.exists():
         truth_path = candidate
         break
 else:
-    raise FileNotFoundError(f"ground_test.json not found. Tried: {ws_truth_path}, {truth_path}")
+    raise FileNotFoundError(f"ground-truth JSON not found. Tried: {ws_truth_path}, {truth_path}")
 
 with open(truth_path) as f:
     ground = json.load(f)
