@@ -87,11 +87,11 @@ FinSage is a production-grade financial intelligence platform on Databricks. It 
 - Databricks Vector Search index (DELTA_SYNC, TRIGGERED pipeline)
 - Embeddings: BGE-large-en
 - Endpoint: `finsage_vs_endpoint`
-- **17,259 chunks, 131 filings, 21 tickers**
+- **45,136 chunks, 728 filings, 30 tickers** (as of 2026-05-05; full 10-K + 10-Q coverage)
 - Filterable columns: `ticker`, `section_name`, `fiscal_year`
 
 ### `finsage_rag_agent`
-- UC-registered MLflow pyfunc model (current version: **8**, deployed and serving)
+- UC-registered MLflow pyfunc model (current version: **16**, deployed and serving)
 - Deployed to Model Serving endpoint: `finsage_agent_endpoint` (state: `READY`, scaled-to-zero)
 - Redeploys are automated via the `finsage-log-and-deploy-agent` job (id `790463778829808`, created via AI Dev Kit 2026-04-20) — runs notebook `06_rag_agent.py` end-to-end on serverless
 
@@ -164,10 +164,14 @@ CATALOG = dbutils.widgets.get("catalog")
 ---
 
 ## What's Next (Pending)
-1. ~~Cell 12 live test — verify `finsage_agent_endpoint` answers correctly~~ **DONE** (endpoint `READY`, serving v8)
-2. **Run `07_evaluation.py`** — MLflow GenAI eval over the 10-question curated set. Dataset coverage constraint: only 6 tickers have both metrics + vector chunks (AAPL, GOOGL, MA, MSFT, NVDA, TSLA); questions have been reshaped accordingly — do not re-introduce META, NFLX, WMT, JPM, AMZN, V for retrieval-based questions. Judge: `databricks-meta-llama-3-3-70b-instruct`. Custom scorers: `numerical_tolerance` (±1% on `numerical_lookup`), `citation_format` ([VERBATIM]/[SUMMARY] + [Source: ...] line).
+1. ~~Cell 12 live test — verify `finsage_agent_endpoint` answers correctly~~ **DONE** (endpoint `READY`, serving v16)
+2. **Run `07_evaluation.py`** — MLflow GenAI eval over the 10-question curated set. Eval dataset uses 6 tickers (AAPL, GOOGL, MA, MSFT, NVDA, TSLA) — all 30 tickers now have chunks, but the curated questions were authored against this subset and should not be re-broadened without rewriting them. Judge: `databricks-meta-llama-3-3-70b-instruct`. Custom scorers: `numerical_tolerance` (±1% on `numerical_lookup`), `citation_format` ([VERBATIM]/[SUMMARY] + [Source: ...] line).
 3. **`08_knowledge_graph.py`** — Entity extraction from MD&A/Risk Factors using Graphify
 4. **CI/CD** — GitHub Actions DAB pipeline (`.github/workflows/`) — deprioritized until core pipeline is stable
+
+## Known Gaps (open, non-blocking)
+- **MCD 10-K Silver gap**: 7 MCD 10-K filings exist in bronze but produced 0 rows in `filing_sections` (10-Q rows are fine — 18 filings / 36 sections). Annual XBRL metrics in `company_metrics` are unaffected (sourced from `financial_statements`), but MCD has no 10-K text chunks in the VS index — RAG will return nothing for MCD annual narrative questions. MCD is not in the `07` eval set, so non-blocking. Fix path: rerun `03_silver_decoder.py` scoped to MCD 10-Ks and inspect any new `parse_failure` rows.
+- **NVDA FY2021 Q3 row**: `revenue` and `net_income` are null in `company_metrics_quarterly` (single historical row).
 
 ---
 
