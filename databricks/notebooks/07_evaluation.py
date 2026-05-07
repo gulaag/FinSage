@@ -65,7 +65,7 @@ print(f"[CONFIG] agent={AGENT_ENDPOINT} | judge={JUDGE_ENDPOINT} | truth={GROUND
 
 # COMMAND ----------
 
-# MAGIC %pip install --quiet "mlflow[databricks]>=3.0" databricks-sdk
+# MAGIC %pip install --quiet "mlflow[databricks]>=3.0" databricks-sdk databricks-vectorsearch
 # MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
