@@ -213,14 +213,22 @@ if LATEST_MODEL_VERSION is None:
     raise RuntimeError(f"No registered versions found for {UC_MODEL_NAME}")
 print(f"[MODEL] loading {UC_MODEL_NAME}/{LATEST_MODEL_VERSION} in-process")
 
-LOADED_AGENT = mlflow.pyfunc.load_model(f"models:/{UC_MODEL_NAME}/{LATEST_MODEL_VERSION}")
+_LOADED_AGENT = mlflow.pyfunc.load_model(f"models:/{UC_MODEL_NAME}/{LATEST_MODEL_VERSION}")
+
+# Unwrap to the raw FinSageAgent class instance so we bypass MLflow's pyfunc
+# signature-driven input transformation. The wrapper converts {"messages":[...]}
+# into a single-row DataFrame and JSON-stringifies the messages list, which
+# triggers AttributeError("'str' object has no attribute 'get'") inside the
+# agent's predict when it iterates messages expecting dicts. Calling the
+# unwrapped class instance directly preserves the dict shape end-to-end.
+RAW_AGENT = _LOADED_AGENT.unwrap_python_model()
 
 @mlflow.trace(span_type="AGENT")
 def predict_fn(messages: list) -> dict:
     """Run the agent in-process so its @mlflow.trace tools (RETRIEVER, TOOL)
     emit child spans into the eval trace. Returns chat-completion-shaped dict."""
     try:
-        out = LOADED_AGENT.predict({"messages": messages})
+        out = RAW_AGENT.predict(None, {"messages": messages})
         if isinstance(out, list) and out:
             out = out[0]
         if isinstance(out, dict):
