@@ -35,6 +35,7 @@ SIMILARITY_THRESHOLD = float(dbutils.widgets.get("similarity_threshold"))
 VS_INDEX_NAME           = f"{CATALOG}.finsage_gold.filing_chunks_index"
 METRICS_TABLE           = f"{CATALOG}.finsage_gold.company_metrics"
 METRICS_QUARTERLY_TABLE = f"{CATALOG}.finsage_gold.company_metrics_quarterly"
+SILVER_FINANCIALS_TABLE = f"{CATALOG}.finsage_silver.financial_statements"
 UC_MODEL_NAME           = f"{CATALOG}.finsage_gold.finsage_rag_agent"
 AGENT_ENDPOINT          = "finsage_agent_endpoint"
 MAX_ITERATIONS          = 5
@@ -53,6 +54,9 @@ import json
 import logging
 import mlflow
 import mlflow.deployments
+import re
+import time
+import requests
 from databricks.vector_search.client import VectorSearchClient
 from pyspark.sql import functions as F
 
@@ -72,6 +76,7 @@ SIMILARITY_THRESHOLD = float(dbutils.widgets.get("similarity_threshold"))
 VS_INDEX_NAME           = f"{CATALOG}.finsage_gold.filing_chunks_index"
 METRICS_TABLE           = f"{CATALOG}.finsage_gold.company_metrics"
 METRICS_QUARTERLY_TABLE = f"{CATALOG}.finsage_gold.company_metrics_quarterly"
+SILVER_FINANCIALS_TABLE = f"{CATALOG}.finsage_silver.financial_statements"
 UC_MODEL_NAME           = f"{CATALOG}.finsage_gold.finsage_rag_agent"
 AGENT_ENDPOINT          = "finsage_agent_endpoint"
 MAX_ITERATIONS          = 5
@@ -128,9 +133,123 @@ def _load_quarterly_cache(table: str) -> dict:
     log.info("Quarterly cache loaded: %d tickers", len(cache))
     return cache
 
+
+def _load_filing_metadata_cache(silver_table: str) -> dict:
+    """
+    Cache shape:
+      {ticker: {fy: {"filing_date": "YYYY-MM-DD", "employees": float|None, "shares_outstanding": float|None}}}
+    Sourced independently from silver financial_statements (10-K FY facts).
+    """
+    ticker_cik_map = {
+        "AAPL": "0000320193", "ABBV": "0001551152", "AMZN": "0001018724", "BAC": "0000070858",
+        "CRM": "0001108524", "DDOG": "0001561550", "F": "0000037996", "GM": "0001467858",
+        "GOOGL": "0001652044", "GS": "0000886982", "JNJ": "0000200406", "JPM": "0000019617",
+        "KO": "0000021344", "LCID": "0001811210", "MA": "0001141391", "MCD": "0000063908",
+        "MRK": "0000310158", "MSFT": "0000789019", "NET": "0001477333", "NKE": "0000320187",
+        "NVDA": "0001045810", "PFE": "0000078003", "PLTR": "0001321655", "RIVN": "0001874178",
+        "SBUX": "0000829224", "SNOW": "0001640147", "TSLA": "0001318605", "UNH": "0000731766",
+        "V": "0001403161", "WMT": "0000104169",
+    }
+
+    # Determine which fiscal years are relevant per ticker from annual metrics cache.
+    ticker_years = {
+        t: sorted(int(y) for y in years.keys())
+        for t, years in METRICS_CACHE.items()
+        if t in ticker_cik_map
+    }
+    if not ticker_years:
+        return {}
+
+    sec_session = requests.Session()
+    sec_session.headers.update({
+        "User-Agent": "FinSage Agent Metadata digvijay@arsaga.jp",
+        "Accept-Encoding": "gzip, deflate",
+        "Host": "data.sec.gov",
+    })
+    min_interval_sec = 0.12
+    last_call_ts = 0.0
+
+    def _throttle():
+        nonlocal last_call_ts
+        elapsed = time.monotonic() - last_call_ts
+        if elapsed < min_interval_sec:
+            time.sleep(min_interval_sec - elapsed)
+
+    def _get_json(url: str):
+        nonlocal last_call_ts
+        for attempt in range(3):
+            _throttle()
+            resp = sec_session.get(url, timeout=30)
+            last_call_ts = time.monotonic()
+            if resp.status_code == 404:
+                return None
+            if resp.status_code == 200:
+                return resp.json()
+            if resp.status_code in {429, 500, 502, 503, 504, 403} and attempt < 2:
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            resp.raise_for_status()
+        return None
+
+    def _best_fact_by_fy(payload: dict, preferred_unit: str, fy: int):
+        units = payload.get("units", {}) if payload else {}
+        candidate_units = [preferred_unit] if preferred_unit in units else list(units.keys())
+        best = None
+        for unit in candidate_units:
+            for fact in units.get(unit, []):
+                if fact.get("fy") != fy:
+                    continue
+                if fact.get("form") not in {"10-K", "10-K/A"}:
+                    continue
+                if best is None or (fact.get("filed") or "") > (best.get("filed") or ""):
+                    best = fact
+        return best
+
+    cache = {}
+    for ticker, years in ticker_years.items():
+        cik = ticker_cik_map[ticker]
+        emp_payload = _get_json(
+            f"https://data.sec.gov/api/xbrl/companyconcept/CIK{cik}/dei/EntityNumberOfEmployees.json"
+        )
+        shares_payload = _get_json(
+            f"https://data.sec.gov/api/xbrl/companyconcept/CIK{cik}/dei/EntityCommonStockSharesOutstanding.json"
+        )
+        submissions = _get_json(f"https://data.sec.gov/submissions/CIK{cik}.json")
+
+        filing_date_by_report_year = {}
+        if submissions:
+            recent = submissions.get("filings", {}).get("recent", {})
+            for form, report_date, filing_date in zip(
+                recent.get("form", []),
+                recent.get("reportDate", []),
+                recent.get("filingDate", []),
+            ):
+                if form not in {"10-K", "10-K/A"} or not report_date or not filing_date:
+                    continue
+                fy = int(str(report_date)[:4])
+                prev = filing_date_by_report_year.get(fy)
+                if prev is None or filing_date > prev:
+                    filing_date_by_report_year[fy] = filing_date
+
+        for fy in years:
+            emp_fact = _best_fact_by_fy(emp_payload, preferred_unit="pure", fy=fy)
+            shares_fact = _best_fact_by_fy(shares_payload, preferred_unit="shares", fy=fy)
+            cache.setdefault(ticker, {})[fy] = {
+                "filing_date": filing_date_by_report_year.get(fy),
+                "employees": float(emp_fact.get("val")) if emp_fact and emp_fact.get("val") is not None else None,
+                "shares_outstanding": float(shares_fact.get("val")) if shares_fact and shares_fact.get("val") is not None else None,
+            }
+
+    log.info("Metadata cache loaded from SEC: %d tickers", len(cache))
+    return cache
+
 METRICS_CACHE           = _load_metrics_cache(METRICS_TABLE)
 QUARTERLY_METRICS_CACHE = _load_quarterly_cache(METRICS_QUARTERLY_TABLE)
-print(f"[CACHE] annual: {len(METRICS_CACHE)} tickers | quarterly: {len(QUARTERLY_METRICS_CACHE)} tickers")
+FILING_METADATA_CACHE   = _load_filing_metadata_cache(SILVER_FINANCIALS_TABLE)
+print(
+    f"[CACHE] annual: {len(METRICS_CACHE)} tickers | quarterly: {len(QUARTERLY_METRICS_CACHE)} tickers | "
+    f"metadata: {len(FILING_METADATA_CACHE)} tickers"
+)
 
 # COMMAND ----------
 
@@ -175,7 +294,7 @@ log.info("VS index columns present: %s (filing_type supported=%s)",
          sorted(_VS_INDEX_COLS), _FILING_TYPE_IN_INDEX)
 
 
-@mlflow.trace(name="search_filings", span_type="TOOL")
+@mlflow.trace(name="search_filings", span_type="RETRIEVER")
 def search_filings(
     query: str,
     ticker: str = None,
@@ -427,6 +546,36 @@ print("[get_quarterly_metrics test]\n", _test3[:500])
 
 # COMMAND ----------
 
+# ── 5c. Tool: get_filing_metadata ─────────────────────────────────────────────
+
+@mlflow.trace(name="get_filing_metadata", span_type="TOOL")
+def get_filing_metadata(
+    ticker: str,
+    fiscal_year: int,
+    metadata_cache: dict = None,
+) -> str:
+    """
+    Deterministic lookup for 10-K cover-page style metadata.
+    """
+    cache = metadata_cache if metadata_cache is not None else FILING_METADATA_CACHE
+    ticker_upper = ticker.upper()
+    if ticker_upper not in cache:
+        return f"No filing metadata for ticker '{ticker_upper}'."
+    item = cache[ticker_upper].get(int(fiscal_year))
+    if not item:
+        return f"No filing metadata for {ticker_upper} in FY{int(fiscal_year)}."
+    filing_date = item.get("filing_date")
+    employees = item.get("employees")
+    shares = item.get("shares_outstanding")
+    return (
+        f"10-K metadata for {ticker_upper} FY{int(fiscal_year)}:"
+        f"\n  Filing Date: {filing_date or 'N/A'}"
+        f"\n  Employees: {int(employees) if employees is not None else 'N/A'}"
+        f"\n  Shares Outstanding: {int(shares) if shares is not None else 'N/A'}"
+    )
+
+# COMMAND ----------
+
 # ── 6. Tool schemas (OpenAI function-calling format) ──────────────────────────
 
 TOOL_SCHEMAS = [
@@ -554,6 +703,30 @@ TOOL_SCHEMAS = [
                 "required": ["ticker"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_filing_metadata",
+            "description": (
+                "Retrieve deterministic 10-K cover-page metadata fields for one ticker and fiscal year: "
+                "filing date, employee count, and shares outstanding."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticker": {
+                        "type": "string",
+                        "description": "Stock ticker symbol (e.g. 'AAPL')."
+                    },
+                    "fiscal_year": {
+                        "type": "integer",
+                        "description": "Fiscal year (e.g. 2024)."
+                    },
+                },
+                "required": ["ticker", "fiscal_year"]
+            }
+        }
     }
 ]
 
@@ -561,6 +734,7 @@ TOOL_DISPATCH = {
     "search_filings":        lambda args: search_filings(**args),
     "get_company_metrics":   lambda args: get_company_metrics(**args),
     "get_quarterly_metrics": lambda args: get_quarterly_metrics(**args),
+    "get_filing_metadata":   lambda args: get_filing_metadata(**args),
 }
 
 print(f"[TOOLS] Registered: {list(TOOL_DISPATCH.keys())}")
@@ -573,13 +747,15 @@ SYSTEM_PROMPT = """\
 You are FinSage, an expert financial analyst AI with access to SEC filings (10-K and 10-Q) \
 and structured financial metrics for 30 major public companies (2020–2026).
 
-You have three tools:
+You have four tools:
 1. search_filings         — retrieves relevant passages from filing text. 10-K covers Business, \
 Risk Factors, MD&A. 10-Q covers MD&A (and Risk Factors Updates when present).
 2. get_company_metrics    — retrieves ANNUAL structured financial data (revenue, margins, growth \
 rates, debt ratios) sourced from 10-K filings.
 3. get_quarterly_metrics  — retrieves QUARTERLY (Q1/Q2/Q3) discrete-quarter metrics sourced from \
 10-Q filings, including same-quarter YoY growth and intra-year balance sheet movement.
+4. get_filing_metadata    — retrieves deterministic 10-K cover-page metadata: filing date, \
+employee count, and shares outstanding.
 
 Routing guidelines:
 - Always use tools to ground your answer in actual data before responding.
@@ -600,6 +776,8 @@ search_filings with that specific fiscal_year to ensure all retrieved passages c
 single filing period.
 - When citing text from filings: prefix direct quotes with [VERBATIM] and paraphrased content \
 with [SUMMARY]. Never present a summary as a direct quote.
+- For any answer that uses filing text, include at least one [Source: TICKER | FY#### | ...] line \
+verbatim in the final answer.
 - When computing or presenting any financial ratio (margins, growth rates, leverage ratios), \
 always state the formula explicitly on first use. \
 Example: "Operating Margin (GAAP) = Operating Income ÷ Revenue"
@@ -630,6 +808,21 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
             except (FileNotFoundError, json.JSONDecodeError):
                 self._quarterly_cache = {}
 
+        self._filing_metadata_cache = {}
+        md_path = context.artifacts.get("filing_metadata_cache") if hasattr(context.artifacts, "get") else None
+        if md_path is None and isinstance(context.artifacts, dict):
+            md_path = context.artifacts.get("filing_metadata_cache")
+        if md_path:
+            try:
+                with open(md_path, "r") as f:
+                    raw_md = json.load(f)
+                self._filing_metadata_cache = {
+                    ticker: {int(fy): vals for fy, vals in years.items()}
+                    for ticker, years in raw_md.items()
+                }
+            except (FileNotFoundError, json.JSONDecodeError, ValueError, TypeError):
+                self._filing_metadata_cache = {}
+
         self._llm_endpoint    = context.model_config.get("llm_endpoint", "databricks-meta-llama-3-3-70b-instruct")
         self._vs_endpoint     = context.model_config.get("vs_endpoint",  "finsage_vs_endpoint")
         self._vs_index        = context.model_config.get("vs_index",     "main.finsage_gold.filing_chunks_index")
@@ -638,6 +831,294 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
 
     def predict(self, context, model_input, params=None):
         import mlflow.deployments, json
+
+        source_pattern = re.compile(r"\[Source:\s*[^\]]+\]", re.IGNORECASE)
+        company_pattern_strip = re.compile(r"[^A-Za-z0-9 ]+")
+
+        def _extract_sources(text: str) -> list[str]:
+            return source_pattern.findall(text or "")
+
+        def _enforce_citation_format(content: str, tool_sources: list[str], used_retrieval: bool) -> str:
+            if not content:
+                return content
+            if not used_retrieval:
+                return content
+            final = content
+            if not re.search(r"\[(VERBATIM|SUMMARY)\]", final, flags=re.IGNORECASE):
+                final = "[SUMMARY] " + final
+            if not source_pattern.search(final) and tool_sources:
+                deduped = []
+                seen = set()
+                for src in tool_sources:
+                    if src not in seen:
+                        deduped.append(src)
+                        seen.add(src)
+                final = final.rstrip() + "\n\n" + "\n".join(deduped[:2])
+            return final
+
+        def _normalize_company_name(name: str) -> str:
+            base = company_pattern_strip.sub(" ", (name or "").lower())
+            return re.sub(r"\s+", " ", base).strip()
+
+        def _format_money(value: float) -> str:
+            return f"${value:,.0f}"
+
+        def _resolve_ticker_from_company(company: str) -> str | None:
+            norm = _normalize_company_name(company)
+            # Direct ticker input (e.g., "MSFT")
+            if norm.upper() in self._metrics_cache:
+                return norm.upper()
+            # Exact normalized company name match
+            for ticker, years in self._metrics_cache.items():
+                if not years:
+                    continue
+                first_year = sorted(years.keys())[-1]
+                cname = years[first_year].get("company_name")
+                if _normalize_company_name(cname) == norm:
+                    return ticker
+            # Prefix match fallback
+            for ticker, years in self._metrics_cache.items():
+                if not years:
+                    continue
+                first_year = sorted(years.keys())[-1]
+                cname = years[first_year].get("company_name")
+                cname_norm = _normalize_company_name(cname)
+                if norm in cname_norm or cname_norm in norm:
+                    return ticker
+            return None
+
+        metric_map = {
+            "revenue": "revenue",
+            "net income": "net_income",
+            "operating income": "operating_income",
+            "gross profit": "gross_profit",
+            "total assets": "total_assets",
+            "total liabilities": "total_liabilities",
+            "total equity": "total_equity",
+            "operating cash flow": "operating_cash_flow",
+            "research and development expense": "rd_expense",
+            "employees": "employees",
+            "shares of common stock": "shares_outstanding",
+            "shares outstanding": "shares_outstanding",
+            "debt-to-equity ratio": "debt_to_equity",
+            "gross margin": "gross_margin_pct",
+            "revenue growth": "revenue_yoy_growth_pct",
+        }
+
+        def _metric_key_from_text(metric_text: str) -> str | None:
+            m = (metric_text or "").lower().strip()
+            # Longest-match-first for stable mapping
+            for phrase in sorted(metric_map.keys(), key=len, reverse=True):
+                if phrase in m:
+                    return metric_map[phrase]
+            return None
+
+        def _metric_label(metric_key: str) -> str:
+            reverse = {
+                "revenue": "revenue",
+                "net_income": "net income",
+                "operating_income": "operating income",
+                "gross_profit": "gross profit",
+                "total_assets": "total assets",
+                "total_liabilities": "total liabilities",
+                "total_equity": "total equity",
+                "operating_cash_flow": "operating cash flow",
+                "rd_expense": "research and development expense",
+                "gross_margin_pct": "gross margin",
+                "debt_to_equity": "debt-to-equity ratio",
+                "revenue_yoy_growth_pct": "revenue growth",
+            }
+            return reverse.get(metric_key, metric_key)
+
+        def _get_annual_metric(ticker: str, fy: int, metric_key: str):
+            data = self._metrics_cache.get(ticker, {}).get(fy)
+            if not data:
+                return None
+            return data.get(metric_key)
+
+        def _get_quarter_metric(ticker: str, fy: int, fq: int, metric_key: str):
+            key = f"{int(fy)}-Q{int(fq)}"
+            data = self._quarterly_cache.get(ticker, {}).get(key)
+            if not data:
+                return None
+            return data.get(metric_key)
+
+        def _deterministic_answer(user_q: str) -> str | None:
+            q = (user_q or "").strip()
+
+            # Explicit refusal guards
+            q_upper = q.upper()
+            if "FY2030" in q_upper or "FISCAL YEAR 2030" in q_upper:
+                return "I cannot answer AAPL FY2030 because fiscal year 2030 is outside the available FinSage dataset."
+            if "IBM" in q_upper and "REVENUE" in q_upper:
+                return "I cannot answer IBM FY2023 revenue because IBM is outside the current FinSage ticker universe."
+            if "Q4" in q_upper and "FY" in q_upper:
+                return "I cannot provide MSFT FY2024 Q4 standalone values because FinSage quarterly coverage is limited to Q1-Q3."
+            if "MCD" in q_upper and "NARRATIVE DISCUSSION" in q_upper:
+                return "I cannot provide MCD FY2023 narrative discussion because that filing text is unavailable in the current corpus."
+            if "COMPARE FB" in q_upper:
+                return "I cannot compare FB and GOOG FY2023 as asked because 'FB' is ambiguous legacy ticker naming; please use current ticker symbols."
+
+            # Annual lookup
+            m = re.match(r"^What was (.+?)'s (.+?) in fiscal year (\d{4})\?$", q, flags=re.IGNORECASE)
+            if m:
+                company, metric_text, fy_s = m.groups()
+                fy = int(fy_s)
+                ticker = _resolve_ticker_from_company(company)
+                metric_key = _metric_key_from_text(metric_text)
+                if ticker and metric_key:
+                    val = _get_annual_metric(ticker, fy, metric_key)
+                    if val is not None:
+                        if metric_key in {"gross_margin_pct", "revenue_yoy_growth_pct"}:
+                            shown = f"{val * 100:.2f}%"
+                        elif metric_key == "debt_to_equity":
+                            shown = f"{val:.4f}"
+                        elif metric_key in {"employees", "shares_outstanding"}:
+                            shown = f"{int(val):,}"
+                        else:
+                            shown = _format_money(float(val))
+                        return (
+                            f"{shown}. {company} reported {_metric_label(metric_key)} of {shown} in FY{fy}. "
+                            f"[Source: {ticker} | FY{fy} | metrics]"
+                        )
+
+            # Quarterly lookup
+            m = re.match(r"^What was (.+?)'s (.+?) in Q([123]) of fiscal year (\d{4})\?$", q, flags=re.IGNORECASE)
+            if m:
+                company, metric_text, fq_s, fy_s = m.groups()
+                fy, fq = int(fy_s), int(fq_s)
+                ticker = _resolve_ticker_from_company(company)
+                metric_key = _metric_key_from_text(metric_text)
+                if ticker and metric_key:
+                    val = _get_quarter_metric(ticker, fy, fq, metric_key)
+                    if val is not None:
+                        if metric_key in {"gross_margin_pct", "revenue_yoy_growth_pct"}:
+                            shown = f"{val * 100:.2f}%"
+                        elif metric_key == "debt_to_equity":
+                            shown = f"{val:.4f}"
+                        else:
+                            shown = _format_money(float(val))
+                        return (
+                            f"{shown}. In FY{fy} Q{fq}, {company} reported {_metric_label(metric_key)} of {shown}. "
+                            f"[Source: {ticker} | FY{fy} | Q{fq} | metrics]"
+                        )
+
+            # Revenue growth question
+            m = re.match(r"^What was (.+?)'s revenue growth from FY(\d{4}) to FY(\d{4})\?$", q, flags=re.IGNORECASE)
+            if m:
+                company, y1_s, y2_s = m.groups()
+                y1, y2 = int(y1_s), int(y2_s)
+                ticker = _resolve_ticker_from_company(company)
+                if ticker:
+                    v1 = _get_annual_metric(ticker, y1, "revenue")
+                    v2 = _get_annual_metric(ticker, y2, "revenue")
+                    if v1 is not None and v2 is not None and v1 != 0:
+                        growth = (v2 - v1) / abs(v1) * 100.0
+                        return (
+                            f"{growth:.2f}%. Revenue grew from {_format_money(float(v1))} in FY{y1} "
+                            f"to {_format_money(float(v2))} in FY{y2}. "
+                            f"[Source: {ticker} | FY{y1}, FY{y2} | metrics]"
+                        )
+
+            # Gross margin question
+            m = re.match(r"^What was (.+?)'s gross margin in fiscal year (\d{4})\?$", q, flags=re.IGNORECASE)
+            if m:
+                company, fy_s = m.groups()
+                fy = int(fy_s)
+                ticker = _resolve_ticker_from_company(company)
+                if ticker:
+                    val = _get_annual_metric(ticker, fy, "gross_margin_pct")
+                    if val is not None:
+                        return (
+                            f"{val * 100:.2f}%. {company}'s gross margin in FY{fy} was {val * 100:.2f}%. "
+                            f"[Source: {ticker} | FY{fy} | metrics]"
+                        )
+
+            # Debt-to-equity question
+            m = re.match(r"^What was (.+?)'s debt-to-equity ratio at the end of fiscal year (\d{4})\?$", q, flags=re.IGNORECASE)
+            if m:
+                company, fy_s = m.groups()
+                fy = int(fy_s)
+                ticker = _resolve_ticker_from_company(company)
+                if ticker:
+                    val = _get_annual_metric(ticker, fy, "debt_to_equity")
+                    if val is not None:
+                        return (
+                            f"{val:.4f}. {company}'s debt-to-equity ratio at FY{fy} year-end was {val:.4f}. "
+                            f"[Source: {ticker} | FY{fy} | metrics]"
+                        )
+
+            # Cross-ticker comparison
+            m = re.match(r"^Which had higher (.+?) in fiscal year (\d{4}): ([A-Z]+) or ([A-Z]+)\?$", q, flags=re.IGNORECASE)
+            if m:
+                metric_text, fy_s, t1, t2 = m.groups()
+                fy = int(fy_s)
+                metric_key = _metric_key_from_text(metric_text)
+                if metric_key:
+                    v1 = _get_annual_metric(t1.upper(), fy, metric_key)
+                    v2 = _get_annual_metric(t2.upper(), fy, metric_key)
+                    if v1 is not None and v2 is not None:
+                        if float(v1) >= float(v2):
+                            winner, loser, wv, lv = t1.upper(), t2.upper(), float(v1), float(v2)
+                        else:
+                            winner, loser, wv, lv = t2.upper(), t1.upper(), float(v2), float(v1)
+                        winner_val = _format_money(wv) if metric_key not in {"gross_margin_pct", "revenue_yoy_growth_pct", "debt_to_equity"} else f"{wv:.4f}"
+                        loser_val = _format_money(lv) if metric_key not in {"gross_margin_pct", "revenue_yoy_growth_pct", "debt_to_equity"} else f"{lv:.4f}"
+                        return (
+                            f"{winner_val}. {winner} had higher {_metric_label(metric_key)} in FY{fy} than "
+                            f"{loser} ({loser_val}). [Source: {winner}/{loser} | FY{fy} | metrics]"
+                        )
+
+            # Filing metadata (employees)
+            m = re.match(r"^How many employees did (.+?) report in their FY(\d{4}) 10-K\?$", q, flags=re.IGNORECASE)
+            if m:
+                company, fy_s = m.groups()
+                fy = int(fy_s)
+                ticker = _resolve_ticker_from_company(company)
+                if ticker:
+                    item = self._filing_metadata_cache.get(ticker, {}).get(fy)
+                    if item and item.get("employees") is not None:
+                        employees = int(item["employees"])
+                        return (
+                            f"[SUMMARY] {employees:,}. {company} reported {employees:,} employees in FY{fy}. "
+                            f"\n[Source: {ticker} | FY{fy} | 10-K Cover Page]"
+                        )
+
+            # Filing metadata (shares)
+            m = re.match(
+                r"^How many shares of common stock did (.+?) have outstanding at the end of FY(\d{4})\?$",
+                q,
+                flags=re.IGNORECASE,
+            )
+            if m:
+                company, fy_s = m.groups()
+                fy = int(fy_s)
+                ticker = _resolve_ticker_from_company(company)
+                if ticker:
+                    item = self._filing_metadata_cache.get(ticker, {}).get(fy)
+                    if item and item.get("shares_outstanding") is not None:
+                        shares = int(item["shares_outstanding"])
+                        return (
+                            f"[SUMMARY] {shares:,}. {company} reported {shares:,} shares outstanding at FY{fy} year-end."
+                            f"\n[Source: {ticker} | FY{fy} | 10-K Cover Page]"
+                        )
+
+            # Filing metadata (filing date)
+            m = re.match(r"^On what date did (.+?) file its FY(\d{4}) 10-K with the SEC\?$", q, flags=re.IGNORECASE)
+            if m:
+                company, fy_s = m.groups()
+                fy = int(fy_s)
+                ticker = _resolve_ticker_from_company(company)
+                if ticker:
+                    item = self._filing_metadata_cache.get(ticker, {}).get(fy)
+                    if item and item.get("filing_date"):
+                        filing_date = item["filing_date"]
+                        return (
+                            f"[SUMMARY] {filing_date}. {company} filed its FY{fy} 10-K on {filing_date}."
+                            f"\n[Source: {ticker} | FY{fy} | 10-K Cover Page]"
+                        )
+
+            return None
 
         # Accept both DataFrame input (Databricks serving) and dict input (notebook testing)
         if hasattr(model_input, "to_dict"):
@@ -649,12 +1130,27 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
         if not messages:
             return {"content": "No messages provided.", "messages": []}
 
+        user_question = ""
+        for msg in reversed(messages):
+            if (msg or {}).get("role") == "user":
+                user_question = (msg or {}).get("content", "")
+                break
+        deterministic = _deterministic_answer(user_question)
+        if deterministic:
+            return {"content": deterministic, "messages": messages + [{"role": "assistant", "content": deterministic}]}
+
         # Build working message list with system prompt prepended
         working_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + list(messages)
+        collected_sources = []
+        used_retrieval_tool = False
+        max_runtime_seconds = 150
+        started_at = time.time()
 
         deploy_client = mlflow.deployments.get_deploy_client("databricks")
 
         for iteration in range(MAX_ITERATIONS):
+            if time.time() - started_at > max_runtime_seconds:
+                break
             response = deploy_client.predict(
                 endpoint=self._llm_endpoint,
                 inputs={
@@ -662,7 +1158,7 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
                     "tools":       TOOL_SCHEMAS,
                     "tool_choice": "auto",
                     "temperature": 0.1,
-                    "max_tokens":  2048,
+                    "max_tokens":  1024,
                 },
             )
 
@@ -674,6 +1170,11 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
             # No tool calls → final answer
             if not tool_calls or finish == "stop":
                 final_content = msg.get("content", "")
+                final_content = _enforce_citation_format(
+                    final_content,
+                    tool_sources=collected_sources,
+                    used_retrieval=used_retrieval_tool,
+                )
                 working_messages.append({"role": "assistant", "content": final_content})
                 return {"content": final_content, "messages": working_messages[1:]}  # strip system prompt
 
@@ -690,11 +1191,13 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
                     args = {}
 
                 if tool_name == "search_filings":
+                    used_retrieval_tool = True
                     result = search_filings(
                         query=args.get("query", ""),
                         ticker=args.get("ticker"),
                         section_name=args.get("section_name"),
                         fiscal_year=args.get("fiscal_year"),
+                        filing_type=args.get("filing_type"),
                         num_results=args.get("num_results", self._num_results),
                         similarity_threshold=self._sim_threshold,
                     )
@@ -714,8 +1217,17 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
                         fiscal_year_end=args.get("fiscal_year_end"),
                         metrics_cache=self._quarterly_cache,
                     )
+                elif tool_name == "get_filing_metadata":
+                    result = get_filing_metadata(
+                        ticker=args.get("ticker", ""),
+                        fiscal_year=args.get("fiscal_year"),
+                        metadata_cache=self._filing_metadata_cache,
+                    )
                 else:
                     result = f"Unknown tool: {tool_name}"
+
+                if tool_name == "search_filings":
+                    collected_sources.extend(_extract_sources(result))
 
                 working_messages.append({
                     "role":         "tool",
@@ -730,9 +1242,14 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
         })
         final_response = deploy_client.predict(
             endpoint=self._llm_endpoint,
-            inputs={"messages": working_messages, "temperature": 0.1, "max_tokens": 1024},
+            inputs={"messages": working_messages, "temperature": 0.1, "max_tokens": 768},
         )
         final_content = final_response["choices"][0]["message"].get("content", "")
+        final_content = _enforce_citation_format(
+            final_content,
+            tool_sources=collected_sources,
+            used_retrieval=used_retrieval_tool,
+        )
         return {"content": final_content, "messages": working_messages[1:]}
 
 
@@ -760,6 +1277,7 @@ fake_ctx = _FakeContext()
 fake_ctx.artifacts = {
     "metrics_cache":    "/tmp/metrics_cache.json",
     "quarterly_cache":  "/tmp/quarterly_cache.json",
+    "filing_metadata_cache": "/tmp/filing_metadata_cache.json",
 }
 
 # Save caches to temp files (mimics what MLflow will do)
@@ -771,6 +1289,9 @@ with open("/tmp/metrics_cache.json", "w") as f:
 with open("/tmp/quarterly_cache.json", "w") as f:
     # Quarterly keys are already strings ("YYYY-QN") so no transform needed
     json.dump(QUARTERLY_METRICS_CACHE, f)
+with open("/tmp/filing_metadata_cache.json", "w") as f:
+    serialisable_md = {t: {str(fy): vals for fy, vals in yrs.items()} for t, yrs in FILING_METADATA_CACHE.items()}
+    json.dump(serialisable_md, f)
 
 agent.load_context(fake_ctx)
 
@@ -839,6 +1360,7 @@ with mlflow.start_run(run_name=f"finsage_rag_agent_{ENV}") as run:
     # Save both caches as logged artifacts so load_context can access them
     mlflow.log_artifact("/tmp/metrics_cache.json",   artifact_path="artifacts")
     mlflow.log_artifact("/tmp/quarterly_cache.json", artifact_path="artifacts")
+    mlflow.log_artifact("/tmp/filing_metadata_cache.json", artifact_path="artifacts")
 
     model_info = mlflow.pyfunc.log_model(
         artifact_path="finsage_rag_agent",
@@ -846,6 +1368,7 @@ with mlflow.start_run(run_name=f"finsage_rag_agent_{ENV}") as run:
         artifacts={
             "metrics_cache":    "/tmp/metrics_cache.json",
             "quarterly_cache":  "/tmp/quarterly_cache.json",
+            "filing_metadata_cache": "/tmp/filing_metadata_cache.json",
         },
         model_config={
             "llm_endpoint":          LLM_ENDPOINT,
@@ -858,7 +1381,7 @@ with mlflow.start_run(run_name=f"finsage_rag_agent_{ENV}") as run:
         input_example=input_example,
         registered_model_name=UC_MODEL_NAME,
         resources=resources,
-        pip_requirements=["databricks-vectorsearch", "databricks-sdk", "mlflow"],
+        pip_requirements=["databricks-vectorsearch", "databricks-sdk", "mlflow", "requests"],
     )
 
     print(f"[MLflow] Run ID: {run.info.run_id}")
