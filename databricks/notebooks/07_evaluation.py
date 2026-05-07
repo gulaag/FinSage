@@ -153,16 +153,22 @@ print(f"[LOAD] categories: {sorted(set(q['category'] for q in ground))}")
 # requires exactly one of expected_response / expected_facts.
 
 def to_eval_row(q: dict) -> dict:
+    # MLflow's Expectation(value=...) constructor rejects None, so we only
+    # populate keys whose values are non-None. fiscal_quarter is the common
+    # offender — null for ~75 of the 100 rows (annual/refusal/multi_company).
     expectations = {
-        "question_id":      q["question_id"],
-        "category":         q["category"],
-        "ticker":           q["ticker"],
-        "fiscal_year":      q.get("fiscal_year"),
-        "fiscal_quarter":   q.get("fiscal_quarter"),
-        "difficulty":       q["difficulty"],
-        "source_doc":       q["source_doc"],
-        "source_section":   q.get("source_section", ""),
+        "question_id":    q["question_id"],
+        "category":       q["category"],
+        "ticker":         q["ticker"],
+        "difficulty":     q["difficulty"],
+        "source_doc":     q["source_doc"],
+        "source_section": q.get("source_section") or "n/a",
     }
+    if q.get("fiscal_year") is not None:
+        expectations["fiscal_year"] = q["fiscal_year"]
+    if q.get("fiscal_quarter") is not None:
+        expectations["fiscal_quarter"] = q["fiscal_quarter"]
+
     use_expected_response = (
         q.get("source_section") == "metrics"
         or q["category"] in {"numerical_lookup", "yoy_comparison", "multi_company", "refusal_test"}
