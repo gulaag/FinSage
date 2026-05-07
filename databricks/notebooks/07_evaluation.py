@@ -1,31 +1,55 @@
 # Databricks notebook source
 # ==============================================================================
-# FinSage | 07 — Agent Evaluation
+# FinSage | 07 — Agent Evaluation (production-grade)
 #
-# Evaluates the deployed RAG agent (finsage_agent_endpoint) against the curated
-# ground-truth set in src/evaluation/ground_test.json using MLflow GenAI eval.
+# End-to-end MLflow GenAI evaluation of the deployed RAG agent against the
+# 100-question ground-truth dataset. Designed as enterprise infrastructure:
 #
-# Scorers:
-#   - Correctness            : LLM judge, answer vs. expected_answer
-#   - RetrievalGroundedness  : LLM judge, response grounded in retrieved context
-#   - Guidelines (citations) : custom rule — agent must emit [VERBATIM] / [SUMMARY]
-#                              tags and a [Source: ...] line per SYSTEM_PROMPT
-#   - numerical_tolerance    : custom @scorer, ±1% tolerance on numerical_lookup
-#                              category questions
+#   • Modular scorers       — src/evaluation/scorers.py (5 custom + 1 LLM judge)
+#   • Result persistence    — Delta tables under main.finsage_gold:
+#                                 eval_run_summaries
+#                                 eval_question_outcomes
+#                             both idempotent on run_id (MERGE INTO).
+#   • Failure analysis      — src/evaluation/analysis.py (per-scorer breakdown,
+#                             per-category matrix, regression diff vs. previous
+#                             run, question-level flips PASS↔FAIL).
+#   • Pre-flight smoke      — 5-question fast sanity before the full 100 run, so
+#                             a deploy-time regression fails in 30 s, not 5 min.
+#   • Provenance & traceability — every Delta row is linked to (mlflow run_id,
+#                             agent endpoint version, dataset hash, git commit).
 #
-# Output: MLflow evaluation run with per-question traces + aggregate scores.
+# Scorer suite
+# -------------
+#   Correctness               — built-in LLM judge (databricks-meta-llama-3-3-70b)
+#   cites_ticker_and_year     — Guidelines built-in, must mention TICKER + FY when
+#                               discussing financial figures
+#   numerical_tolerance       — ±1% on numerical_lookup, B/M/K-aware extraction
+#   citation_format           — [VERBATIM]/[SUMMARY] + [Source:] line on retrieval-
+#                               heavy questions
+#   refusal_correctness       — refusal-test category: declined for the right reason
+#   tool_routing_correctness  — agent picked the right tool (annual / quarterly /
+#                               metadata / search) for the question
+#   derived_metric_match      — numeric extraction + tolerance, decoupled from
+#                               natural-language wording (catches LLM-judge over-
+#                               strictness on derived ratios)
+#
+# RetrievalGroundedness is intentionally NOT enabled here: the eval queries the
+# remote serving endpoint, so the agent's RETRIEVER spans live in the endpoint's
+# inference table, not in the eval client trace (num_spans=1). Re-enable once
+# we adopt in-process model loading or stream the endpoint's inference table.
 # ==============================================================================
 
 # COMMAND ----------
 
-# ── 1. Runtime Parameters ─────────────────────────────────────────────────────
-dbutils.widgets.text("catalog",         "main",                     "UC catalog")
-dbutils.widgets.text("env",             "dev",                      "Environment")
-dbutils.widgets.text("agent_endpoint",  "finsage_agent_endpoint",   "Target agent serving endpoint")
-dbutils.widgets.text("judge_endpoint",  "databricks-meta-llama-3-3-70b-instruct", "LLM-as-judge endpoint")
-dbutils.widgets.text("ground_truth_path", "../../src/evaluation/ground_truth_v2.json", "Ground-truth JSON (workspace-relative)")
-dbutils.widgets.text("eval_name",       "finsage_eval_v2",          "MLflow eval run name")
-dbutils.widgets.text("experiment_id",   "8c0b194f632349c6bc5ebe8c7a45480c", "MLflow experiment id")
+# ── 1. Runtime parameters ────────────────────────────────────────────────────
+dbutils.widgets.text("catalog",          "main",                                       "UC catalog")
+dbutils.widgets.text("env",              "dev",                                        "Environment")
+dbutils.widgets.text("agent_endpoint",   "finsage_agent_endpoint",                     "Target agent serving endpoint")
+dbutils.widgets.text("judge_endpoint",   "databricks-meta-llama-3-3-70b-instruct",     "LLM-as-judge endpoint")
+dbutils.widgets.text("ground_truth_path","../../src/evaluation/ground_truth_v2.json",  "Ground-truth JSON (notebook-relative)")
+dbutils.widgets.text("eval_name",        "finsage_eval_v2",                            "MLflow eval run name")
+dbutils.widgets.text("experiment_id",    "8c0b194f632349c6bc5ebe8c7a45480c",           "MLflow experiment id")
+dbutils.widgets.dropdown("smoke_only",   "false", ["true", "false"],                   "Run the 5-question smoke only")
 
 CATALOG          = dbutils.widgets.get("catalog")
 ENV              = dbutils.widgets.get("env")
@@ -34,8 +58,9 @@ JUDGE_ENDPOINT   = dbutils.widgets.get("judge_endpoint")
 GROUND_TRUTH     = dbutils.widgets.get("ground_truth_path")
 EVAL_NAME        = dbutils.widgets.get("eval_name")
 EXPERIMENT_ID    = dbutils.widgets.get("experiment_id")
+SMOKE_ONLY       = dbutils.widgets.get("smoke_only").lower() == "true"
 
-print(f"[CONFIG] agent={AGENT_ENDPOINT} | judge={JUDGE_ENDPOINT} | truth={GROUND_TRUTH}")
+print(f"[CONFIG] agent={AGENT_ENDPOINT} | judge={JUDGE_ENDPOINT} | truth={GROUND_TRUTH} | smoke_only={SMOKE_ONLY}")
 
 # COMMAND ----------
 
@@ -44,17 +69,19 @@ print(f"[CONFIG] agent={AGENT_ENDPOINT} | judge={JUDGE_ENDPOINT} | truth={GROUND
 
 # COMMAND ----------
 
-# ── 2. Imports + re-declare constants (required after restartPython) ─────────
+# ── 2. Imports + put repo on sys.path so we can use src/evaluation/* ─────────
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 
 import mlflow
-from mlflow.genai.scorers import scorer, Correctness, Guidelines
+from mlflow.genai.scorers import Correctness, Guidelines
 from databricks.sdk import WorkspaceClient
 
+# Re-read widgets after restartPython() (they persist; Python state does not).
 CATALOG         = dbutils.widgets.get("catalog")
 ENV             = dbutils.widgets.get("env")
 AGENT_ENDPOINT  = dbutils.widgets.get("agent_endpoint")
@@ -62,21 +89,49 @@ JUDGE_ENDPOINT  = dbutils.widgets.get("judge_endpoint")
 GROUND_TRUTH    = dbutils.widgets.get("ground_truth_path")
 EVAL_NAME       = dbutils.widgets.get("eval_name")
 EXPERIMENT_ID   = dbutils.widgets.get("experiment_id")
+SMOKE_ONLY      = dbutils.widgets.get("smoke_only").lower() == "true"
 
 w = WorkspaceClient()
+
+# Locate the repo root (containing /src) so `src.evaluation.*` is importable.
+notebook_path = Path(
+    dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
+)
+notebook_dir = notebook_path.parent
+# notebook lives at databricks/notebooks/, repo root is two levels up.
+for repo_root_candidate in (notebook_dir.parent.parent, Path("/Workspace/Users/digvijay@arsaga.jp/FinSage")):
+    if (Path("/Workspace") / str(repo_root_candidate).lstrip("/") / "src").exists():
+        REPO_ROOT_WS = Path("/Workspace") / str(repo_root_candidate).lstrip("/")
+        break
+    if (repo_root_candidate / "src").exists():
+        REPO_ROOT_WS = repo_root_candidate
+        break
+else:
+    REPO_ROOT_WS = Path("/Workspace/Users/digvijay@arsaga.jp/FinSage")
+
+sys.path.insert(0, str(REPO_ROOT_WS))
+print(f"[IMPORT] repo_root_ws={REPO_ROOT_WS}")
+
+from src.evaluation.scorers import (  # noqa: E402
+    numerical_tolerance,
+    citation_format,
+    refusal_correctness,
+    tool_routing_correctness,
+    derived_metric_match,
+)
+from src.evaluation import persistence as eval_persistence  # noqa: E402
+from src.evaluation import analysis as eval_analysis        # noqa: E402
+
+print("[IMPORT] scorers + persistence + analysis loaded")
 
 # COMMAND ----------
 
 # ── 3. Load ground-truth dataset ─────────────────────────────────────────────
-notebook_dir = Path(
-    dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
-).parent
-
 truth_path = (notebook_dir / GROUND_TRUTH).resolve() if not GROUND_TRUTH.startswith("/") else Path(GROUND_TRUTH)
-# /Workspace prefix for workspace files
 ws_truth_path = Path("/Workspace") / str(truth_path).lstrip("/")
 
-for candidate in (ws_truth_path, truth_path, Path(f"/Workspace/Users/digvijay@arsaga.jp/FinSage/src/evaluation/ground_truth_v2.json")):
+for candidate in (ws_truth_path, truth_path,
+                  Path("/Workspace/Users/digvijay@arsaga.jp/FinSage/src/evaluation/ground_truth_v2.json")):
     if candidate.exists():
         truth_path = candidate
         break
@@ -93,60 +148,49 @@ print(f"[LOAD] categories: {sorted(set(q['category'] for q in ground))}")
 
 # ── 4. Build MLflow eval dataset ─────────────────────────────────────────────
 # MLflow GenAI eval expects rows with `inputs` (payload passed to predict_fn)
-# and `expectations` (ground-truth fields consumed by scorers).
+# and `expectations` (ground-truth fields consumed by scorers). Correctness
+# requires exactly one of expected_response / expected_facts.
 
 def to_eval_row(q: dict) -> dict:
     expectations = {
-        "question_id": q["question_id"],
-        "category": q["category"],
-        "ticker": q["ticker"],
-        "fiscal_year": q.get("fiscal_year"),
-        "difficulty": q["difficulty"],
-        "source_doc": q["source_doc"],
-        "source_section": q.get("source_section", ""),
+        "question_id":      q["question_id"],
+        "category":         q["category"],
+        "ticker":           q["ticker"],
+        "fiscal_year":      q.get("fiscal_year"),
+        "fiscal_quarter":   q.get("fiscal_quarter"),
+        "difficulty":       q["difficulty"],
+        "source_doc":       q["source_doc"],
+        "source_section":   q.get("source_section", ""),
     }
-
-    # MLflow Correctness scorer requires exactly one of expected_response/expected_facts.
-    category = q["category"]
-    source_section = q.get("source_section", "")
-    use_expected_response = source_section == "metrics" or category in {
-        "numerical_lookup",
-        "yoy_comparison",
-        "multi_company",
-        "refusal_test",
-    }
+    use_expected_response = (
+        q.get("source_section") == "metrics"
+        or q["category"] in {"numerical_lookup", "yoy_comparison", "multi_company", "refusal_test"}
+    )
     if use_expected_response:
         expectations["expected_response"] = q["expected_answer"]
     else:
         expectations["expected_facts"] = [q["evidence_passage"]]
 
     return {
-        "inputs": {
-            "messages": [{"role": "user", "content": q["question"]}]
-        },
+        "inputs": {"messages": [{"role": "user", "content": q["question"]}]},
         "expectations": expectations,
     }
 
 eval_dataset = [to_eval_row(q) for q in ground]
-print(f"[DATASET] {len(eval_dataset)} rows prepared")
+DATASET_HASH = eval_persistence.dataset_fingerprint(eval_dataset)
+print(f"[DATASET] {len(eval_dataset)} rows | fingerprint={DATASET_HASH}")
 
 # COMMAND ----------
 
 # ── 5. predict_fn — queries the deployed agent ───────────────────────────────
 # The deployed agent is an mlflow.pyfunc.PythonModel registered with a
-# {"messages": [...]} input signature, so it must be invoked via
-# `dataframe_records` (pyfunc shape), NOT the chat-protocol `messages=` param.
-# Empirically verified against finsage_agent_endpoint v16:
-#   dataframe_records=[{"messages":[{"role":"user","content":"ping"}]}]
-#   → predictions = {"content": "...", "messages": [...]}
-#
-# Using w.serving_endpoints.query() (SDK) to avoid the deploy-client URL bug
-# documented in CLAUDE.md (cell 12 live test learning).
+# {"messages": [...]} input signature. Invoke via dataframe_records (pyfunc
+# shape), NOT chat-protocol messages=. SDK call avoids the deploy-client URL
+# bug. One retry on transient endpoint errors; explicit fallback prevents
+# trace-level failures from crashing the eval harness.
 
 @mlflow.trace(span_type="AGENT")
 def predict_fn(messages: list) -> dict:
-    # Prevent hard trace failures: if the endpoint call errors, return an explicit
-    # fallback response instead of raising.
     last_error = None
     for attempt in range(2):
         try:
@@ -163,293 +207,274 @@ def predict_fn(messages: list) -> dict:
             last_error = e
             if attempt == 0:
                 time.sleep(0.5)
-    return {
-        "choices": [
-            {
-                "message": {
-                    "role": "assistant",
-                    "content": f"Unable to answer due to endpoint error: {type(last_error).__name__}: {last_error}",
-                }
-            }
-        ]
-    }
+    return {"choices": [{"message": {"role": "assistant",
+            "content": f"Unable to answer due to endpoint error: {type(last_error).__name__}: {last_error}"}}]}
 
-# smoke-test predict_fn before full eval
+# Smoke-test the endpoint before doing any real work.
 try:
     test_out = predict_fn([{"role": "user", "content": "ping"}])
-    print(f"[SMOKE] predict_fn OK — preview: {test_out['choices'][0]['message']['content'][:200]!r}")
+    preview = test_out["choices"][0]["message"]["content"][:200]
+    print(f"[SMOKE] predict_fn OK — preview: {preview!r}")
 except Exception as e:
     print(f"[SMOKE FAIL] {type(e).__name__}: {e}")
     raise
 
 # COMMAND ----------
 
-# ── 6. Custom scorer: numerical tolerance (±1%) ──────────────────────────────
-# For numerical_lookup questions, extract the first large dollar figure from
-# both response and expected_answer; pass if within 1%.
+# ── 6. Pre-flight smoke (5 questions across categories) ──────────────────────
+# Before paying for 100 LLM-judge calls, run 5 stratified questions to confirm
+# every scorer is wiring correctly. Fails fast on regressions.
 
-_NUM_RE = re.compile(
-    r"(?<![A-Za-z0-9])([-+]?\$?\s*\d[\d,]*(?:\.\d+)?)(?:\s*(billion|million|thousand|bn|mn|k|b|m|%|x))?",
-    re.IGNORECASE,
-)
+PREFLIGHT_IDS = ["A001", "B001", "C001", "E001", "F001"]
+preflight_dataset = [r for r in eval_dataset if r["expectations"]["question_id"] in PREFLIGHT_IDS]
 
-
-def _extract_numbers(text: str) -> list[float]:
-    values: list[float] = []
-    for m in _NUM_RE.finditer(text or ""):
-        raw_token = m.group(1).replace("$", "").replace(",", "").strip()
-        try:
-            val = float(raw_token)
-        except ValueError:
-            continue
-        unit = (m.group(2) or "").lower()
-        if unit in {"billion", "bn", "b"}:
-            val *= 1_000_000_000
-        elif unit in {"million", "mn", "m"}:
-            val *= 1_000_000
-        elif unit in {"thousand", "k"}:
-            val *= 1_000
-        # "%"/"x"/no unit remain as-is
-        values.append(val)
-    return values
-
-
-def _pick_best_predicted_number(pred_candidates: list[float], true_num: float) -> float | None:
-    if not pred_candidates:
-        return None
-    # Ignore obvious fiscal-year tokens when we have alternatives.
-    filtered = [v for v in pred_candidates if not (1900 <= abs(v) <= 2100)]
-    candidates = filtered if filtered else pred_candidates
-    if true_num == 0:
-        return candidates[0]
-    return min(candidates, key=lambda x: abs(x - true_num) / abs(true_num))
-
-@scorer
-def numerical_tolerance(*, outputs=None, expectations=None, **kwargs):
-    category = (expectations or {}).get("category")
-    if category != "numerical_lookup":
-        return None  # skip — not applicable
-
-    response = ""
-    if isinstance(outputs, dict):
-        try:
-            response = outputs["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError):
-            response = str(outputs)
-
-    expected_text = (expectations or {}).get("expected_response", "")
-    pred_candidates = _extract_numbers(response)
-    true_candidates = _extract_numbers(expected_text)
-    if not true_candidates:
-        return False
-    true_num = true_candidates[0]  # dataset contract: canonical number appears first
-    pred_num = _pick_best_predicted_number(pred_candidates, true_num)
-
-    if pred_num is None or true_num is None or true_num == 0:
-        return False
-
-    rel_err = abs(pred_num - true_num) / abs(true_num)
-    return rel_err <= 0.01
-
-# COMMAND ----------
-
-# ── 7. Custom scorer: citation format compliance ─────────────────────────────
-# SYSTEM_PROMPT mandates [VERBATIM]/[SUMMARY] labels + [Source: TICKER | FY... | Section]
-
-_CITATION_TAG = re.compile(r"\[(VERBATIM|SUMMARY)\]", re.IGNORECASE)
-_SOURCE_LINE  = re.compile(r"\[Source:\s*[A-Z]+\s*\|\s*FY\d{4}", re.IGNORECASE)
-
-@scorer
-def citation_format(*, outputs=None, expectations=None, **kwargs):
-    category = (expectations or {}).get("category")
-    # Only applies where retrieval happens (not pure metrics questions)
-    if category not in ("risk_summary", "citation_validation", "yoy_comparison", "numerical_lookup"):
-        return None
-    if (expectations or {}).get("source_section") == "metrics":
-        return None
-
-    response = ""
-    if isinstance(outputs, dict):
-        try:
-            response = outputs["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError):
-            response = str(outputs)
-
-    has_tag    = bool(_CITATION_TAG.search(response))
-    has_source = bool(_SOURCE_LINE.search(response))
-    return has_tag and has_source
-
-# COMMAND ----------
-
-# ── 8. Run evaluation ────────────────────────────────────────────────────────
 mlflow.set_registry_uri("databricks-uc")
 mlflow.set_experiment(experiment_id=EXPERIMENT_ID)
 
-with mlflow.start_run(run_name=EVAL_NAME) as run:
-    mlflow.log_params({
-        "agent_endpoint": AGENT_ENDPOINT,
-        "judge_endpoint": JUDGE_ENDPOINT,
-        "num_questions":  len(eval_dataset),
-        "categories":     ",".join(sorted(set(q["category"] for q in ground))),
-    })
+with mlflow.start_run(run_name=f"{EVAL_NAME}_preflight") as preflight_run:
+    preflight_results = mlflow.genai.evaluate(
+        data=preflight_dataset,
+        predict_fn=predict_fn,
+        scorers=[
+            Correctness(),
+            Guidelines(
+                name="cites_ticker_and_year",
+                guidelines=("The response must cite both a ticker symbol and a fiscal year "
+                            "when discussing any financial figure or filing excerpt."),
+            ),
+            numerical_tolerance,
+            citation_format,
+            refusal_correctness,
+            tool_routing_correctness,
+            derived_metric_match,
+        ],
+    )
+    print(f"[PREFLIGHT] run_id={preflight_run.info.run_id} metrics={getattr(preflight_results, 'metrics', None)}")
 
+if SMOKE_ONLY:
+    print("[SMOKE_ONLY=true] preflight complete; skipping the full 100-question run.")
+    dbutils.notebook.exit("preflight_only")
+
+# COMMAND ----------
+
+# ── 7. Full evaluation ───────────────────────────────────────────────────────
+
+# Resolve current agent serving version (logged with the run for traceability).
+try:
+    ep = w.serving_endpoints.get(AGENT_ENDPOINT)
+    served = ep.config.served_entities[0] if ep.config and ep.config.served_entities else None
+    AGENT_VERSION = str(served.entity_version) if served else None
+except Exception as e:
+    print(f"[VERSION] could not read endpoint version: {e}")
+    AGENT_VERSION = None
+
+# Try to capture git commit if running from a Databricks Repo.
+try:
+    from databricks.sdk.runtime import dbutils as _db  # type: ignore[import]
+    GIT_COMMIT = (
+        _db.notebook.entry_point.getDbutils().notebook().getContext()
+          .tags().apply("mlflow.databricks.gitRepoCommit")
+    )
+except Exception:
+    GIT_COMMIT = None
+
+with mlflow.start_run(run_name=EVAL_NAME) as run:
+    RUN_ID = run.info.run_id
+    mlflow.log_params({
+        "agent_endpoint":  AGENT_ENDPOINT,
+        "agent_version":   AGENT_VERSION,
+        "judge_endpoint":  JUDGE_ENDPOINT,
+        "num_questions":   len(eval_dataset),
+        "dataset_hash":    DATASET_HASH,
+        "categories":      ",".join(sorted(set(q["category"] for q in ground))),
+    })
     results = mlflow.genai.evaluate(
         data=eval_dataset,
         predict_fn=predict_fn,
         scorers=[
             Correctness(),
-            # v2: RetrievalGroundedness disabled because current agent traces do not
-            # emit RETRIEVER-typed spans; enable once tool spans are instrumented.
             Guidelines(
                 name="cites_ticker_and_year",
-                guidelines=(
-                    "The response must cite both a ticker symbol and a fiscal year "
-                    "when discussing any financial figure or filing excerpt."
-                ),
+                guidelines=("The response must cite both a ticker symbol and a fiscal year "
+                            "when discussing any financial figure or filing excerpt."),
             ),
             numerical_tolerance,
             citation_format,
+            refusal_correctness,
+            tool_routing_correctness,
+            derived_metric_match,
         ],
     )
-
-    print(f"[EVAL] run_id={run.info.run_id}")
-    print(f"[EVAL] results.metrics={getattr(results, 'metrics', None)}")
+    print(f"[EVAL] run_id={RUN_ID}")
+    print(f"[EVAL] metrics={getattr(results, 'metrics', None)}")
 
 # COMMAND ----------
 
-# ── 9. Simple evaluation summary (human-readable) ────────────────────────────
-def _normalize_feedback_value(raw):
-    if raw is None:
-        return None
-    if isinstance(raw, bool):
-        return 1.0 if raw else 0.0
-    if isinstance(raw, (int, float)):
-        return float(raw)
-    if isinstance(raw, str):
-        token = raw.strip().lower()
-        if token in {"yes", "pass", "true"}:
-            return 1.0
-        if token in {"no", "fail", "false"}:
-            return 0.0
+# ── 8. Persist results to Delta (eval_run_summaries + eval_question_outcomes)
+# Pulls per-trace assessments via MLflow REST and writes both a one-row run
+# summary and one row per (question, scorer) outcome. Idempotent on run_id.
+
+eval_persistence.ensure_tables(spark)
+
+api = w.api_client
+trace_resp = api.do(
+    "GET",
+    "/api/2.0/mlflow/traces",
+    query={"experiment_ids": EXPERIMENT_ID, "max_results": 500},
+)
+all_traces = trace_resp.get("traces", [])
+
+run_traces = []
+for t in all_traces:
+    for tag in t.get("tags", []):
+        if tag.get("key", "").startswith("mlflow.assessment.") and RUN_ID in tag.get("value", ""):
+            run_traces.append(t)
+            break
+print(f"[PERSIST] traces tied to run {RUN_ID[:10]}: {len(run_traces)}")
+
+EXPECTATION_NAMES = {
+    "category", "difficulty", "expected_facts", "expected_response",
+    "fiscal_year", "fiscal_quarter", "question_id", "source_doc",
+    "source_section", "ticker",
+}
+
+outcome_rows: list[dict] = []
+scorer_metrics: dict[str, dict] = {}
+
+for trace in run_traces:
+    expectations: dict = {}
+    feedbacks: dict[str, dict] = {}
+    request_text  = next((m["value"] for m in trace.get("request_metadata", [])
+                          if m["key"] == "mlflow.trace.request"),  "")
+    response_text = next((m["value"] for m in trace.get("request_metadata", [])
+                          if m["key"] == "mlflow.trace.response"), "")
+
+    for tag in trace.get("tags", []):
+        if not tag["key"].startswith("mlflow.assessment."):
+            continue
         try:
-            return float(token)
-        except ValueError:
-            return None
-    return None
-
-
-def _print_simple_summary(eval_run_id: str) -> None:
-    """Print a concise eval-health summary from MLflow traces."""
-    api = w.api_client
-    traces_resp = api.do(
-        "GET",
-        "/api/2.0/mlflow/traces",
-        query={"experiment_ids": EXPERIMENT_ID, "max_results": 500},
-    )
-    traces = traces_resp.get("traces", [])
-    run_traces = []
-    for trace in traces:
-        tags = trace.get("tags", [])
-        if any(
-            tag.get("key", "").startswith("mlflow.assessment.")
-            and eval_run_id in tag.get("value", "")
-            for tag in tags
-        ):
-            run_traces.append(trace)
-
-    scorer_stats = {}
-    for trace in run_traces:
-        for tag in trace.get("tags", []):
-            key = tag.get("key", "")
-            if not key.startswith("mlflow.assessment."):
-                continue
             payload = json.loads(tag.get("value", "{}"))
-            name = payload.get("assessment_name")
-            if not name:
-                continue
-            # ignore expectation echo rows, keep real scorer rows only
-            if name in {
-                "category",
-                "difficulty",
-                "expected_facts",
-                "expected_response",
-                "fiscal_year",
-                "question_id",
-                "source_doc",
-                "source_section",
-                "ticker",
-            }:
-                continue
+        except json.JSONDecodeError:
+            continue
+        name = payload.get("assessment_name")
+        if not name:
+            continue
+        if "expectation" in payload:
+            expectations[name] = payload["expectation"].get("value")
+            continue
+        meta = payload.get("metadata") or {}
+        if meta.get("mlflow.assessment.sourceRunId") != RUN_ID:
+            continue
+        feedbacks[name] = payload
 
-            stats = scorer_stats.setdefault(
-                name,
-                {"total": 0, "answered": 0, "passed": 0, "failed": 0, "errors": 0},
-            )
-            stats["total"] += 1
-            feedback = payload.get("feedback") or {}
-            if feedback.get("error"):
-                stats["errors"] += 1
-                continue
-            numeric = _normalize_feedback_value(feedback.get("value"))
-            if numeric is None:
-                continue
-            stats["answered"] += 1
-            if numeric >= 0.5:
-                stats["passed"] += 1
-            else:
-                stats["failed"] += 1
+    qid = expectations.get("question_id")
+    if not qid:
+        continue
 
-    print("=" * 86)
-    print("EVALUATION SUMMARY")
-    print("=" * 86)
-    print(f"Run ID: {eval_run_id}")
-    print(f"Questions in dataset: {len(eval_dataset)}")
-    print(f"Traces found for this run: {len(run_traces)}")
-    print("")
-    print("Per-scorer outcome:")
-    for scorer_name in sorted(scorer_stats):
-        s = scorer_stats[scorer_name]
-        print(
-            f"- {scorer_name}: total={s['total']}, answered={s['answered']}, "
-            f"passed={s['passed']}, failed={s['failed']}, errors={s['errors']}"
+    expected_response = expectations.get("expected_response") or ""
+    if isinstance(expectations.get("expected_facts"), list) and not expected_response:
+        expected_response = " ".join(expectations["expected_facts"])[:2000]
+
+    for scorer_name, payload in feedbacks.items():
+        if scorer_name in EXPECTATION_NAMES:
+            continue
+        fb = payload.get("feedback") or {}
+        err = fb.get("error") or {}
+        outcome, numeric = eval_persistence.normalize_outcome(
+            fb.get("value"), bool(err.get("error_code"))
         )
-    print("=" * 86)
+        outcome_rows.append({
+            "question_id":       qid,
+            "scorer_name":       scorer_name,
+            "category":          expectations.get("category"),
+            "ticker":            expectations.get("ticker"),
+            "fiscal_year":       expectations.get("fiscal_year"),
+            "fiscal_quarter":    expectations.get("fiscal_quarter"),
+            "difficulty":        expectations.get("difficulty"),
+            "outcome":           outcome,
+            "value_numeric":     numeric,
+            "rationale":         payload.get("rationale") or fb.get("rationale"),
+            "error_message":     err.get("error_message"),
+            "agent_response":    response_text[:4000] if response_text else None,
+            "expected_response": expected_response[:4000] if expected_response else None,
+        })
 
+        bucket = scorer_metrics.setdefault(scorer_name, {"pass": 0, "fail": 0, "error": 0, "skip": 0})
+        bucket[outcome.lower()] = bucket.get(outcome.lower(), 0) + 1
 
-try:
-    _print_simple_summary(run.info.run_id)
-except Exception as e:
-    print(f"[SUMMARY] skipped: {type(e).__name__}: {e}")
+print(f"[PERSIST] outcome rows: {len(outcome_rows)}")
+
+# Run summary aggregates
+run_started_ms  = run.info.start_time
+run_finished_ms = run.info.end_time or int(time.time() * 1000)
+mlflow_url = (
+    f"{w.config.host.rstrip('/')}/ml/experiments/{EXPERIMENT_ID}/runs/{RUN_ID}"
+    if w.config.host else f"{EXPERIMENT_ID}/{RUN_ID}"
+)
+
+eval_persistence.merge_run_summary(
+    spark,
+    run_id=RUN_ID,
+    run_name=EVAL_NAME,
+    experiment_id=EXPERIMENT_ID,
+    run_started_at_ms=run_started_ms,
+    run_finished_at_ms=run_finished_ms,
+    agent_endpoint=AGENT_ENDPOINT,
+    agent_version=AGENT_VERSION,
+    judge_endpoint=JUDGE_ENDPOINT,
+    num_questions=len(eval_dataset),
+    dataset_path=str(truth_path),
+    dataset_hash=DATASET_HASH,
+    scorer_metrics=scorer_metrics,
+    params={"smoke_only": SMOKE_ONLY},
+    mlflow_url=mlflow_url,
+    git_commit=GIT_COMMIT,
+)
+eval_persistence.merge_question_outcomes(spark, RUN_ID, outcome_rows)
+print(f"[PERSIST] wrote summary + outcomes for run {RUN_ID[:10]}")
 
 # COMMAND ----------
 
-# ── 10. Per-category breakdown ───────────────────────────────────────────────
-try:
-    import pandas as pd
-    df = results.tables["eval_results"] if hasattr(results, "tables") else None
-    if df is not None:
-        if not isinstance(df, pd.DataFrame):
-            df = pd.DataFrame(df)
-        cat_col = None
-        for c in df.columns:
-            if "category" in c.lower():
-                cat_col = c; break
-        if cat_col:
-            print(df.groupby(cat_col).mean(numeric_only=True).round(3))
-        else:
-            print(df.head())
-    else:
-        print("[BREAKDOWN] no results.tables — check MLflow UI for the run")
-except Exception as e:
-    print(f"[BREAKDOWN] skipped: {type(e).__name__}: {e}")
+# ── 9. Pretty summary + per-category breakdown ───────────────────────────────
+eval_analysis.print_summary(spark, RUN_ID)
 
 # COMMAND ----------
 
-# ── 11. How to iterate ───────────────────────────────────────────────────────
-# 1. Open the MLflow run linked above, inspect per-row traces for failures.
+# ── 10. Failures (drill-down) ────────────────────────────────────────────────
+failures = eval_analysis.failure_breakdown(spark, RUN_ID)
+print("=" * 86)
+print("FAILURES + ERRORS (this run)")
+print("=" * 86)
+display(failures)  # noqa: F821 — Databricks display()
+
+# COMMAND ----------
+
+# ── 11. Regression diff vs. previous run ─────────────────────────────────────
+diff = eval_analysis.regression_diff(spark, RUN_ID)
+print("=" * 86)
+print("REGRESSION DIFF vs. previous run on same agent endpoint")
+print("=" * 86)
+display(diff)  # noqa: F821
+
+# COMMAND ----------
+
+# ── 12. Run-level trend (last 10 runs) ───────────────────────────────────────
+recent = eval_persistence.fetch_recent_runs(spark, limit=10)
+print("=" * 86)
+print("RECENT EVAL RUNS")
+print("=" * 86)
+display(recent)  # noqa: F821
+
+# COMMAND ----------
+
+# ── 13. Iteration playbook ───────────────────────────────────────────────────
+# 1. Open the MLflow run linked above; per-row traces include scorer rationale.
 # 2. Common failure modes:
-#    - Wrong fiscal year retrieved  → tighten SYSTEM_PROMPT year-filter directive
-#    - Missing citations            → strengthen [VERBATIM]/[SUMMARY] instruction
-#    - Numeric drift > 1%           → verify get_company_metrics cache freshness
-# 3. Re-run notebook 06 to deploy a new agent version, then re-run this notebook
-#    to confirm score regressions/improvements.
+#    - Wrong fiscal year retrieved   → tighten SYSTEM_PROMPT year-filter directive
+#    - Missing citations             → strengthen [VERBATIM]/[SUMMARY] instruction
+#    - Numeric drift > 1%            → audit gold metrics vs. SEC EDGAR
+#    - Tool-routing miss             → add explicit example to SYSTEM_PROMPT
+#    - Refusal too brief             → expand expected refusal context tokens in
+#                                      src/evaluation/scorers.py:_REFUSAL_CONTEXT_TOKENS
+# 3. Re-run notebook 06 to deploy a new agent version, then re-run this notebook.
+#    The Delta tables auto-track regression deltas via run_id and agent_version.
