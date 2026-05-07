@@ -33,10 +33,11 @@
 #                               natural-language wording (catches LLM-judge over-
 #                               strictness on derived ratios)
 #
-# RetrievalGroundedness is intentionally NOT enabled here: the eval queries the
-# remote serving endpoint, so the agent's RETRIEVER spans live in the endpoint's
-# inference table, not in the eval client trace (num_spans=1). Re-enable once
-# we adopt in-process model loading or stream the endpoint's inference table.
+# RetrievalGroundedness IS enabled — we load the registered UC model in-process
+# (mlflow.pyfunc.load_model) instead of querying the remote serving endpoint, so
+# search_filings's RETRIEVER span and the metrics tools' TOOL spans propagate
+# into the eval trace tree. The deployed endpoint is still pinged once as a
+# canary so production regressions get noticed.
 # ==============================================================================
 
 # COMMAND ----------
@@ -78,7 +79,7 @@ import time
 from pathlib import Path
 
 import mlflow
-from mlflow.genai.scorers import Correctness, Guidelines
+from mlflow.genai.scorers import Correctness, Guidelines, RetrievalGroundedness
 from databricks.sdk import WorkspaceClient
 
 # Re-read widgets after restartPython() (they persist; Python state does not).
@@ -182,42 +183,70 @@ print(f"[DATASET] {len(eval_dataset)} rows | fingerprint={DATASET_HASH}")
 
 # COMMAND ----------
 
-# ── 5. predict_fn — queries the deployed agent ───────────────────────────────
-# The deployed agent is an mlflow.pyfunc.PythonModel registered with a
-# {"messages": [...]} input signature. Invoke via dataframe_records (pyfunc
-# shape), NOT chat-protocol messages=. SDK call avoids the deploy-client URL
-# bug. One retry on transient endpoint errors; explicit fallback prevents
-# trace-level failures from crashing the eval harness.
+# ── 5. predict_fn — IN-PROCESS model load (RetrievalGroundedness requires this)
+# We load the registered UC model directly into the eval notebook process so
+# its internal RETRIEVER and TOOL spans propagate into the eval trace tree.
+# Querying the remote serving endpoint cuts the spans off at the process
+# boundary (num_spans=1) and breaks RetrievalGroundedness with
+# "no RETRIEVER span found".
+#
+# The deployed endpoint is still probed once as a deploy-time canary so we
+# notice if production drifts vs. the model registry.
+
+UC_MODEL_NAME = f"{CATALOG}.finsage_gold.finsage_rag_agent"
+
+# Resolve the latest UC model version (avoid hardcoding a number).
+from mlflow.tracking import MlflowClient  # noqa: E402
+mc = MlflowClient(registry_uri="databricks-uc")
+versions = sorted(
+    mc.search_model_versions(f"name='{UC_MODEL_NAME}'"),
+    key=lambda v: int(v.version), reverse=True,
+)
+LATEST_MODEL_VERSION = versions[0].version if versions else None
+if LATEST_MODEL_VERSION is None:
+    raise RuntimeError(f"No registered versions found for {UC_MODEL_NAME}")
+print(f"[MODEL] loading {UC_MODEL_NAME}/{LATEST_MODEL_VERSION} in-process")
+
+LOADED_AGENT = mlflow.pyfunc.load_model(f"models:/{UC_MODEL_NAME}/{LATEST_MODEL_VERSION}")
 
 @mlflow.trace(span_type="AGENT")
 def predict_fn(messages: list) -> dict:
-    last_error = None
-    for attempt in range(2):
-        try:
-            resp = w.serving_endpoints.query(
-                name=AGENT_ENDPOINT,
-                dataframe_records=[{"messages": messages}],
-            )
-            pred = resp.predictions
-            if isinstance(pred, list) and pred:
-                pred = pred[0]
-            content = pred.get("content", "") if isinstance(pred, dict) else str(pred)
-            return {"choices": [{"message": {"role": "assistant", "content": content}}]}
-        except Exception as e:
-            last_error = e
-            if attempt == 0:
-                time.sleep(0.5)
-    return {"choices": [{"message": {"role": "assistant",
-            "content": f"Unable to answer due to endpoint error: {type(last_error).__name__}: {last_error}"}}]}
+    """Run the agent in-process so its @mlflow.trace tools (RETRIEVER, TOOL)
+    emit child spans into the eval trace. Returns chat-completion-shaped dict."""
+    try:
+        out = LOADED_AGENT.predict({"messages": messages})
+        if isinstance(out, list) and out:
+            out = out[0]
+        if isinstance(out, dict):
+            content = out.get("content", "")
+        elif isinstance(out, str):
+            content = out
+        else:
+            content = str(out)
+        return {"choices": [{"message": {"role": "assistant", "content": content}}]}
+    except Exception as e:
+        return {"choices": [{"message": {"role": "assistant",
+                "content": f"In-process agent error: {type(e).__name__}: {e}"}}]}
 
-# Smoke-test the endpoint before doing any real work.
+# In-process smoke test — also verify trace spans propagated.
 try:
-    test_out = predict_fn([{"role": "user", "content": "ping"}])
+    test_out = predict_fn([{"role": "user", "content": "What was Apple's revenue in fiscal year 2024?"}])
     preview = test_out["choices"][0]["message"]["content"][:200]
-    print(f"[SMOKE] predict_fn OK — preview: {preview!r}")
+    print(f"[SMOKE in-process] {preview!r}")
 except Exception as e:
     print(f"[SMOKE FAIL] {type(e).__name__}: {e}")
     raise
+
+# Deploy-time canary against the served endpoint (non-fatal — the eval uses
+# the in-process model, but we want to know if production is broken).
+try:
+    canary = w.serving_endpoints.query(
+        name=AGENT_ENDPOINT,
+        dataframe_records=[{"messages": [{"role": "user", "content": "ping"}]}],
+    )
+    print(f"[ENDPOINT_CANARY] {AGENT_ENDPOINT} reachable ({type(canary.predictions).__name__})")
+except Exception as e:
+    print(f"[ENDPOINT_CANARY] non-fatal: {type(e).__name__}: {e}")
 
 # COMMAND ----------
 
@@ -237,6 +266,7 @@ with mlflow.start_run(run_name=f"{EVAL_NAME}_preflight") as preflight_run:
         predict_fn=predict_fn,
         scorers=[
             Correctness(),
+            RetrievalGroundedness(),  # works now: in-process load → RETRIEVER spans visible
             Guidelines(
                 name="cites_ticker_and_year",
                 guidelines=("The response must cite both a ticker symbol and a fiscal year "
@@ -293,6 +323,7 @@ with mlflow.start_run(run_name=EVAL_NAME) as run:
         predict_fn=predict_fn,
         scorers=[
             Correctness(),
+            RetrievalGroundedness(),  # works now: in-process load → RETRIEVER spans visible
             Guidelines(
                 name="cites_ticker_and_year",
                 guidelines=("The response must cite both a ticker symbol and a fiscal year "

@@ -180,7 +180,7 @@ CATALOG = dbutils.widgets.get("catalog")
   - `eval_question_outcomes` — one row per (run_id, question_id, scorer) with PASS/FAIL/ERROR/SKIP, rationale, agent_response, expected_response — partitioned by run_id
 - **Analysis** (`src/evaluation/analysis.py`): `summarize_run`, `failure_breakdown`, `category_matrix`, `regression_diff`, `question_flips`, `print_summary`. Pure-Spark, returns DataFrames.
 - **Pre-flight smoke**: notebook 07 runs a 5-question subset (`A001/B001/C001/E001/F001`) through full eval before kicking off the 100-question run. Set widget `smoke_only=true` to stop after preflight.
-- **RetrievalGroundedness** is intentionally NOT enabled: the eval queries the remote serving endpoint, so the agent's RETRIEVER spans live in the endpoint's inference table, not in the eval-client trace (`num_spans=1`). Re-enable once we adopt in-process model loading.
+- **RetrievalGroundedness** is enabled: cell 5 of `07_evaluation.py` loads the registered UC model in-process via `mlflow.pyfunc.load_model("models:/main.finsage_gold.finsage_rag_agent/<latest>")` so the agent's `RETRIEVER` and `TOOL` spans propagate into the eval trace tree. The deployed serving endpoint is still pinged once as a canary so production regressions get noticed independently.
 
 ### Caching anomaly to know
 `mlflow.genai.evaluate` with the same dataset against a warm endpoint can drop wall-time from 320s → 95s on subsequent runs (observed empirically). The harness appears to reuse cached predictions/judges across re-runs in the same MLflow experiment. Treat back-to-back identical-config runs as suspect for true regression detection — bump `eval_name` between runs, or wait long enough for caches to invalidate.
