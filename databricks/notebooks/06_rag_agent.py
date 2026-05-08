@@ -89,10 +89,13 @@ print(f"[CONFIG restored] catalog={CATALOG} | llm={LLM_ENDPOINT} | metrics={METR
 # company_metrics has only 180 rows — load once as a nested dict for zero-latency
 # lookup inside the pyfunc serving container (no SQL warehouse needed at runtime).
 #
-# Defensive re-read: if a user runs THIS cell standalone (after restartPython
-# wiped state but before cell 2's re-import block has run), recover from widgets
-# rather than NameError-ing on METRICS_TABLE. This makes the notebook safe to
-# step through cell-by-cell or in any order.
+# Defensive re-init — idempotent if cell 2 already ran in this kernel, required
+# if the user clicked "Run cell" on this cell directly after restartPython
+# wiped state. Same pattern repeated in every later cell that uses module-level
+# state.
+import json, logging, re, time
+import requests
+log = logging.getLogger("finsage-agent")
 CATALOG                 = dbutils.widgets.get("catalog")
 METRICS_TABLE           = f"{CATALOG}.finsage_gold.company_metrics"
 METRICS_QUARTERLY_TABLE = f"{CATALOG}.finsage_gold.company_metrics_quarterly"
@@ -284,6 +287,18 @@ if len(FILING_METADATA_CACHE) < 25:
 
 # ── 4. Tool: search_filings ───────────────────────────────────────────────────
 
+# Defensive re-init — idempotent if cell 2 already ran. Required when this
+# cell is run standalone after restartPython() (cell 2) wiped Python globals.
+import json, logging, re
+import mlflow
+from databricks.vector_search.client import VectorSearchClient
+log = logging.getLogger("finsage-agent")
+CATALOG              = dbutils.widgets.get("catalog")
+VS_ENDPOINT          = dbutils.widgets.get("vs_endpoint")
+VS_INDEX_NAME        = f"{CATALOG}.finsage_gold.filing_chunks_index"
+NUM_RESULTS          = int(dbutils.widgets.get("num_results"))
+SIMILARITY_THRESHOLD = float(dbutils.widgets.get("similarity_threshold"))
+
 # Section names valid across both filing types. Business and Risk Factors are
 # 10-K-only; MD&A appears in both 10-K and 10-Q; Risk Factors Updates is 10-Q
 # Part II Item 1A (only present when the filer actually updates risks mid-year).
@@ -413,6 +428,9 @@ print("[search_filings test]", _test[:300])
 
 # ── 5. Tool: get_company_metrics ──────────────────────────────────────────────
 
+# Defensive re-init for the @mlflow.trace decorator below.
+import mlflow
+
 @mlflow.trace(name="get_company_metrics", span_type="TOOL")
 def get_company_metrics(
     ticker: str,
@@ -486,6 +504,9 @@ print("[get_company_metrics test]\n", _test2)
 # Parallel to get_company_metrics but backed by the 10-Q-driven quarterly table.
 # Use for interim-period questions; annual questions should still route to
 # get_company_metrics since 10-K numbers are audited.
+
+# Defensive re-init for the @mlflow.trace decorator below.
+import mlflow
 
 @mlflow.trace(name="get_quarterly_metrics", span_type="TOOL")
 def get_quarterly_metrics(
@@ -581,6 +602,9 @@ print("[get_quarterly_metrics test]\n", _test3[:500])
 # COMMAND ----------
 
 # ── 5c. Tool: get_filing_metadata ─────────────────────────────────────────────
+
+# Defensive re-init for the @mlflow.trace decorator below.
+import mlflow
 
 @mlflow.trace(name="get_filing_metadata", span_type="TOOL")
 def get_filing_metadata(
@@ -776,6 +800,11 @@ print(f"[TOOLS] Registered: {list(TOOL_DISPATCH.keys())}")
 # COMMAND ----------
 
 # ── 7. FinSageAgent — pyfunc model class ──────────────────────────────────────
+
+# Defensive re-init — the class declaration below subclasses
+# mlflow.pyfunc.PythonModel and uses re.compile() at module scope.
+import mlflow
+import re
 
 SYSTEM_PROMPT = """\
 You are FinSage — an expert financial analyst AI deployed inside a chat
@@ -1204,6 +1233,16 @@ print("[FinSageAgent] Class defined.")
 
 # ── 8. Local smoke tests ──────────────────────────────────────────────────────
 
+# Defensive re-init for the widget-derived constants this cell uses. Note
+# that this cell still requires cells 4 (caches) and 7 (FinSageAgent class)
+# to have run in this kernel — those produce non-widget objects.
+CATALOG              = dbutils.widgets.get("catalog")
+LLM_ENDPOINT         = dbutils.widgets.get("llm_endpoint")
+VS_ENDPOINT          = dbutils.widgets.get("vs_endpoint")
+VS_INDEX_NAME        = f"{CATALOG}.finsage_gold.filing_chunks_index"
+NUM_RESULTS          = int(dbutils.widgets.get("num_results"))
+SIMILARITY_THRESHOLD = float(dbutils.widgets.get("similarity_threshold"))
+
 agent = FinSageAgent()
 
 # Simulate load_context manually for notebook testing
@@ -1279,10 +1318,22 @@ print("\n[SMOKE] all 3 questions produced expected signal — proceeding to log_
 
 # ── 9. MLflow logging & Unity Catalog registration ────────────────────────────
 
+# Defensive re-init — re-read all widget-derived constants this cell uses so
+# it survives "Run cell" in isolation after restartPython() wiped state.
 import mlflow
 from mlflow.models.signature import ModelSignature
 from mlflow.types.schema import Schema, ColSpec
 from mlflow.models.resources import DatabricksServingEndpoint, DatabricksVectorSearchIndex
+
+CATALOG              = dbutils.widgets.get("catalog")
+ENV                  = dbutils.widgets.get("env")
+LLM_ENDPOINT         = dbutils.widgets.get("llm_endpoint")
+VS_ENDPOINT          = dbutils.widgets.get("vs_endpoint")
+VS_INDEX_NAME        = f"{CATALOG}.finsage_gold.filing_chunks_index"
+NUM_RESULTS          = int(dbutils.widgets.get("num_results"))
+SIMILARITY_THRESHOLD = float(dbutils.widgets.get("similarity_threshold"))
+UC_MODEL_NAME        = f"{CATALOG}.finsage_gold.finsage_rag_agent"
+MAX_ITERATIONS       = 5
 
 input_schema  = Schema([ColSpec("string", "messages")])
 output_schema = Schema([ColSpec("string", "content")])
@@ -1365,9 +1416,15 @@ with mlflow.start_run(run_name=f"finsage_rag_agent_{ENV}") as run:
 
 # ── 10. Deploy to Databricks Model Serving ────────────────────────────────────
 
+# Defensive re-init — make this cell safe to "Run cell" in isolation.
+import mlflow
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.serving import EndpointCoreConfigInput, ServedEntityInput
 from databricks.sdk.errors import ResourceDoesNotExist
+
+CATALOG        = dbutils.widgets.get("catalog")
+UC_MODEL_NAME  = f"{CATALOG}.finsage_gold.finsage_rag_agent"
+AGENT_ENDPOINT = "finsage_agent_endpoint"
 
 w = WorkspaceClient()
 
@@ -1402,7 +1459,22 @@ print(f"[DEPLOY] Monitor at: https://dbc-f33010ed-00fc.cloud.databricks.com/ml/e
 
 # ── 11. Wait for endpoint + live test ─────────────────────────────────────────
 
+# Defensive re-init — survives standalone "Run cell" after restartPython().
 import time
+from databricks.sdk import WorkspaceClient
+
+w              = WorkspaceClient()
+AGENT_ENDPOINT = "finsage_agent_endpoint"
+# model_version is set by cell 10 when run sequentially. If this cell is run
+# standalone, recover the latest UC version.
+try:
+    model_version  # noqa: F821
+except NameError:
+    import mlflow
+    _client = mlflow.tracking.MlflowClient()
+    CATALOG = dbutils.widgets.get("catalog")
+    _all = _client.search_model_versions(f"name='{CATALOG}.finsage_gold.finsage_rag_agent'")
+    model_version = max(_all, key=lambda v: int(v.version)).version
 
 print(f"Waiting for endpoint '{AGENT_ENDPOINT}' to serve v{model_version}...")
 timeout, poll = 20 * 60, 20
