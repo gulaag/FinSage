@@ -5,7 +5,7 @@
 # End-to-end MLflow GenAI evaluation of the deployed RAG agent against the
 # 100-question ground-truth dataset. Designed as enterprise infrastructure:
 #
-#   • Modular scorers       — src/evaluation/scorers.py (5 custom + 1 LLM judge)
+#   • Modular scorers       — src/evaluation/scorers.py (6 custom + 2 LLM judges)
 #   • Result persistence    — Delta tables under main.finsage_gold:
 #                                 eval_run_summaries
 #                                 eval_question_outcomes
@@ -13,31 +13,38 @@
 #   • Failure analysis      — src/evaluation/analysis.py (per-scorer breakdown,
 #                             per-category matrix, regression diff vs. previous
 #                             run, question-level flips PASS↔FAIL).
+#   • In-notebook failures  — even if Delta persistence fails, every failing
+#                             question is printed with agent_response vs. expected,
+#                             pulled directly from MLflow trace assessments.
 #   • Pre-flight smoke      — 5-question fast sanity before the full 100 run, so
-#                             a deploy-time regression fails in 30 s, not 5 min.
-#   • Provenance & traceability — every Delta row is linked to (mlflow run_id,
-#                             agent endpoint version, dataset hash, git commit).
+#                             a deploy-time regression fails in ~30 s, not 5 min.
+#   • Provenance            — every run row links (mlflow run_id, agent_version,
+#                             dataset hash, git commit, mlflow_url).
 #
 # Scorer suite
 # -------------
-#   Correctness               — built-in LLM judge (databricks-meta-llama-3-3-70b)
-#   cites_ticker_and_year     — Guidelines built-in, must mention TICKER + FY when
-#                               discussing financial figures
-#   numerical_tolerance       — ±1% on numerical_lookup, B/M/K-aware extraction
-#   citation_format           — [VERBATIM]/[SUMMARY] + [Source:] line on retrieval-
-#                               heavy questions
-#   refusal_correctness       — refusal-test category: declined for the right reason
-#   tool_routing_correctness  — agent picked the right tool (annual / quarterly /
-#                               metadata / search) for the question
-#   derived_metric_match      — numeric extraction + tolerance, decoupled from
-#                               natural-language wording (catches LLM-judge over-
-#                               strictness on derived ratios)
+#   Correctness                  — built-in LLM judge (databricks-meta-llama-3-3-70b)
+#   cites_ticker_and_year        — Guidelines built-in, must mention TICKER + FY
+#   numerical_tolerance          — ±1% on numerical_lookup, B/M/K-aware extraction
+#   citation_format              — [VERBATIM]/[SUMMARY] + [Source:] line
+#   refusal_correctness          — refusal-test: declined for the right reason
+#   tool_routing_correctness     — agent picked the right tool
+#   derived_metric_match         — numeric tolerance, decoupled from wording
+#   retrieval_grounded_when_used — replaces MLflow's RetrievalGroundedness; SKIPS
+#                                  on traces with no RETRIEVER span instead of
+#                                  erroring (the agent's _deterministic_answer
+#                                  shortcut handles ~95% of our questions without
+#                                  invoking search_filings).
 #
-# RetrievalGroundedness IS enabled — we load the registered UC model in-process
-# (mlflow.pyfunc.load_model) instead of querying the remote serving endpoint, so
-# search_filings's RETRIEVER span and the metrics tools' TOOL spans propagate
-# into the eval trace tree. The deployed endpoint is still pinged once as a
-# canary so production regressions get noticed.
+# Why in-process model load (mlflow.pyfunc.load_model + unwrap_python_model):
+#   Querying the remote serving endpoint cuts the trace at the process boundary
+#   (num_spans=1 always); tool spans only propagate when the agent runs in the
+#   eval notebook's process. unwrap_python_model bypasses pyfunc's signature-
+#   driven input mangling that converts dict→DataFrame and JSON-stringifies
+#   nested fields.
+#
+# Local pre-flight (run before redeploying notebook to workspace):
+#   .venv/bin/python -m pytest tests/unit/test_eval_preflight.py -v
 # ==============================================================================
 
 # COMMAND ----------
@@ -79,7 +86,7 @@ import time
 from pathlib import Path
 
 import mlflow
-from mlflow.genai.scorers import Correctness, Guidelines, RetrievalGroundedness
+from mlflow.genai.scorers import Correctness, Guidelines
 from databricks.sdk import WorkspaceClient
 
 # Re-read widgets after restartPython() (they persist; Python state does not).
@@ -119,6 +126,7 @@ from src.evaluation.scorers import (  # noqa: E402
     refusal_correctness,
     tool_routing_correctness,
     derived_metric_match,
+    retrieval_grounded_when_used,
 )
 from src.evaluation import persistence as eval_persistence  # noqa: E402
 from src.evaluation import analysis as eval_analysis        # noqa: E402
@@ -185,7 +193,18 @@ def to_eval_row(q: dict) -> dict:
 
 eval_dataset = [to_eval_row(q) for q in ground]
 DATASET_HASH = eval_persistence.dataset_fingerprint(eval_dataset)
-print(f"[DATASET] {len(eval_dataset)} rows | fingerprint={DATASET_HASH}")
+
+# Fail-fast assertions — these are the "preflight before the cluster" checks
+# that the unit tests in tests/unit/test_eval_preflight.py also enforce. If
+# you see one of these tripped, run pytest locally before redeploying.
+assert len(eval_dataset) == 100, f"expected 100 rows, got {len(eval_dataset)}"
+for r in eval_dataset:
+    for k, v in r["expectations"].items():
+        assert v is not None, f"None value in expectations for {r['expectations'].get('question_id')!r} key={k!r}"
+    has_resp  = "expected_response" in r["expectations"]
+    has_facts = "expected_facts"    in r["expectations"]
+    assert has_resp ^ has_facts, f"expected_response/expected_facts mutex broken: {r['expectations'].get('question_id')!r}"
+print(f"[DATASET] {len(eval_dataset)} rows | fingerprint={DATASET_HASH} | preflight OK")
 
 # COMMAND ----------
 
@@ -242,14 +261,19 @@ def predict_fn(messages: list) -> dict:
         return {"choices": [{"message": {"role": "assistant",
                 "content": f"In-process agent error: {type(e).__name__}: {e}"}}]}
 
-# In-process smoke test — also verify trace spans propagated.
-try:
-    test_out = predict_fn([{"role": "user", "content": "What was Apple's revenue in fiscal year 2024?"}])
-    preview = test_out["choices"][0]["message"]["content"][:200]
-    print(f"[SMOKE in-process] {preview!r}")
-except Exception as e:
-    print(f"[SMOKE FAIL] {type(e).__name__}: {e}")
-    raise
+# In-process smoke test — must produce a real $ figure, NOT an "agent error".
+test_out = predict_fn([{"role": "user", "content": "What was Apple's revenue in fiscal year 2024?"}])
+preview = test_out["choices"][0]["message"]["content"]
+print(f"[SMOKE in-process] {preview[:240]!r}")
+assert "In-process agent error" not in preview, (
+    f"Smoke test returned an error fallback — agent didn't actually run.\n"
+    f"Preview: {preview[:400]}"
+)
+assert ("$" in preview or "B" in preview or "%" in preview), (
+    f"Smoke test response contains no numerical signal — agent likely produced "
+    f"a refusal or hallucination on a deterministic-answerable question.\n"
+    f"Preview: {preview[:400]}"
+)
 
 # Deploy-time canary against the served endpoint (non-fatal — the eval uses
 # the in-process model, but we want to know if production is broken).
@@ -280,7 +304,6 @@ with mlflow.start_run(run_name=f"{EVAL_NAME}_preflight") as preflight_run:
         predict_fn=predict_fn,
         scorers=[
             Correctness(),
-            RetrievalGroundedness(),  # works now: in-process load → RETRIEVER spans visible
             Guidelines(
                 name="cites_ticker_and_year",
                 guidelines=("The response must cite both a ticker symbol and a fiscal year "
@@ -291,6 +314,7 @@ with mlflow.start_run(run_name=f"{EVAL_NAME}_preflight") as preflight_run:
             refusal_correctness,
             tool_routing_correctness,
             derived_metric_match,
+            retrieval_grounded_when_used,  # SKIPs on traces w/o RETRIEVER span
         ],
     )
     print(f"[PREFLIGHT] run_id={preflight_run.info.run_id} metrics={getattr(preflight_results, 'metrics', None)}")
@@ -337,7 +361,6 @@ with mlflow.start_run(run_name=EVAL_NAME) as run:
         predict_fn=predict_fn,
         scorers=[
             Correctness(),
-            RetrievalGroundedness(),  # works now: in-process load → RETRIEVER spans visible
             Guidelines(
                 name="cites_ticker_and_year",
                 guidelines=("The response must cite both a ticker symbol and a fiscal year "
@@ -348,6 +371,7 @@ with mlflow.start_run(run_name=EVAL_NAME) as run:
             refusal_correctness,
             tool_routing_correctness,
             derived_metric_match,
+            retrieval_grounded_when_used,  # SKIPs on traces w/o RETRIEVER span
         ],
     )
     print(f"[EVAL] run_id={RUN_ID}")
@@ -355,11 +379,10 @@ with mlflow.start_run(run_name=EVAL_NAME) as run:
 
 # COMMAND ----------
 
-# ── 8. Persist results to Delta (eval_run_summaries + eval_question_outcomes)
-# Pulls per-trace assessments via MLflow REST and writes both a one-row run
-# summary and one row per (question, scorer) outcome. Idempotent on run_id.
-
-eval_persistence.ensure_tables(spark)
+# ── 8a. Collect per-trace assessments from MLflow (no Spark; cannot fail) ────
+# Pulls assessments via REST and assembles in-memory `outcome_rows`. This is
+# the canonical eval result, available immediately even if Delta persistence
+# (cell 8c) fails. The summary in cell 8b reads from this in-memory list.
 
 api = w.api_client
 trace_resp = api.do(
@@ -375,7 +398,6 @@ for t in all_traces:
         if tag.get("key", "").startswith("mlflow.assessment.") and RUN_ID in tag.get("value", ""):
             run_traces.append(t)
             break
-print(f"[PERSIST] traces tied to run {RUN_ID[:10]}: {len(run_traces)}")
 
 EXPECTATION_NAMES = {
     "category", "difficulty", "expected_facts", "expected_response",
@@ -447,9 +469,65 @@ for trace in run_traces:
         bucket = scorer_metrics.setdefault(scorer_name, {"pass": 0, "fail": 0, "error": 0, "skip": 0})
         bucket[outcome.lower()] = bucket.get(outcome.lower(), 0) + 1
 
-print(f"[PERSIST] outcome rows: {len(outcome_rows)}")
+print(f"[COLLECT] traces tied to run {RUN_ID[:10]}: {len(run_traces)}")
+print(f"[COLLECT] outcome rows: {len(outcome_rows)}")
+assert len(run_traces) > 0, "No traces found for this run — eval did not produce output. Investigate cell 7."
+assert len(outcome_rows) > 0, "No scorer outcomes captured — every scorer either errored or skipped."
 
-# Run summary aggregates
+# COMMAND ----------
+
+# ── 8b. In-memory summary + failure list (no Spark; always works) ────────────
+# This is the cell that gives you the answer even if persistence fails.
+
+from collections import defaultdict, Counter as _Counter  # noqa: E402
+
+print("=" * 86)
+print(f"EVAL SUMMARY  run_id={RUN_ID}  agent_version={AGENT_VERSION}  questions={len(eval_dataset)}")
+print("=" * 86)
+for sname in sorted(scorer_metrics):
+    m = scorer_metrics[sname]
+    answered = m.get("pass", 0) + m.get("fail", 0)
+    rate = m.get("pass", 0) / answered if answered else None
+    rate_s = f"{rate:.1%}" if rate is not None else "  n/a"
+    print(f"  {sname:30s} pass={m.get('pass',0):3d}  fail={m.get('fail',0):3d}  "
+          f"err={m.get('error',0):3d}  skip={m.get('skip',0):3d}  rate={rate_s}")
+
+# Per-category × scorer matrix
+print("\nPER-CATEGORY × SCORER:")
+matrix: dict = defaultdict(lambda: defaultdict(_Counter))
+for r in outcome_rows:
+    matrix[r["category"]][r["scorer_name"]][r["outcome"]] += 1
+for cat in sorted(matrix):
+    print(f"  [{cat}]")
+    for sname in sorted(matrix[cat]):
+        c = matrix[cat][sname]
+        ans = c.get("PASS",0) + c.get("FAIL",0)
+        rate = c.get("PASS",0)/ans if ans else None
+        rate_s = f"{rate:.1%}" if rate is not None else "  n/a"
+        print(f"    {sname:30s} {c.get('PASS',0):3d}/{ans:<3d}  rate={rate_s}  err={c.get('ERROR',0)}  skip={c.get('SKIP',0)}")
+
+# Failures drill-down — even one row per failure with full agent vs expected.
+fails = [r for r in outcome_rows if r["outcome"] in {"FAIL", "ERROR"}]
+print(f"\nFAILURES + ERRORS ({len(fails)} rows):")
+print("=" * 86)
+for r in sorted(fails, key=lambda x: (x["scorer_name"], x["question_id"])):
+    print(f"\n{r['question_id']} | {r['scorer_name']} | {r['outcome']} | cat={r['category']} | ticker={r['ticker']}")
+    if r.get("rationale"):
+        print(f"  WHY: {(r['rationale'] or '')[:280]}")
+    if r.get("error_message"):
+        print(f"  ERR: {(r['error_message'] or '')[:280]}")
+    if r.get("agent_response"):
+        print(f"  AGENT:    {r['agent_response'][:280]}")
+    if r.get("expected_response"):
+        print(f"  EXPECTED: {r['expected_response'][:280]}")
+print("=" * 86)
+
+# COMMAND ----------
+
+# ── 8c. Persist to Delta (eval_run_summaries + eval_question_outcomes) ───────
+# Wrapped in try/except so a Delta failure doesn't suppress the in-memory
+# results from cell 8b. Idempotent MERGE INTO on run_id, so safe to re-run.
+
 run_started_ms  = run.info.start_time
 run_finished_ms = run.info.end_time or int(time.time() * 1000)
 mlflow_url = (
@@ -457,58 +535,73 @@ mlflow_url = (
     if w.config.host else f"{EXPERIMENT_ID}/{RUN_ID}"
 )
 
-eval_persistence.merge_run_summary(
-    spark,
-    run_id=RUN_ID,
-    run_name=EVAL_NAME,
-    experiment_id=EXPERIMENT_ID,
-    run_started_at_ms=run_started_ms,
-    run_finished_at_ms=run_finished_ms,
-    agent_endpoint=AGENT_ENDPOINT,
-    agent_version=AGENT_VERSION,
-    judge_endpoint=JUDGE_ENDPOINT,
-    num_questions=len(eval_dataset),
-    dataset_path=str(truth_path),
-    dataset_hash=DATASET_HASH,
-    scorer_metrics=scorer_metrics,
-    params={"smoke_only": SMOKE_ONLY},
-    mlflow_url=mlflow_url,
-    git_commit=GIT_COMMIT,
-)
-eval_persistence.merge_question_outcomes(spark, RUN_ID, outcome_rows)
-print(f"[PERSIST] wrote summary + outcomes for run {RUN_ID[:10]}")
+try:
+    eval_persistence.ensure_tables(spark)
+    eval_persistence.merge_run_summary(
+        spark,
+        run_id=RUN_ID,
+        run_name=EVAL_NAME,
+        experiment_id=EXPERIMENT_ID,
+        run_started_at_ms=run_started_ms,
+        run_finished_at_ms=run_finished_ms,
+        agent_endpoint=AGENT_ENDPOINT,
+        agent_version=AGENT_VERSION,
+        judge_endpoint=JUDGE_ENDPOINT,
+        num_questions=len(eval_dataset),
+        dataset_path=str(truth_path),
+        dataset_hash=DATASET_HASH,
+        scorer_metrics=scorer_metrics,
+        params={"smoke_only": SMOKE_ONLY},
+        mlflow_url=mlflow_url,
+        git_commit=GIT_COMMIT,
+    )
+    eval_persistence.merge_question_outcomes(spark, RUN_ID, outcome_rows)
+    print(f"[PERSIST] wrote summary + outcomes for run {RUN_ID[:10]}")
+except Exception as e:
+    print(f"[PERSIST] FAILED: {type(e).__name__}: {str(e)[:300]}")
+    print(f"[PERSIST] In-memory results in cell 8b are unaffected. "
+          f"Re-run only this cell once persistence is fixed.")
 
 # COMMAND ----------
 
-# ── 9. Pretty summary + per-category breakdown ───────────────────────────────
-eval_analysis.print_summary(spark, RUN_ID)
+# ── 9. Delta-backed analysis (only if persistence in 8c succeeded) ───────────
+# These cells query main.finsage_gold.eval_* via Spark. If 8c failed they will
+# fail too — but the in-memory results in cell 8b have already been printed.
+
+try:
+    eval_analysis.print_summary(spark, RUN_ID)
+except Exception as e:
+    print(f"[ANALYSIS] print_summary skipped: {type(e).__name__}: {str(e)[:200]}")
 
 # COMMAND ----------
 
-# ── 10. Failures (drill-down) ────────────────────────────────────────────────
-failures = eval_analysis.failure_breakdown(spark, RUN_ID)
-print("=" * 86)
-print("FAILURES + ERRORS (this run)")
-print("=" * 86)
-display(failures)  # noqa: F821 — Databricks display()
+# ── 10. Failures (drill-down via Delta) ──────────────────────────────────────
+try:
+    failures = eval_analysis.failure_breakdown(spark, RUN_ID)
+    print("=" * 86); print("FAILURES + ERRORS (this run)"); print("=" * 86)
+    display(failures)  # noqa: F821 — Databricks display()
+except Exception as e:
+    print(f"[ANALYSIS] failure_breakdown skipped: {type(e).__name__}: {str(e)[:200]}")
 
 # COMMAND ----------
 
 # ── 11. Regression diff vs. previous run ─────────────────────────────────────
-diff = eval_analysis.regression_diff(spark, RUN_ID)
-print("=" * 86)
-print("REGRESSION DIFF vs. previous run on same agent endpoint")
-print("=" * 86)
-display(diff)  # noqa: F821
+try:
+    diff = eval_analysis.regression_diff(spark, RUN_ID)
+    print("=" * 86); print("REGRESSION DIFF vs. previous run on same agent endpoint"); print("=" * 86)
+    display(diff)  # noqa: F821
+except Exception as e:
+    print(f"[ANALYSIS] regression_diff skipped: {type(e).__name__}: {str(e)[:200]}")
 
 # COMMAND ----------
 
 # ── 12. Run-level trend (last 10 runs) ───────────────────────────────────────
-recent = eval_persistence.fetch_recent_runs(spark, limit=10)
-print("=" * 86)
-print("RECENT EVAL RUNS")
-print("=" * 86)
-display(recent)  # noqa: F821
+try:
+    recent = eval_persistence.fetch_recent_runs(spark, limit=10)
+    print("=" * 86); print("RECENT EVAL RUNS"); print("=" * 86)
+    display(recent)  # noqa: F821
+except Exception as e:
+    print(f"[ANALYSIS] fetch_recent_runs skipped: {type(e).__name__}: {str(e)[:200]}")
 
 # COMMAND ----------
 

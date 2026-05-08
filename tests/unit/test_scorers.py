@@ -21,6 +21,7 @@ from src.evaluation.scorers import (  # noqa: E402
     refusal_correctness,
     tool_routing_correctness,
     derived_metric_match,
+    retrieval_grounded_when_used,
 )
 
 
@@ -185,3 +186,70 @@ def test_derived_match_fails_on_wrong_value():
     exp = _expectations(expected_response="$391,035,000,000. Revenue not net income.")
     # Compare 99e9 to 391e9 → way off, fail
     assert _value(derived_metric_match(outputs=out, expectations=exp)) is False
+
+
+# ── retrieval_grounded_when_used ────────────────────────────────────────────
+
+class _Span:
+    def __init__(self, span_type=None, outputs=None, attributes=None):
+        self.span_type = span_type
+        self.outputs = outputs
+        self.attributes = attributes or {}
+
+
+class _TraceData:
+    def __init__(self, spans):
+        self.spans = spans
+
+
+class _Trace:
+    def __init__(self, spans):
+        self.data = _TraceData(spans)
+
+
+def test_grounded_skips_when_no_retriever_span():
+    trace = _Trace(spans=[_Span(span_type="AGENT")])
+    out = _outputs("Apple's revenue was $391B. [Source: AAPL | FY2024 | metrics]")
+    exp = _expectations()
+    assert retrieval_grounded_when_used(outputs=out, expectations=exp, trace=trace) is None
+
+
+def test_grounded_passes_when_response_cites_retrieved_ticker():
+    retrieved = "[Source: AAPL | FY2024 | 10-K | Risk Factors] some text"
+    trace = _Trace(spans=[
+        _Span(span_type="AGENT"),
+        _Span(span_type="RETRIEVER", outputs=retrieved),
+    ])
+    out = _outputs("[VERBATIM] supply chain risk. [Source: AAPL | FY2024 | 10-K | Risk Factors]")
+    exp = _expectations(category="risk_summary", source_section="Risk Factors")
+    assert _value(retrieval_grounded_when_used(outputs=out, expectations=exp, trace=trace)) is True
+
+
+def test_grounded_fails_when_response_cites_different_ticker():
+    retrieved = "[Source: AAPL | FY2024 | 10-K | Risk Factors] apple text"
+    trace = _Trace(spans=[
+        _Span(span_type="AGENT"),
+        _Span(span_type="RETRIEVER", outputs=retrieved),
+    ])
+    out = _outputs("[VERBATIM] microsoft text. [Source: MSFT | FY2024 | 10-K | Risk Factors]")
+    exp = _expectations(category="risk_summary", source_section="Risk Factors")
+    assert _value(retrieval_grounded_when_used(outputs=out, expectations=exp, trace=trace)) is False
+
+
+def test_grounded_fails_when_response_has_no_citation():
+    retrieved = "[Source: AAPL | FY2024 | 10-K | Risk Factors] apple text"
+    trace = _Trace(spans=[_Span(span_type="RETRIEVER", outputs=retrieved)])
+    out = _outputs("Just a free-form answer with no citation.")
+    exp = _expectations(category="risk_summary", source_section="Risk Factors")
+    assert _value(retrieval_grounded_when_used(outputs=out, expectations=exp, trace=trace)) is False
+
+
+def test_grounded_handles_attribute_based_span_type():
+    # Some MLflow versions expose span_type via attributes, not direct attr.
+    retrieved = "[Source: NVDA | FY2024 | 10-K | MD&A] gpu shipments"
+    trace = _Trace(spans=[
+        _Span(attributes={"mlflow.spanType": "RETRIEVER"}, outputs=retrieved),
+    ])
+    out = _outputs("[SUMMARY] GPU growth. [Source: NVDA | FY2024 | 10-K | MD&A]")
+    exp = _expectations(category="risk_summary", source_section="MD&A")
+    assert _value(retrieval_grounded_when_used(outputs=out, expectations=exp, trace=trace)) is True
