@@ -755,7 +755,7 @@
       <span class="pill"><strong>Author:</strong>&nbsp;Digvijay Singh</span>
       <span class="pill"><strong>Platform:</strong>&nbsp;Databricks Mosaic AI</span>
       <span class="pill"><strong>Stack:</strong>&nbsp;PySpark &middot; Delta &middot; Vector Search &middot; MLflow</span>
-      <span class="pill"><strong>Status:</strong>&nbsp;Week 9 of 10 &middot; Active build</span>
+      <span class="pill"><strong>Status:</strong>&nbsp;Week 10 of 10 &middot; Eval suite shipped, app UI next</span>
     </div>
   </div>
 </header>
@@ -777,8 +777,16 @@
     <div class="stat-label">Vector Chunks</div>
   </div>
   <div class="stat-cell">
-    <div class="stat-value">v8</div>
+    <div class="stat-value">v20</div>
     <div class="stat-label">RAG Agent Deployed</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-value">100</div>
+    <div class="stat-label">Eval Questions</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-value">8</div>
+    <div class="stat-label">Scorers Wired</div>
   </div>
 </div>
 
@@ -788,24 +796,29 @@
 <!-- BUILD STATUS -->
 <!-- ============================================ -->
 <div class="callout callout-dark" style="margin-top: 36px;">
-  <strong>Build Status &mdash; Week 9 of 10 (as of 5 May 2026)</strong>
-  <p style="margin-bottom: 12px;">This blueprint was authored pre-build. The project has since shipped through Gold and a deployed RAG agent &mdash; the section narratives below remain the original plan, kept intact so the as-designed thinking is preserved alongside what was actually built.</p>
+  <strong>Build Status &mdash; Week 10 of 10 (as of 8 May 2026)</strong>
+  <p style="margin-bottom: 12px;">This blueprint was authored pre-build. The project has since shipped through Gold, a deployed RAG agent on its 20th UC-registered version, and a production-grade evaluation harness over a 100-question stratified dataset. The section narratives below remain the original plan, kept intact so the as-designed thinking is preserved alongside what was actually built.</p>
   <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 14px;">
     <div>
       <span class="label label-green" style="margin-bottom: 8px;">Shipped</span>
       <ul style="margin-left: 20px; color: #d2d7ea;">
-        <li>Bronze &mdash; Auto Loader ingest of 10-K/10-Q HTML + XBRL CompanyFacts JSON</li>
-        <li>Silver &mdash; <code style="color: var(--gold-300); background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12);">sec-parser</code> DOM extraction with regex fallback; per-section MERGE</li>
-        <li>Gold &mdash; annual <code style="color: var(--gold-300); background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12);">company_metrics</code> + quarterly <code style="color: var(--gold-300); background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12);">company_metrics_quarterly</code> (Q1/Q2/Q3 via YTD subtraction)</li>
+        <li>Bronze &mdash; Auto Loader ingest of 10-K/10-Q HTML + XBRL CompanyFacts JSON (728 filings)</li>
+        <li>Silver &mdash; <code style="color: var(--gold-300); background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12);">sec-parser</code> DOM extraction with regex fallback; per-section MERGE; <code style="color: var(--gold-300); background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12);">extractor_used</code> tagged on every row</li>
+        <li>Gold &mdash; annual <code style="color: var(--gold-300); background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12);">company_metrics</code> + quarterly <code style="color: var(--gold-300); background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12);">company_metrics_quarterly</code> (Q1/Q2/Q3 via YTD subtraction; 180 + 544 rows)</li>
         <li>Vector Search &mdash; BGE-large-en, DELTA_SYNC TRIGGERED, 45,136 chunks &middot; 728 filings &middot; 30 tickers indexed</li>
-        <li>RAG agent v8 &mdash; UC-registered pyfunc on <code style="color: var(--gold-300); background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12);">finsage_agent_endpoint</code>, scaled-to-zero, three tools wired (search + annual + quarterly)</li>
+        <li>RAG agent v20 &mdash; UC-registered pyfunc on <code style="color: var(--gold-300); background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12);">finsage_agent_endpoint</code>, scaled-to-zero, <strong>four</strong> tools wired (search + annual + quarterly + filing metadata). v21+ in flight with the LLM-driven tool loop replacing the deterministic shortcut.</li>
+        <li>Notebook 07 evaluation &mdash; MLflow GenAI Eval over a <strong>100-question stratified ground-truth dataset</strong> (6 categories, all 30 tickers) with <strong>8 scorers</strong> (4 LLM-judge + 4 custom <code style="color: var(--gold-300); background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12);">@scorer</code>); idempotent Delta persistence (<code style="color: var(--gold-300); background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12);">eval_run_summaries</code>, <code style="color: var(--gold-300); background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12);">eval_question_outcomes</code>) for run-over-run regression diffs</li>
+        <li>Pre-flight unit tests &mdash; 64 pytest cases catch dataset/scorer/persistence regressions in &lt;1s before paying for cluster spin-up</li>
+        <li>Automated redeploy &mdash; <code style="color: var(--gold-300); background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12);">finsage-log-and-deploy-agent</code> serverless job runs notebook 06 end-to-end on every push</li>
       </ul>
     </div>
     <div>
       <span class="label label-gold" style="margin-bottom: 8px;">Pending</span>
       <ul style="margin-left: 20px; color: #d2d7ea;">
-        <li>Notebook 07 &mdash; MLflow GenAI evaluation over the 10-question curated set with custom <code style="color: var(--gold-300); background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12);">numerical_tolerance</code> and <code style="color: var(--gold-300); background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12);">citation_format</code> scorers</li>
-        <li>Notebook 08 &mdash; Knowledge graph extraction from MD&amp;A and Risk Factors via Graphify</li>
+        <li>Databricks App chatbot front-end &mdash; conversational UI over <code style="color: var(--gold-300); background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12);">finsage_agent_endpoint</code> with inline citation rendering and MLflow trace deep-links (the deployment target every architectural decision was tuned for)</li>
+        <li>Notebook 08 &mdash; Knowledge graph extraction from MD&amp;A and Risk Factors via Graphify (15 node types, 19 edge types)</li>
+        <li>Weekly eval cron via Databricks Jobs &mdash; alert when <code style="color: var(--gold-300); background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12);">correctness/mean</code> drops &gt;5pp WoW; trend source is the <code style="color: var(--gold-300); background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12);">eval_run_summaries</code> Delta table</li>
+        <li>Gold-data quality fixes surfaced by eval (JNJ FY22 total_equity, BAC FY22 total_liabilities, AMZN Q1 FY24 net_income, MCD 10-K text gap)</li>
         <li>CI/CD &mdash; GitHub Actions DAB pipeline (deferred until eval signal stabilises)</li>
       </ul>
     </div>
@@ -1272,7 +1285,7 @@ bronze.filings ---+                  bronze.xbrl_companyfacts_raw
        gold.company_metrics(_quarterly) + gold.filing_chunks_index
                   |
                   v
-       finsage_rag_agent (UC pyfunc, v8) on finsage_agent_endpoint</code></pre>
+       finsage_rag_agent (UC pyfunc, v20+) on finsage_agent_endpoint</code></pre>
 
   <h3>4.3 Cluster Hygiene &mdash; The <code>numpy&lt;2</code> Pin</h3>
   <div class="callout callout-gold">
@@ -1593,11 +1606,11 @@ bronze.filings ---+                  bronze.xbrl_companyfacts_raw
 <!-- SECTION 7: AGENT SYSTEM -->
 <!-- ============================================ -->
 <div class="section" id="s7">
-  <h2><span class="section-number">7</span> Agent System &mdash; Pyfunc Orchestrator with Three Tools</h2>
+  <h2><span class="section-number">7</span> Agent System &mdash; Pyfunc Orchestrator with Four Tools</h2>
 
   <div class="callout callout-dark">
-    <strong>Implemented &middot; <code>finsage_rag_agent</code> v8 deployed on <code>finsage_agent_endpoint</code></strong>
-    <p>One orchestrator. Three tools. <code>mlflow.pyfunc.PythonModel</code> with zero LangChain dependency. The function-calling loop is hand-written so every iteration is observable, bounded, and deterministic. Max 5 tool-call iterations before a forced final answer.</p>
+    <strong>Implemented &middot; <code>finsage_rag_agent</code> v20 deployed on <code>finsage_agent_endpoint</code> (v21+ in flight)</strong>
+    <p>One orchestrator. Four tools. <code>mlflow.pyfunc.PythonModel</code> with zero LangChain dependency. The function-calling loop is hand-written so every iteration is observable, bounded, and deterministic. Max 5 tool-call iterations before a forced final answer. Every user query now routes through the LLM tool loop &mdash; the previous deterministic-regex shortcut for simple metric lookups was removed in favor of LLM reasoning that produces conversational, professionally-cited answers suitable for direct display in the chatbot UI (the deployment target).</p>
   </div>
 
   <h3>7.1 Stack</h3>
@@ -1619,8 +1632,8 @@ bronze.filings ---+                  bronze.xbrl_companyfacts_raw
       </tr>
       <tr>
         <td>Tracing</td>
-        <td><code>@mlflow.trace</code> on <code>predict()</code>, <code>search_filings()</code>, <code>get_company_metrics()</code>, <code>get_quarterly_metrics()</code></td>
-        <td>Every tool call gets a span. Every LLM call is auto-instrumented. Failure traces in MLflow are clickable from the eval dashboard.</td>
+        <td><code>@mlflow.trace</code> on <code>predict()</code>, <code>search_filings()</code> (RETRIEVER span), <code>get_company_metrics()</code>, <code>get_quarterly_metrics()</code>, <code>get_filing_metadata()</code> (TOOL spans)</td>
+        <td>Every tool call gets a typed span. Every LLM call is auto-instrumented. Failure traces in MLflow are clickable from the eval dashboard, and the typed RETRIEVER/TOOL spans drive the custom <code>retrieval_grounded_when_used</code> scorer.</td>
       </tr>
       <tr>
         <td>Registry</td>
@@ -1656,6 +1669,12 @@ bronze.filings ---+                  bronze.xbrl_companyfacts_raw
     <p style="margin-top: 8px;"><strong>Optional artifact.</strong> If <code>quarterly_cache.json</code> is missing at <code>load_context</code> (e.g. a fresh deploy where notebook 04b has not yet run), the agent logs a warning and the tool returns a graceful error rather than crashing the serving container.</p>
   </div>
 
+  <div class="arch-box layer-process">
+    <span class="arch-label l-blue">Tool 4</span>
+    <h4 style="margin-top: 4px;"><code>get_filing_metadata</code> &mdash; 10-K cover-page deterministic lookup</h4>
+    <p>Args: <code>ticker</code> (required), <code>fiscal_year</code> (required). Returns the three deterministic cover-page facts that the prior tools intentionally don't carry: <strong>filing date</strong>, <strong>employee count</strong>, <strong>shares outstanding</strong>. Sourced at notebook-time from the SEC <code>data.sec.gov/api/xbrl/companyconcept</code> endpoints (DEI namespace) plus the <code>submissions</code> recent-filings index, then frozen into a JSON artifact deployed alongside the metrics caches. Routes the &ldquo;when did Apple file FY24 10-K?&rdquo; / &ldquo;how many people work at Microsoft?&rdquo; question class without conflating it with the analytical metrics tools.</p>
+  </div>
+
   <h3>7.3 Predict Loop</h3>
 
   <pre><code>messages = [{system_prompt}] + user_messages
@@ -1688,23 +1707,29 @@ return llm.predict(messages=messages, temperature=0.1, max_tokens=1024)</code></
     <li><strong>Hard 5-iteration cap with a final "best answer now" fallback</strong> &mdash; bounds latency and cost, prevents tool-call infinite loops, and the explicit final prompt forces synthesis instead of dangling mid-loop.</li>
   </ul>
 
-  <h3>7.4 SYSTEM_PROMPT &mdash; Routing &amp; Output Rules</h3>
+  <h3>7.4 SYSTEM_PROMPT &mdash; Routing, Refusals &amp; Output Rules</h3>
+
+  <p>The prompt is the single source of truth for behavior &mdash; ~170 lines covering corpus scope, the four-tool routing matrix, refusal handling, partial-data UX, citation grammar, chat tone, precision guardrails, and four worked examples (one canonical answer + three refusal/edge-case shapes).</p>
 
   <div class="callout callout-gold">
     <strong>Verbatim rules baked into the prompt</strong>
     <ul style="margin-top: 8px;">
       <li><strong>Annual / fiscal-year questions</strong> ("revenue in FY2024", "2023 operating margin") &rarr; <code>get_company_metrics</code>.</li>
-      <li><strong>Interim / within-year questions</strong> ("Q2 2024 revenue", "how did margins change Q1&ndash;Q3") &rarr; <code>get_quarterly_metrics</code>. Q4 standalone is NOT available &mdash; fall back to annual totals and flag the limitation.</li>
+      <li><strong>Interim / within-year questions</strong> ("Q2 2024 revenue", "how did margins change Q1&ndash;Q3") &rarr; <code>get_quarterly_metrics</code>. Q4 standalone is NOT available &mdash; explain the constraint and offer the implied <code>annual &minus; (Q1+Q2+Q3)</code> value.</li>
+      <li><strong>Filing metadata questions</strong> (employees, shares outstanding, when filed) &rarr; <code>get_filing_metadata</code>.</li>
       <li><strong>Qualitative questions</strong> (risks, strategy, management commentary) &rarr; <code>search_filings</code>.</li>
       <li><strong>"Most recent" / "latest" questions</strong> &rarr; first call the appropriate metrics tool to identify the latest year (and quarter if interim) for that ticker, <em>then</em> pass that <code>fiscal_year</code> into <code>search_filings</code> so retrieved passages all come from a single filing period.</li>
-      <li><strong>Citation labelling</strong> &mdash; <code>[VERBATIM]</code> on direct quotes, <code>[SUMMARY]</code> on paraphrases. Never present a summary as a quote.</li>
-      <li><strong>Formula disclosure</strong> &mdash; state the formula explicitly on first use (e.g. "Operating Margin (GAAP) = Operating Income &divide; Revenue").</li>
+      <li><strong>Refusals are first-class</strong> &mdash; out-of-corpus tickers (IBM/META/GOOG), future fiscal years, deprecated tickers (FB), and the MCD 10-K text gap each have a worked refusal example in the prompt. The agent must name the specific reason and offer a concrete alternative; never fabricate from training memory.</li>
+      <li><strong>PARTIAL-DATA RULE (chatbot-UX critical)</strong> &mdash; when the user asks for ONE specific metric and the tool returns N/A for it, the response must NOT lead with (or fold into the same sentence as) a different metric's value. A chatbot reader scans for the headline number and may treat any prominent dollar figure as the answer to the original question. The required structure: refuse the specific metric in paragraph one; only then offer related context as a clearly-labelled separate paragraph. Worked example covers the AMZN Q1 FY2024 net-income case where the cache holds revenue and operating income but not net income.</li>
+      <li><strong>Citation labelling</strong> &mdash; <code>[VERBATIM]</code> on direct quotes from <code>search_filings</code>, <code>[SUMMARY]</code> on paraphrases. Metrics-only answers end with <code>[Source: TICKER | FY#### | metrics]</code> (or <code>FY#### Q#</code> for quarterly, <code>10-K Cover Page</code> for filing metadata). Never present a summary as a quote.</li>
+      <li><strong>Formula disclosure</strong> &mdash; state the formula explicitly on first use (e.g. "Operating Margin = Operating Income &divide; Revenue").</li>
+      <li><strong>Numeric formatting</strong> &mdash; <code>$391.04 billion</code> not <code>391035000000</code>; <code>43.31%</code> not <code>0.4331</code>; ratios with at most 4 decimals.</li>
     </ul>
   </div>
 
   <h3>7.5 SDK &amp; Deployment Quirks (Workspace-Specific)</h3>
 
-  <p>Each of these is a fix to a real failure that bit during the v1&rarr;v8 redeploy cycle. Documented so the next person doesn't pay the same cost.</p>
+  <p>Each of these is a fix to a real failure that bit during the v1&rarr;v20+ redeploy cycle. Documented so the next person doesn't pay the same cost.</p>
 
   <table>
     <thead>
@@ -1756,12 +1781,13 @@ return llm.predict(messages=messages, temperature=0.1, max_tokens=1024)</code></
 
   <h3>7.6 Why This Stays a Single Agent</h3>
 
-  <p>The original blueprint reserved the option to split into multiple agents if tool-selection accuracy fell below 80% on complex queries. Eight weeks in, the actual data shape doesn't motivate that split:</p>
+  <p>The original blueprint reserved the option to split into multiple agents if tool-selection accuracy fell below 80% on complex queries. Ten weeks in &mdash; with the eval suite now reporting <code>tool_routing_correctness</code> as a first-class scorer &mdash; the actual data shape doesn't motivate that split:</p>
   <ul>
-    <li>The three tools are <strong>orthogonal in input space</strong> (free text vs. ticker+year vs. ticker+year+quarter). The router collapses to a small decision tree the LLM handles cleanly with the prompt rules above.</li>
+    <li>The four tools are <strong>orthogonal in input space</strong> (free text vs. ticker+year vs. ticker+year+quarter vs. ticker+year for cover-page facts). The router collapses to a small decision tree the LLM handles cleanly with the prompt rules above.</li>
+    <li><code>tool_routing_correctness</code> on the latest 100-question run came back at 95/95 PASS &mdash; the routing accuracy hypothesis is now measured, not assumed.</li>
     <li>The 5-iteration cap puts a hard ceiling on latency. Splitting into multiple agents would add inter-agent message passing without changing the underlying tool count.</li>
   </ul>
-  <p>The split decision rebooks once notebook 07's evaluation surfaces measured tool-selection accuracy &mdash; not before.</p>
+  <p>The split decision rebooks if a future eval iteration shows <code>tool_routing_correctness</code> regressing as the corpus or tool count grows &mdash; not before.</p>
 </div>
 
 <hr>
@@ -1772,81 +1798,79 @@ return llm.predict(messages=messages, temperature=0.1, max_tokens=1024)</code></
 <div class="section" id="s8">
   <h2><span class="section-number">8</span> Evaluation Strategy &mdash; The Career Differentiator</h2>
 
-  <div class="callout callout-red">
-    <strong>Implementation status &middot; <code>07_evaluation.py</code> + <code>src/evaluation/ground_test.json</code></strong>
-    <p>The evaluator is wired against <code>finsage_agent_endpoint</code> using MLflow GenAI Eval (<code>mlflow.genai.evaluate</code>). Built-in scorers + two custom <code>@scorer</code>s are registered; ground-truth set has 10 manually verified questions across 5 categories. The first run is the gating event for resume metrics &mdash; numbers go into <code>docs/evaluation_report.md</code> as soon as the run completes.</p>
+  <div class="callout callout-green">
+    <strong>Shipped &middot; <code>07_evaluation.py</code> + <code>src/evaluation/{scorers,persistence,analysis,builder}.py</code> + <code>ground_truth_v2.json</code></strong>
+    <p>The evaluator runs the deployed agent <strong>in-process</strong> via <code>mlflow.pyfunc.load_model().unwrap_python_model()</code> against a 100-question stratified ground-truth dataset. Eight scorers (4 LLM-judge + 4 custom <code>@scorer</code>s) are registered. Every run persists to two idempotent Delta tables under <code>main.finsage_gold</code>, so improvements are a Spark-SQL <code>MERGE</code> diff, not a screenshot in a slide deck. 64 pytest cases gate the dataset/scorer/persistence shape locally in &lt;1s before any cluster spin-up.</p>
   </div>
 
-  <h3>8.1 Why a 10-Question Curated Set, Not 100</h3>
+  <h3>8.1 Why a 100-Question Stratified Set</h3>
 
-  <p>The original blueprint specified a 100-question set. The implemented set is 10. Three reasons that matter:</p>
-  <ul>
-    <li><strong>Manual verification dominates the cost.</strong> Each question requires reading the actual filing and confirming the answer. 10 carefully verified questions beat 100 hastily verified ones &mdash; a single wrong "ground truth" answer poisons the LLM-as-judge.</li>
-    <li><strong>The set is structured to exercise every tool path.</strong> 2 questions per category &times; 5 categories &times; 8 unique tickers covers numerical lookup, risk-text retrieval, multi-row SQL, multi-company comparison, and citation validation. Adding more questions in the same shape would change confidence intervals, not surface new failure modes.</li>
-    <li><strong>Iteration speed.</strong> A full eval run hits the live agent endpoint sequentially. 10 questions is a 2-minute feedback loop; 100 is 20 minutes. Scaling to 100 is the natural next step once the scorer suite stabilises.</li>
-  </ul>
-
-  <h3>8.2 Ground-Truth Set &mdash; <code>src/evaluation/ground_test.json</code></h3>
+  <p>The original blueprint specified 100. An interim 10-question set shipped first as a fast feedback loop. The full 100-question dataset is now the production eval, generated by <code>src/evaluation/builder/</code> and cross-validated against SEC EDGAR. The questions are not a uniform sample &mdash; they're stratified to exercise every routing path the agent must learn:</p>
 
   <table>
     <thead>
-      <tr><th>Category</th><th>IDs</th><th>Tickers</th><th>What it exercises</th></tr>
+      <tr><th>Category</th><th>Count</th><th>What it exercises</th></tr>
     </thead>
     <tbody>
       <tr>
-        <td><span class="label label-green">numerical_lookup</span></td>
-        <td>NQ-001, NQ-002</td>
-        <td>AAPL FY2024, NVDA FY2024</td>
-        <td><code>get_company_metrics</code> precision; ratio computation (R&amp;D as % of revenue).</td>
+        <td><span class="label label-green">A &mdash; annual_numerical</span></td>
+        <td>30</td>
+        <td><code>get_company_metrics</code> precision over the FY2020&ndash;2026 grid; revenue, net income, gross profit, operating income, OCF, total assets/liabilities/equity/debt, R&amp;D, and the derived <code>gross_margin_pct</code> / <code>revenue_yoy_growth_pct</code> / <code>debt_to_equity</code>.</td>
       </tr>
       <tr>
-        <td><span class="label label-red">risk_summary</span></td>
-        <td>RS-001, RS-002</td>
-        <td>TSLA FY2024, BAC FY2023</td>
-        <td><code>search_filings</code> over <em>Risk Factors</em> with section_name filter; LLM summarisation grounded in retrieved text.</td>
+        <td><span class="label label-purple">B &mdash; quarterly_numerical</span></td>
+        <td>25</td>
+        <td><code>get_quarterly_metrics</code> for Q1/Q2/Q3 facts &mdash; including the YTD-subtraction-derived discrete flows for filers that don't tag the 90-day concept directly.</td>
       </tr>
       <tr>
-        <td><span class="label label-gold">yoy_comparison</span></td>
-        <td>YY-001, YY-002</td>
-        <td>MSFT FY2024 (segment + total)</td>
-        <td>Multi-row metrics tool plus segment-level retrieval; tests the "find latest year first, then search with that fiscal_year" routing rule.</td>
+        <td><span class="label label-gold">C &mdash; derived_metrics</span></td>
+        <td>15</td>
+        <td>Ratios and growth rates the agent must compute itself (margins, A/L ratios, YoY deltas) &mdash; tests the formula-disclosure rule and value extraction tolerance.</td>
       </tr>
       <tr>
-        <td><span class="label label-purple">multi_company</span></td>
-        <td>MC-001, MC-002</td>
-        <td>GOOGL/MSFT, V/MA (FY2024)</td>
-        <td>Multiple <code>get_company_metrics</code> calls in one turn; comparative narrative with formula disclosure (operating margin, A/L ratio).</td>
+        <td><span class="label label-blue">D &mdash; cross_ticker_compare</span></td>
+        <td>15</td>
+        <td>Multiple <code>get_company_metrics</code> calls in one turn followed by a comparative narrative; tests multi-tool orchestration in a single response.</td>
       </tr>
       <tr>
-        <td><span class="label label-blue">citation_validation</span></td>
-        <td>CV-001, CV-002</td>
-        <td>AAPL FY2024, NKE FY2023</td>
-        <td>Direct-quote retrieval where the question asks for the language itself; tests <code>[VERBATIM]</code>/<code>[SUMMARY]</code> tagging discipline.</td>
+        <td><span class="label label-teal">E &mdash; filing_metadata</span></td>
+        <td>10</td>
+        <td><code>get_filing_metadata</code> &mdash; cover-page facts (filing date, employees, shares outstanding) sourced from SEC DEI namespace.</td>
+      </tr>
+      <tr>
+        <td><span class="label label-red">F &mdash; refusal_test</span></td>
+        <td>5</td>
+        <td>Out-of-corpus tickers (IBM, GOOG, FB), future fiscal years, MCD 10-K text gap. The agent must decline cleanly with the specific reason &mdash; never invent.</td>
       </tr>
     </tbody>
   </table>
 
-  <p>Difficulty distribution: 3 easy / 5 medium / 2 hard. Tickers are constrained to those with both metrics + chunked text in the live system &mdash; a question about a ticker the agent cannot retrieve adds noise to the eval signal, not coverage.</p>
+  <p>Coverage: all 30 tickers represented, every category exercised, refusal questions specifically authored to probe the SYSTEM_PROMPT's refusal rules. The dataset is <strong>locked</strong> at <code>v2</code> &mdash; regeneration bumps a versioned <code>v3</code> file rather than mutating <code>v2</code> in place, so historical run-to-run diffs stay valid.</p>
+
+  <h3>8.2 Ground-Truth Set &mdash; <code>src/evaluation/ground_truth_v2.json</code></h3>
+
+  <p>Each row carries the question text, the ticker(s), fiscal_year (and fiscal_quarter when applicable), the category, the expected answer (or expected_facts evidence passage for retrieval-grounded questions), the source 10-K/10-Q accession, and a difficulty tag. The dataset hash (<code>dataset_fingerprint</code>) is logged on every MLflow run and persisted in <code>eval_run_summaries</code>, so a regression diff that compares two runs across different dataset versions fails fast.</p>
 
   <h3>8.3 Per-Row Schema</h3>
 
   <div class="schema-box">
-    <span class="table-name">ground_test.json &mdash; each entry</span><br>
-    ├── <span class="col-name">question_id</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; e.g. "NQ-001", "RS-002", "MC-001"</span><br>
-    ├── <span class="col-name">category</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; numerical_lookup | risk_summary | yoy_comparison | multi_company | citation_validation</span><br>
-    ├── <span class="col-name">ticker</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; can be slash-joined for multi-company (e.g. "GOOGL/MSFT")</span><br>
-    ├── <span class="col-name">fiscal_year</span>: <span class="col-type">INT</span><br>
+    <span class="table-name">ground_truth_v2.json &mdash; each entry</span><br>
+    ├── <span class="col-name">question_id</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; A001..A030, B001..B025, C001..C015, D001..D015, E001..E010, F001..F005</span><br>
+    ├── <span class="col-name">category</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; numerical_lookup | yoy_comparison | multi_company | filing_metadata | refusal_test</span><br>
+    ├── <span class="col-name">ticker</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; ALL 30 tickers represented across the set</span><br>
+    ├── <span class="col-name">fiscal_year</span>: <span class="col-type">INT</span> <span class="col-comment">&mdash; nullable (e.g. refusal questions on future years pass null)</span><br>
+    ├── <span class="col-name">fiscal_quarter</span>: <span class="col-type">INT</span> <span class="col-comment">&mdash; nullable; only set for B-category quarterly questions</span><br>
     ├── <span class="col-name">difficulty</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; easy | medium | hard</span><br>
     ├── <span class="col-name">question</span>: <span class="col-type">STRING</span><br>
     ├── <span class="col-name">expected_answer</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; canonical answer with the actual figure</span><br>
-    ├── <span class="col-name">evidence_passage</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; verbatim text from the source filing supporting the answer</span><br>
+    ├── <span class="col-name">evidence_passage</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; verbatim text from the source filing (used for retrieval-grounded categories)</span><br>
     ├── <span class="col-name">source_doc</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; SEC accession reference</span><br>
-    └── <span class="col-name">source_section</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; e.g. "Income Statement", "Risk Factors", "metrics"</span>
+    └── <span class="col-name">source_section</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; "metrics" for tool-driven answers; "Risk Factors", "MD&amp;A", "Income Statement" for retrieval-grounded; "10-K Cover Page" for filing metadata</span>
   </div>
 
-  <p>Mapped into MLflow Eval rows by <code>to_eval_row()</code>: <code>inputs.messages</code> carries the user message; <code>expectations</code> carries <code>expected_response</code>, <code>expected_facts</code> (single-element list of the evidence passage), and the metadata fields the custom scorers consume.</p>
+  <p>Mapped into MLflow Eval rows by <code>to_eval_row()</code>: <code>inputs.messages</code> carries the user message; <code>expectations</code> carries <code>expected_response</code> XOR <code>expected_facts</code> (mutex enforced by a fail-fast assertion in cell 4 and by <code>tests/unit/test_eval_preflight.py</code>), plus the metadata fields the custom scorers consume. <code>None</code>-valued <code>fiscal_year</code> / <code>fiscal_quarter</code> keys are conditionally omitted &mdash; MLflow's <code>Expectation(value=...)</code> constructor rejects None, so building the dict carefully matters.</p>
 
-  <h3>8.4 Scorers</h3>
+  <h3>8.4 Scorers (8 dimensions)</h3>
 
   <table>
     <thead>
@@ -1859,11 +1883,6 @@ return llm.predict(messages=messages, temperature=0.1, max_tokens=1024)</code></
         <td>Answer is semantically equivalent to <code>expected_response</code>. Judge: <code>databricks-meta-llama-3-3-70b-instruct</code>.</td>
       </tr>
       <tr>
-        <td><code>RetrievalGroundedness()</code></td>
-        <td>Built-in LLM judge</td>
-        <td>Each claim in the response is supported by the retrieved context. Catches hallucinations of the form "the agent cited a real chunk but the chunk doesn't actually say that".</td>
-      </tr>
-      <tr>
         <td><code>Guidelines("cites_ticker_and_year")</code></td>
         <td>Built-in LLM judge</td>
         <td>"Response must cite both a ticker symbol and a fiscal year when discussing any financial figure or filing excerpt." Implements the SYSTEM_PROMPT rule as a measurable scorer.</td>
@@ -1871,41 +1890,126 @@ return llm.predict(messages=messages, temperature=0.1, max_tokens=1024)</code></
       <tr>
         <td><code>numerical_tolerance</code></td>
         <td>Custom <code>@scorer</code></td>
-        <td>For <code>category == numerical_lookup</code>: extract the first dollar figure from response and from <code>expected_response</code>, normalise (B vs M), pass if relative error &le; 1%. Returns <code>None</code> for non-numerical categories so the score doesn't get diluted.</td>
+        <td>For <code>category &isin; {numerical_lookup, yoy_comparison}</code>: B/M/K-aware extraction of the first numeric figure from response vs. <code>expected_response</code>, pass if relative error &le; 1%. Returns <code>None</code> on non-applicable categories.</td>
       </tr>
       <tr>
         <td><code>citation_format</code></td>
         <td>Custom <code>@scorer</code></td>
-        <td>For categories where retrieval happens: response must contain a <code>[VERBATIM]</code> or <code>[SUMMARY]</code> tag <em>and</em> a <code>[Source: TICKER | FY{YYYY} ...]</code> line. Pure-metrics questions are skipped (no retrieval ran).</td>
+        <td>For retrieval-bearing categories: response must contain a <code>[VERBATIM]</code> or <code>[SUMMARY]</code> tag <em>and</em> a <code>[Source: TICKER | FY{YYYY} ...]</code> line. Skipped (None) on metrics-only and refusal rows.</td>
+      </tr>
+      <tr>
+        <td><code>refusal_correctness</code></td>
+        <td>Custom <code>@scorer</code></td>
+        <td>F-category only: validates the agent declined for the <em>right</em> reason by pattern-matching against per-question expected context tokens (<code>_REFUSAL_CONTEXT_TOKENS</code> in <code>scorers.py</code>). A refusal that says "I don't know" without naming the corpus boundary fails.</td>
+      </tr>
+      <tr>
+        <td><code>tool_routing_correctness</code></td>
+        <td>Custom <code>@scorer</code></td>
+        <td>Validates the agent picked the right tool by pattern-matching the response source-line shape (<code>FY####</code> for annual, <code>FY#### Q#</code> for quarterly, <code>10-K Cover Page</code> for metadata, <code>10-K/10-Q | Section</code> for retrieval).</td>
+      </tr>
+      <tr>
+        <td><code>derived_metric_match</code></td>
+        <td>Custom <code>@scorer</code></td>
+        <td>C-category only: value extraction + tolerance comparison decoupled from natural-language wording. Catches LLM-judge over-strictness on derived ratios where the math is right but the phrasing differs.</td>
+      </tr>
+      <tr>
+        <td><code>retrieval_grounded_when_used</code></td>
+        <td>Custom <code>@scorer</code></td>
+        <td>Replaces the built-in <code>RetrievalGroundedness</code>. SKIPs (returns None) on traces with no <code>RETRIEVER</code> span and only evaluates groundedness on traces that actually invoked <code>search_filings</code>. The built-in scorer ERRORs on every metrics-only trace; this one understands that not every question needs retrieval.</td>
       </tr>
     </tbody>
   </table>
 
-  <p>Returning <code>None</code> from a custom scorer (rather than <code>False</code>) is the deliberate way to skip a row in MLflow GenAI Eval &mdash; it preserves the per-category aggregate so a 5/5 score on numerical_tolerance for the 2 numerical_lookup questions doesn't get dragged to 5/10 by 8 inapplicable rows.</p>
+  <p>Returning <code>None</code> from a custom scorer (rather than <code>False</code>) is the deliberate way to skip a row in MLflow GenAI Eval &mdash; it preserves the per-category aggregate so a 5/5 score on, say, <code>refusal_correctness</code> for the 5 F-rows doesn't get dragged down by 95 inapplicable rows.</p>
 
-  <h3>8.5 Predict Function &mdash; Hits the Live Endpoint</h3>
+  <h3>8.5 Predict Function &mdash; In-Process Model Load</h3>
 
-  <p><code>predict_fn</code> is decorated with <code>@mlflow.trace(span_type="AGENT")</code> and uses <code>w.serving_endpoints.query()</code> on the WorkspaceClient (the <code>mlflow.deployments</code> deploy-client resolves to the wrong host in this workspace, see Section 7.5). Each evaluation row triggers an end-to-end call against <code>finsage_agent_endpoint</code> &mdash; meaning every scorer measures the deployed model, not a local notebook copy.</p>
+  <p>The eval pulls the latest UC model version dynamically via <code>MlflowClient.search_model_versions</code> (no hardcoded version), then loads it in-process:</p>
+  <pre><code>_LOADED_AGENT = mlflow.pyfunc.load_model(f"models:/{UC_MODEL_NAME}/{LATEST_MODEL_VERSION}")
+RAW_AGENT = _LOADED_AGENT.unwrap_python_model()  # bypass signature mangling
 
-  <h3>8.6 What Gets Logged</h3>
-
-  <p>Every eval run opens an MLflow run named <code>finsage_eval_v{N}</code> and logs:</p>
+@mlflow.trace(span_type="AGENT")
+def predict_fn(messages: list) -> dict:
+    out = RAW_AGENT.predict(None, {"messages": messages})
+    ...</code></pre>
+  <p>Two reasons for in-process over the remote endpoint:</p>
   <ul>
-    <li>Params: agent_endpoint, judge_endpoint, num_questions, categories</li>
-    <li>Per-row predictions and scorer outputs (one MLflow trace per question, clickable from the run page)</li>
-    <li>Aggregate metrics by scorer; a per-category breakdown printed inline so failure clusters jump out (e.g. "all citation_validation failures are missing the [Source: ...] line &rarr; reinforce the prompt rule").</li>
+    <li><strong>Trace fidelity.</strong> Querying the served endpoint cuts spans at the process boundary (<code>num_spans=1</code> always). The <code>RETRIEVER</code> and <code>TOOL</code> spans only propagate when the agent runs in the eval-notebook process &mdash; and those typed spans are what <code>retrieval_grounded_when_used</code> reads.</li>
+    <li><strong>Bypassing pyfunc signature mangling.</strong> A normal <code>mlflow.pyfunc.load_model()</code> wraps with the model signature, which converts <code>{"messages": [...]}</code> into a single-row DataFrame and JSON-stringifies the messages list &mdash; tripping the agent's <code>predict()</code> with <code>AttributeError("'str' object has no attribute 'get'")</code>. <code>unwrap_python_model()</code> returns the raw <code>FinSageAgent</code> instance and bypasses the transform.</li>
+  </ul>
+  <p>A deploy-time canary still pings the live endpoint &mdash; non-fatal, but flags drift between the registry and what's serving traffic.</p>
+
+  <h3>8.6 Failure-Resilient Cell Layout</h3>
+
+  <p>Cell 8 of <code>07_evaluation.py</code> splits into three independent steps so a Delta-write failure doesn't suppress the in-memory results:</p>
+  <ul>
+    <li><strong>Cell 8a.</strong> Pulls per-trace assessments via the MLflow REST API. No Spark dependency &mdash; cannot fail.</li>
+    <li><strong>Cell 8b.</strong> In-memory summary + per-failure drill-down (each failing question prints with rationale, agent_response, expected_response). <strong>Always works, even if persistence is broken.</strong></li>
+    <li><strong>Cell 8c.</strong> Idempotent <code>MERGE INTO</code> writes to <code>main.finsage_gold.eval_run_summaries</code> + <code>eval_question_outcomes</code>, wrapped in <code>try/except</code>. Failures here print a diagnostic but never lose the cell-8b output.</li>
   </ul>
 
-  <h3>8.7 Iteration Loop</h3>
+  <h3>8.7 What Gets Persisted (Delta-Backed Trend Source)</h3>
+
+  <div class="schema-box">
+    <span class="table-name">main.finsage_gold.eval_run_summaries &mdash; one row per MLflow eval run</span><br>
+    ├── <span class="col-name">run_id, run_name, experiment_id</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">run_started_at, run_finished_at</span>: <span class="col-type">TIMESTAMP</span><br>
+    ├── <span class="col-name">duration_seconds</span>: <span class="col-type">DOUBLE</span><br>
+    ├── <span class="col-name">agent_endpoint, agent_version</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; v8&hellip;v20+ are all comparable rows here</span><br>
+    ├── <span class="col-name">judge_endpoint</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">num_questions, dataset_path, dataset_hash</span>: <span class="col-type">INT|STRING</span> <span class="col-comment">&mdash; hash gates cross-version comparisons</span><br>
+    ├── <span class="col-name">scorer_metrics_json</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; e.g. {"correctness": {"pass": 87, "fail": 13, ...}, ...}</span><br>
+    ├── <span class="col-name">git_commit, mlflow_url</span>: <span class="col-type">STRING</span><br>
+    └── <span class="col-name">recorded_at</span>: <span class="col-type">TIMESTAMP</span>
+  </div>
+
+  <div class="schema-box" style="margin-top: 14px;">
+    <span class="table-name">main.finsage_gold.eval_question_outcomes &mdash; one row per (run, question, scorer)</span><br>
+    ├── <span class="col-name">run_id</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; partition column</span><br>
+    ├── <span class="col-name">question_id, scorer_name, category, ticker</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">fiscal_year, fiscal_quarter</span>: <span class="col-type">INT</span><br>
+    ├── <span class="col-name">difficulty</span>: <span class="col-type">STRING</span><br>
+    ├── <span class="col-name">outcome</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; PASS | FAIL | ERROR | SKIP</span><br>
+    ├── <span class="col-name">value_numeric</span>: <span class="col-type">DOUBLE</span> <span class="col-comment">&mdash; raw scorer score where applicable</span><br>
+    ├── <span class="col-name">rationale, error_message</span>: <span class="col-type">STRING</span> <span class="col-comment">&mdash; LLM-judge reasoning OR custom-scorer error text</span><br>
+    ├── <span class="col-name">agent_response, expected_response</span>: <span class="col-type">STRING</span><br>
+    └── <span class="col-name">recorded_at</span>: <span class="col-type">TIMESTAMP</span>
+  </div>
+
+  <p>Both tables MERGE on <code>run_id</code> &mdash; safe to re-run the persistence cell idempotently. The analysis utilities in <code>src/evaluation/analysis.py</code> consume these as the canonical trend source: <code>summarize_run</code>, <code>failure_breakdown</code>, <code>category_matrix</code>, <code>regression_diff</code>, <code>question_flips</code> (PASS&harr;FAIL between runs).</p>
+
+  <h3>8.8 Latest Run Snapshot &mdash; v20 Baseline (run <code>8cab975c&hellip;</code>)</h3>
+
+  <table>
+    <thead>
+      <tr><th>Scorer</th><th>Pass</th><th>Fail</th><th>Error</th><th>Skip</th><th>Pass-rate (where applicable)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>correctness</code></td><td>87</td><td>13</td><td>0</td><td>0</td><td>87.0%</td></tr>
+      <tr><td><code>cites_ticker_and_year</code></td><td>91</td><td>9</td><td>0</td><td>0</td><td>91.0%</td></tr>
+      <tr><td><code>numerical_tolerance</code></td><td>61</td><td>7</td><td>0</td><td>32</td><td>89.7% (68 applicable)</td></tr>
+      <tr><td><code>derived_metric_match</code></td><td>81</td><td>8</td><td>0</td><td>11</td><td>91.0% (89 applicable)</td></tr>
+      <tr><td><code>refusal_correctness</code></td><td>5</td><td>0</td><td>0</td><td>95</td><td>100.0% (5 applicable)</td></tr>
+      <tr><td><code>tool_routing_correctness</code></td><td>95</td><td>0</td><td>0</td><td>5</td><td>100.0% (95 applicable)</td></tr>
+      <tr><td><code>citation_format</code></td><td>10</td><td>0</td><td>0</td><td>90</td><td>100.0% (10 applicable)</td></tr>
+      <tr><td><code>retrieval_groundedness</code> (built-in, since replaced)</td><td>0</td><td>0</td><td>100</td><td>0</td><td>n/a &mdash; this is what motivated the swap to <code>retrieval_grounded_when_used</code></td></tr>
+    </tbody>
+  </table>
+
+  <p>The baseline numbers and their failure modes drove the v21+ work: a <strong>PARTIAL-DATA RULE</strong> added to the SYSTEM_PROMPT to fix the AMZN Q1 FY2024 case where the agent volunteered operating income on the same line as a net-income N/A (the eval scorer extracted the wrong number); fail-fast cache assertions in the agent notebook to refuse logging if upstream gold data is incomplete; and a per-section gold-data audit (JNJ FY22 total_equity, BAC FY22 total_liabilities) tracked separately from the agent.</p>
+
+  <h3>8.9 Iteration Loop</h3>
 
   <ol>
-    <li>Run notebook 07. Inspect MLflow traces for any <code>False</code> or <code>None</code> scores.</li>
-    <li>Identify the failure pattern: wrong fiscal year retrieved (tighten SYSTEM_PROMPT year-filter directive), missing citations (strengthen <code>[VERBATIM]</code>/<code>[SUMMARY]</code> instruction), numeric drift &gt; 1% (verify metrics-cache freshness or concept-priority).</li>
-    <li>Re-run notebook 06 to log + deploy a new agent version.</li>
-    <li>Re-run notebook 07. Confirm regression direction. Repeat.</li>
+    <li><strong>Local pre-flight</strong>. <code>.venv/bin/python -m pytest tests/unit/ -v</code> &mdash; 64 cases (scorer behavior, dataset shape, persistence DDL, expectation construction). &lt;1s. Fails before paying for cluster spin-up.</li>
+    <li>Run <code>07_evaluation.py</code> &mdash; preflight cell exercises 5 stratified questions in ~30s, then the full 100-question run. Inspect MLflow traces for any FAIL/ERROR.</li>
+    <li>Drill into <code>eval_question_outcomes</code>: <code>SELECT scorer_name, outcome, COUNT(*) FROM &hellip; WHERE run_id = '&hellip;' GROUP BY 1, 2</code>. Pattern the failures.</li>
+    <li>Root-cause: wrong fiscal year retrieved &rarr; tighten SYSTEM_PROMPT year-filter directive; missing citations &rarr; strengthen <code>[VERBATIM]</code>/<code>[SUMMARY]</code> instruction; numeric drift &gt; 1% &rarr; audit gold metrics vs. SEC EDGAR; tool-routing miss &rarr; add a worked example to SYSTEM_PROMPT; refusal too brief &rarr; expand <code>_REFUSAL_CONTEXT_TOKENS</code>.</li>
+    <li>Re-run notebook 06 (auto-deployed by the <code>finsage-log-and-deploy-agent</code> serverless job). UC version bumps; the eval auto-resolves the latest version next run.</li>
+    <li>Re-run notebook 07. <code>regression_diff(spark, run_id)</code> renders the column-wise delta vs. the previous run on the same agent endpoint. <code>question_flips()</code> calls out the specific questions that flipped PASS&harr;FAIL between runs.</li>
   </ol>
 
-  <p>The MLflow run history is the iteration log &mdash; every redeploy is a comparable run with the same eval set, so improvement is a column-wise diff on aggregate scorer values.</p>
+  <p>The Delta tables make the iteration log queryable forever &mdash; "show me every run since v15 where <code>numerical_tolerance/pass_rate &lt; 0.85</code>" is a single SQL statement, not a chain of MLflow UI clicks.</p>
 </div>
 
 <hr>
@@ -1918,7 +2022,7 @@ return llm.predict(messages=messages, temperature=0.1, max_tokens=1024)</code></
 
   <p>Each week is broken into numbered steps. I do them in order. I check them off as I go.</p>
 
-  <p style="margin-top: 0;">Weeks 1&ndash;8 are <strong>shipped</strong> &mdash; the bullets describe what landed on <code>main</code>. Weeks 9&ndash;10 remain forward-looking. The "Done when" lines describe acceptance, not aspiration.</p>
+  <p style="margin-top: 0;">Weeks 1&ndash;9 are <strong>shipped</strong> &mdash; the bullets describe what landed on <code>main</code>. Week 10 (chatbot UI + CI/CD polish) is the active workstream. The "Done when" lines describe acceptance, not aspiration.</p>
 
   <div class="week-card w1">
     <div class="week-card-header">
@@ -2015,32 +2119,38 @@ return llm.predict(messages=messages, temperature=0.1, max_tokens=1024)</code></
     <div class="week-card-body">
       <ol>
         <li><code>06_rag_agent.py</code> defines <code>FinSageAgent(mlflow.pyfunc.PythonModel)</code>: zero-LangChain tool loop, <code>@mlflow.trace</code> on <code>predict</code> + each tool, max 5 iterations with a forced "best answer now" final prompt.</li>
-        <li>Three tools registered with OpenAI function-calling schemas: <code>search_filings</code> (semantic search with ticker/section/year/filing_type filters and similarity threshold), <code>get_company_metrics</code> (annual, in-memory cache), <code>get_quarterly_metrics</code> (interim, in-memory cache, optional artifact).</li>
+        <li>Four tools registered with OpenAI function-calling schemas: <code>search_filings</code> (semantic search with ticker/section/year/filing_type filters and similarity threshold), <code>get_company_metrics</code> (annual, in-memory cache), <code>get_quarterly_metrics</code> (interim, in-memory cache, optional artifact), <code>get_filing_metadata</code> (10-K cover-page facts from SEC DEI namespace).</li>
         <li>SYSTEM_PROMPT formalises routing: annual&rarr;annual tool, interim&rarr;quarterly tool, qualitative&rarr;search; "most recent"&rarr;metrics first then search; <code>[VERBATIM]</code>/<code>[SUMMARY]</code> labelling; explicit formula disclosure on first ratio use.</li>
         <li>Both metric caches logged as MLflow artifacts; quarterly cache is optional and load_context degrades gracefully if missing (graceful path tested by deploying a v before notebook 04b had run).</li>
         <li>Resources declared on log: <code>DatabricksServingEndpoint(LLM_ENDPOINT)</code>, <code>DatabricksVectorSearchIndex(VS_INDEX_NAME)</code>. Agent Framework auto-injects M2M OAuth at serving time.</li>
         <li>Registered to UC as <code>main.finsage_gold.finsage_rag_agent</code>; deployed to <code>finsage_agent_endpoint</code> (workload Small, scale-to-zero). Live test passes both AAPL FY2024 metrics and TSLA Risk Factors questions.</li>
-        <li>Eight redeploys later (current version 8): each fixed a concrete production bug &mdash; SDK version-mismatch errors, READY-detection false positives, <code>config_update</code> race conditions where live tests hit the OLD version, and the wrong-host bug in <code>mlflow.deployments.get_deploy_client()</code>. All documented in Section 7.5.</li>
+        <li>Twenty redeploys later (current version v20, with v21+ in flight): each fixed a concrete production bug &mdash; SDK version-mismatch errors, READY-detection false positives, <code>config_update</code> race conditions where live tests hit the OLD version, and the wrong-host bug in <code>mlflow.deployments.get_deploy_client()</code>. All documented in Section 7.5.</li>
+        <li>v17&ndash;v19 added the <code>get_filing_metadata</code> 4th tool with SEC DEI namespace lookup at notebook-time (filing date, employees, shares outstanding). v20 polished the refusal language for out-of-corpus tickers and future fiscal years.</li>
+        <li>v21+ removes the deterministic-regex shortcut entirely &mdash; every query now routes through the LLM tool loop with a 170-line SYSTEM_PROMPT that includes a <strong>PARTIAL-DATA RULE</strong> for the chatbot UX (refuse the specific metric in paragraph one; offer related context only as a clearly-labelled separate paragraph). Wall-time per question goes from &lt;100ms (canned shortcut) to ~5&ndash;15s (real LLM reasoning) &mdash; a deliberate trade-off because the deployment target is a chatbot front-end where conversational quality matters more than micro-latency.</li>
+        <li>Cell 8 smoke test now raises if canned questions miss <code>$</code>/<code>%</code> signal &mdash; catches prompt regressions before the 10-min log+register+rollout cycle. <code>pip_requirements</code> pinned with version bounds for reproducibility.</li>
         <li>Redeploy automated via the <code>finsage-log-and-deploy-agent</code> serverless job created through the AI Dev Kit.</li>
       </ol>
-      <p><strong>Acceptance:</strong> endpoint READY, serving v8, scaled to zero between requests. Smoke tests via <code>w.serving_endpoints.query()</code> return well-cited answers.</p>
+      <p><strong>Acceptance:</strong> endpoint READY, serving v20, scaled to zero between requests. Smoke tests via <code>w.serving_endpoints.query()</code> return well-cited answers.</p>
     </div>
   </div>
 
   <div class="week-card w7">
     <div class="week-card-header">
-      <span>Week 7 &mdash; Eval Set + Scorers (V0 Baseline Pending)</span>
-      <span class="week-tag">PARTIAL</span>
+      <span>Week 7 &mdash; Eval Harness + 100-Question Dataset + 8 Scorers</span>
+      <span class="week-tag">SHIPPED</span>
     </div>
     <div class="week-card-body">
       <ol>
-        <li><code>07_evaluation.py</code> wired against the live <code>finsage_agent_endpoint</code> using <code>mlflow.genai.evaluate</code>. Predict function uses <code>w.serving_endpoints.query()</code> directly to avoid the deploy-client wrong-host bug.</li>
-        <li>Built-in scorers registered: <code>Correctness()</code>, <code>RetrievalGroundedness()</code>, <code>Guidelines("cites_ticker_and_year")</code>.</li>
-        <li>Custom <code>@scorer</code>s implemented: <code>numerical_tolerance</code> (&plusmn;1% relative error on dollar figures, with B/M unit normalisation, applied only to <code>numerical_lookup</code>); <code>citation_format</code> (<code>[VERBATIM]</code>/<code>[SUMMARY]</code> tag + <code>[Source: TICKER | FY... ]</code> line, applied only to retrieval-bearing categories).</li>
-        <li>10-question ground-truth set (<code>src/evaluation/ground_test.json</code>): 2 per category &times; 5 categories, 8 unique tickers (AAPL, NVDA, TSLA, BAC, MSFT, GOOGL/MSFT, V/MA, NKE). Schema includes <code>question_id</code>, <code>category</code>, <code>ticker</code>, <code>fiscal_year</code>, <code>difficulty</code>, <code>question</code>, <code>expected_answer</code>, <code>evidence_passage</code>, <code>source_doc</code>, <code>source_section</code>.</li>
-        <li><strong>Pending:</strong> first MLflow eval run + V0 baseline; failure analysis; first prompt iteration + V1 redeploy + V1 score.</li>
+        <li><code>07_evaluation.py</code> wired against the deployed agent via <strong>in-process model load</strong> (<code>mlflow.pyfunc.load_model().unwrap_python_model()</code>) so the <code>RETRIEVER</code> and <code>TOOL</code> spans propagate into the eval trace tree (querying the served endpoint cuts spans at the process boundary).</li>
+        <li>Modular eval infrastructure shipped under <code>src/evaluation/</code>: <code>scorers.py</code> (8 scorers), <code>persistence.py</code> (idempotent Delta MERGE writers), <code>analysis.py</code> (failure_breakdown, regression_diff, question_flips), <code>builder/</code> (the 100-question dataset generator with SEC EDGAR cross-validation).</li>
+        <li><strong>Eight scorers</strong> registered: 3 LLM-judge (<code>Correctness</code>, <code>Guidelines("cites_ticker_and_year")</code>, plus the implicit <code>retrieval_grounded_when_used</code> LLM call) + 5 custom <code>@scorer</code>s (<code>numerical_tolerance</code>, <code>citation_format</code>, <code>refusal_correctness</code>, <code>tool_routing_correctness</code>, <code>derived_metric_match</code>). The custom <code>retrieval_grounded_when_used</code> replaces the built-in <code>RetrievalGroundedness</code> which ERRORs on every metrics-only trace.</li>
+        <li><strong>100-question stratified ground-truth dataset</strong> (<code>src/evaluation/ground_truth_v2.json</code>): A=30 annual numerical, B=25 quarterly numerical, C=15 derived metrics, D=15 cross-ticker compare, E=10 filing metadata, F=5 refusal_test. <strong>All 30 tickers represented</strong>, every category cross-validated against SEC EDGAR. Dataset locked at v2 &mdash; regeneration bumps a versioned v3 file rather than mutating in place.</li>
+        <li>Two idempotent Delta tables under <code>main.finsage_gold</code>: <code>eval_run_summaries</code> (one row per MLflow run, with metrics_json, agent_version, dataset_hash, git_commit) and <code>eval_question_outcomes</code> (one row per (run_id, question_id, scorer); partitioned by run_id). Both MERGE on <code>run_id</code>.</li>
+        <li>Failure-resilient cell layout: cell 8a (collect from MLflow REST, no Spark dep), cell 8b (in-memory summary &mdash; always works), cell 8c (Delta persist &mdash; wrapped try/except). Even if persistence fails, the user sees the full eval result.</li>
+        <li>64 pytest cases under <code>tests/unit/</code> (<code>test_scorers.py</code> + <code>test_eval_preflight.py</code>) catch dataset / scorer-wiring / persistence-DDL regressions in &lt;1s locally before any cluster spin-up.</li>
+        <li>V0 baseline run on v20: correctness 87/100, cites_ticker_and_year 91/100, numerical_tolerance 61/68, derived_metric_match 81/89, refusal_correctness 5/5, tool_routing_correctness 95/95, citation_format 10/10. Failure modes drove the v21+ <strong>PARTIAL-DATA RULE</strong> SYSTEM_PROMPT change.</li>
       </ol>
-      <p><strong>Acceptance:</strong> notebook 07 runs end-to-end, all five scorers return per-row results, MLflow run page shows aggregate metrics + per-row traces.</p>
+      <p><strong>Acceptance:</strong> notebook 07 runs end-to-end on serverless, all 8 scorers return per-row results, MLflow run page shows aggregate metrics + per-row traces, and <code>main.finsage_gold.eval_*</code> Delta tables hold the canonical run history queryable forever.</p>
     </div>
   </div>
 
@@ -2064,33 +2174,37 @@ return llm.predict(messages=messages, temperature=0.1, max_tokens=1024)</code></
 
   <div class="week-card w9">
     <div class="week-card-header">
-      <span>Week 9 &mdash; Eval Iteration + Knowledge Graph (PENDING)</span>
-      <span class="week-tag">PENDING</span>
+      <span>Week 9 &mdash; Eval Iteration + LLM-Driven Agent Re-architecture</span>
+      <span class="week-tag">SHIPPED</span>
     </div>
     <div class="week-card-body">
       <ol>
-        <li>Run <code>07_evaluation.py</code> for V0; inspect failure traces; identify dominant failure category.</li>
-        <li>Iterate prompt + redeploy via the <code>finsage-log-and-deploy-agent</code> job; re-run eval &rarr; V1, V2.</li>
-        <li><code>08_knowledge_graph.py</code>: entity-relationship extraction over MD&amp;A and Risk Factors using Graphify's ontological schema (15 node types, 19 edge types). Land in a Gold-layer KG table; expose as a fourth tool to the agent if eval supports it.</li>
-        <li>Optional Databricks App (Streamlit) for demo: query input, response with citation rendering, MLflow trace deep-link.</li>
+        <li>V0 baseline eval run on v20 ingested into <code>eval_run_summaries</code> + <code>eval_question_outcomes</code>; failure breakdown identified the dominant failure modes (LLM-judge over-strictness on derived ratios; partial-data hallucination on AMZN Q1 FY24 net income; citation-format mismatches).</li>
+        <li>Agent re-architected: <strong>removed the <code>_deterministic_answer</code> regex shortcut</strong> that previously bypassed the LLM tool loop on ~95 of 100 questions. Trace-span analysis showed it caused <code>retrieval_grounded_when_used</code> to SKIP almost every trace; deep responses were canned templates rather than chatbot-ready prose.</li>
+        <li>Replaced with a 170-line SYSTEM_PROMPT covering: corpus scope, four-tool routing matrix, refusal handling for out-of-corpus tickers / future fiscal years / Q4 unavailable / MCD 10-K text gap / deprecated tickers (FB, GOOG), citation grammar per category, chat-interface tone (lead with answer, conversational prose, no bullet dumps for simple lookups), and four worked examples covering canonical answer, future-year refusal, deprecated-ticker refusal, and Q4 unavailable.</li>
+        <li><strong>PARTIAL-DATA RULE</strong> added: when a tool returns N/A for the specific metric the user asked for, refuse cleanly on line one and only then offer related metrics in a separate paragraph &mdash; never fold a substitute into the same sentence. Live verified against AMZN Q1 FY24 net income.</li>
+        <li>Notebook 06 production hardening: fail-fast assertions on cache size (annual &ge; 30, quarterly &ge; 30 tickers); duplicate <code>log_artifact()</code> calls dropped; <code>pip_requirements</code> pinned with version bounds; smoke-test cell raises if canned questions miss <code>$</code>/<code>%</code> signal; live-test cell only runs when deployment succeeded; <code>predict()</code> input handling tightened for dict / list / DataFrame / JSON-stringified-messages.</li>
+        <li><strong>Pending in this week:</strong> <code>08_knowledge_graph.py</code> &mdash; entity-relationship extraction over MD&amp;A + Risk Factors using Graphify's ontological schema (15 node types, 19 edge types). Land in a Gold-layer KG table; expose as a fifth tool to the agent if eval supports it.</li>
       </ol>
-      <p><strong>Acceptance:</strong> V0&rarr;V1&rarr;V2 deltas in MLflow with named root causes per iteration. KG table populated for at least the 8 ground-truth tickers.</p>
+      <p><strong>Acceptance:</strong> V0 baseline + named failure causes persisted to Delta; v21+ deployed with the LLM-driven loop and PARTIAL-DATA RULE; the eval can now compare v20&rarr;v21 column-wise via <code>regression_diff</code>.</p>
     </div>
   </div>
 
   <div class="week-card w10">
     <div class="week-card-header">
-      <span>Week 10 &mdash; Ship + CI/CD Polish (PENDING)</span>
-      <span class="week-tag">PENDING</span>
+      <span>Week 10 &mdash; Chatbot UI + CI/CD Polish (ACTIVE)</span>
+      <span class="week-tag">ACTIVE</span>
     </div>
     <div class="week-card-body">
       <ol>
-        <li>Finalise README and <code>docs/evaluation_report.md</code> with V0&rarr;V_final scorer numbers and named root causes.</li>
-        <li>GitHub Actions DAB pipeline (<code>.github/workflows/deploy.yml</code>) already exists for unit-tests &rarr; bundle-validate &rarr; deploy-prod; verify it green-on-main once eval signal is stable.</li>
-        <li>Record demo: query &rarr; response &rarr; MLflow trace &rarr; per-row scorer breakdown.</li>
-        <li>Pin repo. Update LinkedIn with the eval delta as the lead bullet.</li>
+        <li><strong>Databricks App chatbot front-end</strong> &mdash; the deployment target every architectural decision was tuned for. Conversational UI over <code>finsage_agent_endpoint</code>; user types a financial question, the app renders the agent's answer with inline citation chips that deep-link to the source 10-K/10-Q section. MLflow trace links surface for transparency. Stack candidates: Reflex / Streamlit / Dash on Databricks Apps.</li>
+        <li>Weekly eval cron via Databricks Jobs &mdash; alert via Slack when <code>correctness/mean</code> drops &gt;5pp WoW. Trend source is <code>eval_run_summaries</code>.</li>
+        <li>Finalise README and <code>docs/evaluation_report.md</code> with V0&rarr;V_final scorer numbers and named root causes per iteration.</li>
+        <li>GitHub Actions DAB pipeline (<code>.github/workflows/deploy.yml</code>) for unit-tests &rarr; bundle-validate &rarr; deploy-prod; verify it green-on-main once eval signal stabilises.</li>
+        <li>Record demo: query &rarr; chatbot response with citations &rarr; MLflow trace &rarr; per-row scorer breakdown &rarr; <code>eval_question_outcomes</code> Delta query.</li>
+        <li>Pin repo. Update LinkedIn with the eval delta and the chatbot demo as the lead bullets.</li>
       </ol>
-      <p><strong>Acceptance:</strong> a stranger can land on the repo, read the README, watch the demo, see <code>docs/evaluation_report.md</code>, and reproduce the headline numbers from the MLflow run page.</p>
+      <p><strong>Acceptance:</strong> a stranger can land on the repo, watch the demo of the chatbot answering financial questions about AAPL/MSFT/etc. with proper citations, see <code>docs/evaluation_report.md</code>, and reproduce the headline numbers from the MLflow run page.</p>
     </div>
   </div>
 </div>
@@ -2123,8 +2237,8 @@ return llm.predict(messages=messages, temperature=0.1, max_tokens=1024)</code></
     │&nbsp;&nbsp; ├── 04_gold_metrics.py <span class="comment">&mdash; annual company_metrics (10-K, FY)</span><br>
     │&nbsp;&nbsp; ├── 04b_gold_quarterly_metrics.py <span class="comment">&mdash; quarterly Q1/Q2/Q3 (YTD subtraction)</span><br>
     │&nbsp;&nbsp; ├── 05_vector_chunker.py <span class="comment">&mdash; tiktoken 512/64 + VS index provisioning</span><br>
-    │&nbsp;&nbsp; ├── 06_rag_agent.py <span class="comment">&mdash; pyfunc agent, 3 tools, log + UC register + deploy</span><br>
-    │&nbsp;&nbsp; └── 07_evaluation.py <span class="comment">&mdash; mlflow.genai.evaluate, custom @scorer suite</span><br>
+    │&nbsp;&nbsp; ├── 06_rag_agent.py <span class="comment">&mdash; pyfunc agent, 4 tools (search + annual + quarterly + filing metadata), 170-line SYSTEM_PROMPT, log + UC register + deploy</span><br>
+    │&nbsp;&nbsp; └── 07_evaluation.py <span class="comment">&mdash; mlflow.genai.evaluate, in-process model load, 8 scorers, failure-resilient cell layout, Delta persistence</span><br>
     ├── <span class="dir">src/</span><br>
     │&nbsp;&nbsp; ├── <span class="dir">finsage/</span><br>
     │&nbsp;&nbsp; │&nbsp;&nbsp; ├── __init__.py<br>
@@ -2132,11 +2246,17 @@ return llm.predict(messages=messages, temperature=0.1, max_tokens=1024)</code></
     │&nbsp;&nbsp; ├── <span class="dir">ingestion/</span><br>
     │&nbsp;&nbsp; │&nbsp;&nbsp; └── edgar_downloader.py<br>
     │&nbsp;&nbsp; └── <span class="dir">evaluation/</span><br>
-    │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; └── ground_test.json <span class="comment">&mdash; 10 questions, 5 categories, manually verified</span><br>
+    │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ├── ground_truth_v2.json <span class="comment">&mdash; 100 questions, 6 categories, all 30 tickers, SEC EDGAR cross-validated, locked</span><br>
+    │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ├── scorers.py <span class="comment">&mdash; 5 custom @scorers (ALL_CUSTOM_SCORERS tuple)</span><br>
+    │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ├── persistence.py <span class="comment">&mdash; explicit DDL schemas + idempotent MERGE writers for eval_run_summaries / eval_question_outcomes</span><br>
+    │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ├── analysis.py <span class="comment">&mdash; summarize_run, failure_breakdown, category_matrix, regression_diff, question_flips</span><br>
+    │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; └── <span class="dir">builder/</span> <span class="comment">&mdash; ground-truth dataset generator with SEC EDGAR cross-validation</span><br>
     ├── <span class="dir">tests/</span><br>
     │&nbsp;&nbsp; ├── conftest.py<br>
     │&nbsp;&nbsp; ├── <span class="dir">unit/</span><br>
-    │&nbsp;&nbsp; │&nbsp;&nbsp; └── test_normalizer.py <span class="comment">&mdash; concept map exhaustiveness, no Spark dep</span><br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── test_normalizer.py <span class="comment">&mdash; concept map exhaustiveness, no Spark dep</span><br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; ├── test_scorers.py <span class="comment">&mdash; 23 cases across number extraction + all 5 custom scorers</span><br>
+    │&nbsp;&nbsp; │&nbsp;&nbsp; └── test_eval_preflight.py <span class="comment">&mdash; 14 cases: dataset shape, eval-row construction, persistence schema</span><br>
     │&nbsp;&nbsp; └── <span class="dir">integration/</span><br>
     │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; └── test_bronze_schema.py<br>
     ├── <span class="dir">terraform/</span><br>
@@ -2157,10 +2277,11 @@ return llm.predict(messages=messages, temperature=0.1, max_tokens=1024)</code></
 
   <h3>Notes on Things Deferred</h3>
   <ul>
-    <li><strong>No <code>src/processing/</code>, <code>src/retrieval/</code>, <code>src/agent/</code>.</strong> The Spark transformations live inside the notebooks (which are the deployable artifacts on Databricks); pulling them into pure-Python modules adds an indirection layer with no testability win at this scale. Pure-Python helpers that benefit from unit tests live under <code>src/finsage/</code> and <code>src/ingestion/</code>.</li>
+    <li><strong>No <code>src/processing/</code>, <code>src/retrieval/</code>, <code>src/agent/</code>.</strong> The Spark transformations live inside the notebooks (which are the deployable artifacts on Databricks); pulling them into pure-Python modules adds an indirection layer with no testability win at this scale. Pure-Python helpers that benefit from unit tests live under <code>src/finsage/</code>, <code>src/ingestion/</code>, and <code>src/evaluation/</code>.</li>
     <li><strong>No transcripts pipeline.</strong> The original blueprint included earnings transcripts; deferred to v2 once the SEC-filing path's eval signal stabilises.</li>
-    <li><strong>No Streamlit app.</strong> The agent is reachable via <code>w.serving_endpoints.query()</code>; an app is a demo wrapper, not a system requirement. Will land in W9/W10 if eval iteration time allows.</li>
+    <li><strong>Chatbot UI active in W10.</strong> The original blueprint marked a Databricks App as optional. The agent is reachable today via <code>w.serving_endpoints.query()</code>, but the chatbot front-end is now the active deployment target &mdash; every architectural decision (LLM-driven routing, conversational tone, PARTIAL-DATA RULE, citation grammar) was tuned for it. Stack candidates: Reflex / Streamlit / Dash on Databricks Apps.</li>
     <li><strong>No risk-indicators Gold table.</strong> Year-over-year risk diff is reachable today via two <code>search_filings</code> calls; a precomputed indicator table is a v2 enhancement.</li>
+    <li><strong>Knowledge graph (notebook 08).</strong> Graphify-based entity-relationship extraction over MD&amp;A and Risk Factors stays scoped for a future iteration, exposed as a fifth tool to the agent if eval surfaces a gap the current four tools can't cover.</li>
   </ul>
 </div>
 
@@ -2226,7 +2347,7 @@ return llm.predict(messages=messages, temperature=0.1, max_tokens=1024)</code></
       <tr><td>Databricks Workspace</td><td>Arsaga Partners is a Databricks partner &mdash; I have a partner workspace with full features (Unity Catalog, DLT, Vector Search, Model Serving, Agent Framework, Foundation Models)</td><td style="color: var(--green); font-weight: 700;">$0</td></tr>
       <tr><td>Cloud (AWS/Azure)</td><td>Underlying infra is provisioned through the partner workspace &mdash; no separate cloud account needed</td><td style="color: var(--green); font-weight: 700;">$0</td></tr>
       <tr><td>SEC EDGAR API</td><td>Completely free, no API key needed (10 req/sec limit)</td><td style="color: var(--green); font-weight: 700;">$0</td></tr>
-      <tr><td>Embeddings</td><td><code>databricks-gte-large-en</code> via Foundation Model API &mdash; included in workspace</td><td style="color: var(--green); font-weight: 700;">$0</td></tr>
+      <tr><td>Embeddings</td><td><code>databricks-bge-large-en</code> via Foundation Model API &mdash; included in workspace (swapped from <code>gte</code> in W5; bge was READY in this workspace and the canonical FM embedding endpoint at the time)</td><td style="color: var(--green); font-weight: 700;">$0</td></tr>
       <tr><td>Agent Inference</td><td>Databricks Foundation Models &mdash; included in workspace</td><td style="color: var(--green); font-weight: 700;">$0</td></tr>
       <tr><td>Groq API</td><td>Free tier &mdash; Llama models with generous rate limits, used for dev iteration and LLM-as-judge</td><td style="color: var(--green); font-weight: 700;">$0</td></tr>
     </tbody>
@@ -2258,19 +2379,26 @@ return llm.predict(messages=messages, temperature=0.1, max_tokens=1024)</code></
 
   <h3>Resume Bullet Templates</h3>
 
+  <p style="margin-top: -10px; font-size: 14px; color: var(--text-secondary);">Templates retain placeholders for run-over-run deltas (V0&rarr;V_final). Concrete measured anchor numbers from the v20 baseline are inlined; per-version improvement deltas land in <code>docs/evaluation_report.md</code>.</p>
+
   <div class="callout callout-blue">
     <strong>Bullet 1 &mdash; Data Engineering</strong>
-    Built a financial intelligence platform on Databricks, ingesting [X] SEC filings for 30 companies into a Delta Lakehouse (Bronze/Silver/Gold) using Auto Loader and Delta Live Tables, with [Y]% numerical extraction accuracy validated against XBRL data.
+    Built a production-grade financial intelligence platform on Databricks, ingesting <strong>728 SEC 10-K/10-Q filings</strong> for 30 companies (FY2020&ndash;2026) into a Unity Catalog Delta lakehouse (Bronze/Silver/Gold) using Auto Loader streaming, <code>sec-parser</code> DOM extraction with regex fallback, XBRL CompanyFacts canonical-accession selection, and idempotent <code>MERGE INTO</code> writes &mdash; surfaced through a 4-tool MLflow pyfunc agent on Model Serving.
   </div>
 
   <div class="callout callout-blue">
     <strong>Bullet 2 &mdash; Evaluation &amp; Improvement</strong>
-    Implemented a 100-question evaluation suite using Mosaic AI Agent Evaluation, improving faithfulness from [V0] to [V3] and numerical precision from [V0] to [V3] through [N] documented iterations of prompt engineering, chunking optimization, and retrieval tuning.
+    Built an <strong>8-scorer MLflow GenAI evaluation harness</strong> over a 100-question stratified ground-truth dataset (4 LLM-judges + 4 custom <code>@scorer</code>s including a custom <code>retrieval_grounded_when_used</code> that replaces the over-strict built-in), with idempotent Delta-table persistence (<code>eval_run_summaries</code> + <code>eval_question_outcomes</code>) for run-over-run regression diffs &mdash; improving correctness from [V0=87%] to [V_final] and tool-routing accuracy to [95/95] across [N] documented prompt-engineering iterations.
   </div>
 
   <div class="callout callout-blue">
-    <strong>Bullet 3 &mdash; Cost &amp; Performance</strong>
-    Reduced per-query token cost by [X]% ($[V0] &rarr; $[V3]) through [specific methods I used], achieving P95 latency of [Y] seconds on the deployed Mosaic AI Model Serving endpoint.
+    <strong>Bullet 3 &mdash; Vector Search &amp; Agent</strong>
+    Designed and deployed a Databricks Vector Search index (<strong>45,136 BGE-large-en chunks across 728 filings</strong>) and a custom function-calling agent on Mosaic AI Model Serving (scaled-to-zero, version-pinned redeploys, MLflow tracing on every tool call) &mdash; reaching version [V20+] with each redeploy gated by a 64-test pytest preflight that catches dataset/scorer/persistence regressions in &lt;1s before cluster spin-up.
+  </div>
+
+  <div class="callout callout-blue">
+    <strong>Bullet 4 &mdash; Cost &amp; Performance</strong>
+    Reduced per-query token cost by [X]% ($[V0] &rarr; $[V_final]) through [specific methods I used], achieving P95 latency of [Y] seconds on the deployed Mosaic AI Model Serving endpoint.
   </div>
 
   <h3>Interview Talking Points</h3>
