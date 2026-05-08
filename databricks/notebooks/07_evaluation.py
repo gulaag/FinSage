@@ -32,9 +32,12 @@
 #   derived_metric_match         — numeric tolerance, decoupled from wording
 #   retrieval_grounded_when_used — replaces MLflow's RetrievalGroundedness; SKIPS
 #                                  on traces with no RETRIEVER span instead of
-#                                  erroring (the agent's _deterministic_answer
-#                                  shortcut handles ~95% of our questions without
-#                                  invoking search_filings).
+#                                  erroring. Most metrics-only questions are
+#                                  answered through the structured-data tools
+#                                  (get_company_metrics / get_quarterly_metrics)
+#                                  without invoking search_filings, so a sizeable
+#                                  share of traces have no RETRIEVER span and
+#                                  the built-in scorer would mark them all ERROR.
 #
 # Why in-process model load (mlflow.pyfunc.load_model + unwrap_python_model):
 #   Querying the remote serving endpoint cuts the trace at the process boundary

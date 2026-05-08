@@ -251,6 +251,26 @@ print(
     f"metadata: {len(FILING_METADATA_CACHE)} tickers"
 )
 
+# Fail-fast assertions — if any cache is empty, the agent can't answer that
+# entire question class. Better to crash here than to ship a half-broken model.
+assert len(METRICS_CACHE) >= 30, (
+    f"Annual metrics cache has only {len(METRICS_CACHE)} tickers (expected ≥30). "
+    f"Re-run notebook 04 before logging the agent."
+)
+assert len(QUARTERLY_METRICS_CACHE) >= 30, (
+    f"Quarterly metrics cache has only {len(QUARTERLY_METRICS_CACHE)} tickers (expected ≥30). "
+    f"Re-run notebook 04b before logging the agent."
+)
+# Filing-metadata cache is allowed to be partial (SEC API can throttle), but
+# warn loudly if substantially incomplete.
+if len(FILING_METADATA_CACHE) < 25:
+    log.warning(
+        "Filing-metadata cache has only %d tickers — get_filing_metadata will "
+        "return 'No metadata' for the missing tickers. SEC EDGAR may have "
+        "throttled this run; consider re-running cell 3 if you want full coverage.",
+        len(FILING_METADATA_CACHE),
+    )
+
 # COMMAND ----------
 
 # ── 4. Tool: search_filings ───────────────────────────────────────────────────
@@ -808,12 +828,29 @@ You must decline (politely, with the specific reason) when:
   (currently MCD's 10-K narrative — the agent has annual metrics but no
    indexed 10-K text for McDonald's)
 - A tool returns "No data found" — treat that as authoritative
+- A tool returns a value of "N/A" or null for the SPECIFIC metric the user
+  asked about (e.g. user asks "net income for Q1 FY24" and the tool returns
+  net_income=N/A) — refuse cleanly for that specific metric
+
+PARTIAL-DATA RULE (critical for chatbot UX)
+When the user asks for ONE specific metric and the tool returns N/A for it,
+DO NOT lead with — or fold into the same sentence as — a different metric's
+value. A chatbot reader scans for the headline number and may treat any
+prominent dollar figure as the answer to their question, which is harmful.
+Instead:
+  • State plainly that the requested metric is unavailable for that period.
+  • If you want to offer a related metric as context, do so in a SEPARATE
+    paragraph, clearly labeled, and never on the first line.
+  • Never present an alternative metric as if it answered the original
+    question.
 
 REFUSALS must:
 - Acknowledge the question briefly
-- Name the specific reason (future period / not in corpus / Q4 not stored)
+- Name the specific reason (future period / not in corpus / Q4 not stored /
+  metric N/A in the underlying filing)
 - Offer a concrete alternative when one exists ("I can answer for FY2024" or
-  "Try GOOGL instead of GOOG" or "I have the annual figure if that helps")
+  "Try GOOGL instead of GOOG" or "I have the annual figure if that helps") —
+  but format it as a follow-up, NOT as if it were the answer.
 Never invent data. Never cite a source for data you didn't retrieve.
 
 CHAT TONE
@@ -881,6 +918,22 @@ You:  "Q4 isn't stored as a standalone quarter in the FinSage data — SEC
       to roughly $64.7B. Want me to break that down by segment?
 
       [Source: MSFT | FY2024 | metrics]"
+
+User: "What was Amazon's net income in Q1 of fiscal year 2024?"
+      (the quarterly tool returns net_income=N/A for AMZN Q1 FY2024 but
+       has revenue and operating_income populated)
+You:  "Amazon's Q1 FY2024 net income isn't tagged in the underlying 10-Q
+      with a standalone three-month value, so I can't return a verified
+      figure for that specific metric.
+
+      For context, Amazon did report Q1 FY2024 revenue of $143.31 billion
+      and operating income of $15.31 billion (both from the same filing).
+      If a net-income figure is essential, the FY2024 annual total may be
+      a reasonable substitute — let me know.
+
+      [Source: AMZN | FY2024 Q1 | metrics]"
+      (NOTE the structure: refuse the specific metric in paragraph 1; only
+       then introduce the related figures as context, never as the answer.)
 """
 
 
@@ -959,15 +1012,36 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
                 final = final.rstrip() + "\n\n" + "\n".join(deduped[:2])
             return final
 
-        # Accept both DataFrame input (Databricks serving) and dict input (notebook testing)
+        # Accept both DataFrame input (Databricks serving) and dict input (notebook
+        # testing or unwrap_python_model() in eval). When pyfunc serving is active,
+        # the input arrives as a single-row DataFrame whose `messages` cell may have
+        # been JSON-stringified by the signature transformer — handle that gracefully.
         if hasattr(model_input, "to_dict"):
             records = model_input.to_dict(orient="records")
-            messages = records[0].get("messages", [])
+            payload = records[0] if records else {}
+        elif isinstance(model_input, list) and model_input:
+            payload = model_input[0] if isinstance(model_input[0], dict) else {}
+        elif isinstance(model_input, dict):
+            payload = model_input
         else:
-            messages = model_input.get("messages", [])
+            return {
+                "content": (
+                    f"Unsupported input type {type(model_input).__name__}. "
+                    "Send a dict like {'messages': [...]} or a list of such dicts."
+                ),
+                "messages": [],
+            }
 
-        if not messages:
-            return {"content": "No messages provided.", "messages": []}
+        messages = payload.get("messages", [])
+        if isinstance(messages, str):
+            # MLflow signature mangling: messages can arrive as a JSON string.
+            try:
+                messages = json.loads(messages)
+            except (json.JSONDecodeError, TypeError):
+                messages = []
+
+        if not isinstance(messages, list) or not messages:
+            return {"content": "No valid messages in request payload.", "messages": []}
 
         # Every question goes through the LLM tool loop. The system prompt is the
         # single source of truth for routing, refusal handling, citations, and
@@ -1138,11 +1212,34 @@ TEST_QUESTIONS = [
     "Compare Microsoft and Alphabet's operating margins in 2023.",
 ]
 
+# Track smoke-test outcomes — fail the cell loudly if the agent never produced
+# a numerical signal on a deterministic-answerable question. Better to catch
+# regressions here than after a 10-minute MLflow log + UC register + serving
+# rollout cycle.
+_smoke_failures = []
 for q in TEST_QUESTIONS:
     print(f"\n{'='*70}")
     print(f"Q: {q}")
-    result = agent.predict(None, {"messages": [{"role": "user", "content": q}]})
-    print(f"A: {result['content'][:800]}")
+    try:
+        result = agent.predict(None, {"messages": [{"role": "user", "content": q}]})
+        content = result.get("content", "") if isinstance(result, dict) else str(result)
+    except Exception as e:
+        _smoke_failures.append((q, f"{type(e).__name__}: {e}"))
+        print(f"A: ERROR — {type(e).__name__}: {e}")
+        continue
+    print(f"A: {content[:800]}")
+    # Apple revenue + Microsoft/Alphabet comparison should both produce a $ figure.
+    if q == TEST_QUESTIONS[0] and "$" not in content:
+        _smoke_failures.append((q, "no $ figure in revenue lookup"))
+    if q == TEST_QUESTIONS[2] and "%" not in content:
+        _smoke_failures.append((q, "no % figure in operating margin compare"))
+
+if _smoke_failures:
+    raise RuntimeError(
+        "Smoke tests failed; not logging this agent. Failures:\n  " +
+        "\n  ".join(f"{q!r} → {reason}" for q, reason in _smoke_failures)
+    )
+print("\n[SMOKE] all 3 questions produced expected signal — proceeding to log_model.")
 
 # COMMAND ----------
 
@@ -1194,11 +1291,12 @@ with mlflow.start_run(run_name=f"finsage_rag_agent_{ENV}") as run:
         "max_iterations":        MAX_ITERATIONS,
     })
 
-    # Save both caches as logged artifacts so load_context can access them
-    mlflow.log_artifact("/tmp/metrics_cache.json",   artifact_path="artifacts")
-    mlflow.log_artifact("/tmp/quarterly_cache.json", artifact_path="artifacts")
-    mlflow.log_artifact("/tmp/filing_metadata_cache.json", artifact_path="artifacts")
-
+    # log_model(artifacts={...}) handles cache persistence — no separate
+    # log_artifact() needed (would write the same JSON twice into the run).
+    # `requests` is intentionally NOT in pip_requirements: it's only used at
+    # notebook-time for SEC EDGAR fetches in cell 3, never inside the served
+    # agent's predict path. databricks-vectorsearch transitively brings the
+    # `requests` it needs at serving time.
     model_info = mlflow.pyfunc.log_model(
         artifact_path="finsage_rag_agent",
         python_model=agent,
@@ -1218,7 +1316,11 @@ with mlflow.start_run(run_name=f"finsage_rag_agent_{ENV}") as run:
         input_example=input_example,
         registered_model_name=UC_MODEL_NAME,
         resources=resources,
-        pip_requirements=["databricks-vectorsearch", "databricks-sdk", "mlflow", "requests"],
+        pip_requirements=[
+            "mlflow>=3.0,<4.0",
+            "databricks-vectorsearch>=0.40,<1.0",
+            "databricks-sdk>=0.30,<1.0",
+        ],
     )
 
     print(f"[MLflow] Run ID: {run.info.run_id}")
@@ -1277,6 +1379,7 @@ start = time.time()
 # ready alone runs live tests against the OLD version. Require all three: service
 # ready, no in-flight config update, and the version we just deployed is the one
 # being served.
+deployment_ok = False
 while True:
     if time.time() - start > timeout:
         print("Timeout waiting for endpoint. Check the Serving UI manually.")
@@ -1288,14 +1391,15 @@ while True:
         served_versions = {se.entity_version for se in (ep.config.served_entities or [])} if ep.config else set()
         print(f"  state={state} config_update={config_update} served_versions={served_versions}")
 
-        if "FAILED" in state.upper():
-            print(f"Endpoint failed: {ep.state}")
+        if "FAILED" in state.upper() or "FAILED" in config_update.upper():
+            print(f"Endpoint failed: state={state} config_update={config_update}")
             break
 
         if (state == "EndpointStateReady.READY"
                 and "NOT_UPDATING" in config_update.upper()
                 and str(model_version) in served_versions):
             print(f"Endpoint is READY and serving v{model_version}.")
+            deployment_ok = True
             break
     except Exception as e:
         print(f"  Polling error: {e}")
@@ -1303,22 +1407,40 @@ while True:
 
 # Live test via SDK — our pyfunc has a custom (non-chat) output schema,
 # so we send via dataframe_records and read from resp.predictions.
+# Only runs if the deployment actually succeeded — otherwise we'd be testing
+# the OLD served version and getting misleading PASS results.
+if not deployment_ok:
+    print(f"\n[LIVE TEST] Skipped — endpoint never reached READY for v{model_version}. "
+          f"Inspect the Serving UI before drawing conclusions.")
+else:
+    live_test_questions = [
+        "What was NVIDIA's revenue and net income in fiscal year 2024?",
+        "What risks did Tesla disclose about autonomous driving in their 10-K?",
+    ]
 
-live_test_questions = [
-    "What was NVIDIA's revenue and net income in fiscal year 2024?",
-    "What risks did Tesla disclose about autonomous driving in their 10-K?",
-]
+    live_test_failures = []
+    for q in live_test_questions:
+        print(f"\n{'='*70}\nQ: {q}")
+        try:
+            resp = w.serving_endpoints.query(
+                name=AGENT_ENDPOINT,
+                dataframe_records=[{"messages": [{"role": "user", "content": q}]}],
+            )
+            preds = resp.predictions
+            pred  = preds[0] if isinstance(preds, list) and preds else preds
+            answer = pred.get("content", str(pred)) if isinstance(pred, dict) else str(pred)
+            print(f"A: {answer[:800]}")
+            if not answer or "error" in answer.lower()[:120]:
+                live_test_failures.append((q, "empty/error response"))
+        except Exception as e:
+            print(f"Live test error: {type(e).__name__}: {e}")
+            live_test_failures.append((q, f"{type(e).__name__}: {e}"))
 
-for q in live_test_questions:
-    print(f"\n{'='*70}\nQ: {q}")
-    try:
-        resp = w.serving_endpoints.query(
-            name=AGENT_ENDPOINT,
-            dataframe_records=[{"messages": [{"role": "user", "content": q}]}],
+    if live_test_failures:
+        print(
+            f"\n[LIVE TEST] {len(live_test_failures)}/{len(live_test_questions)} live "
+            f"queries returned errors. The model is registered (v{model_version}) but "
+            f"the endpoint may need attention."
         )
-        preds = resp.predictions
-        pred  = preds[0] if isinstance(preds, list) and preds else preds
-        answer = pred.get("content", str(pred)) if isinstance(pred, dict) else str(pred)
-        print(f"A: {answer[:800]}")
-    except Exception as e:
-        print(f"Live test error: {type(e).__name__}: {e}")
+    else:
+        print(f"\n[LIVE TEST] All {len(live_test_questions)} queries returned valid responses.")
