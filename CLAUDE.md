@@ -124,11 +124,16 @@ FinSage is a production-grade financial intelligence platform on Databricks. It 
    - Sourced from `company_metrics_quarterly` (10-Q, Q1/Q2/Q3 only).
    - The quarterly cache artifact is OPTIONAL at `load_context` time — if the table doesn't exist yet (e.g. fresh deployment before 04b has run), the agent logs a warning and the tool returns an actionable error instead of crashing.
 
+### Architecture: every question goes through the LLM tool loop
+- The `_deterministic_answer` regex shortcut was **removed** in favor of full LLM-driven reasoning. Every user query now hits the `databricks-meta-llama-3-3-70b-instruct` tool-calling loop. This costs ~5–15s per question (vs <100ms for the shortcut) but produces conversational, professionally-cited answers suitable for direct display in a chat UI — which is the intended deployment target (Databricks App with chatbot front-end).
+- Wall-time expectations: 100-question eval now takes ~25–50 min (was ~50s with the shortcut). Treat that as the new normal.
+
 ### SYSTEM_PROMPT behavioral rules (do not remove these)
-- Annual / fiscal-year questions → `get_company_metrics`. Interim / Q-specific questions → `get_quarterly_metrics`. Q4 is unavailable in the quarterly tool — fall back to annual and flag the limitation.
-- For "most recent" questions: call the appropriate metrics tool first to find latest year (+ quarter if interim) → pass `fiscal_year` to `search_filings`
-- Citation labelling: `[VERBATIM]` for direct quotes, `[SUMMARY]` for paraphrases
-- Formula disclosure: state formula on first use — e.g. `Operating Margin (GAAP) = Operating Income ÷ Revenue`
+- Routing: annual → `get_company_metrics`; quarterly Q1/Q2/Q3 → `get_quarterly_metrics`; cover-page metadata → `get_filing_metadata`; qualitative narrative → `search_filings`. Q4 isn't stored discretely — explain that and offer the implied value as `annual − (Q1+Q2+Q3)`.
+- Refusals: out-of-corpus tickers (IBM, FB, META, GOOG, NFLX, ORCL, etc.), future fiscal years, and missing data must produce a polite, specific refusal — never invent values. The system prompt has 3 worked refusal examples; if you adjust them, update the corresponding `_REFUSAL_CONTEXT_TOKENS` in `src/evaluation/scorers.py` to match.
+- Citations: every metrics answer ends with `[Source: TICKER | FY#### | metrics]` (or `FY#### Q#`). Filing-text answers use `[VERBATIM]`/`[SUMMARY]` plus `[Source: TICKER | FY#### | 10-K/10-Q | Section]`. Filing-metadata uses `[Source: TICKER | FY#### | 10-K Cover Page]`.
+- Formula disclosure: state on first use — `Operating Margin = Operating Income ÷ Revenue`.
+- Tone: chat-interface conversational; lead with the headline number, then context. No bullet-point dumps for simple lookups.
 
 ### Smoke test (cell 8)
 - `fake_ctx.artifacts` must be a **plain dict**, now with two keys: `{"metrics_cache": "/tmp/metrics_cache.json", "quarterly_cache": "/tmp/quarterly_cache.json"}` — NOT a class instance
