@@ -455,7 +455,10 @@ def get_company_metrics(
             f"\n  Operating Income:     {_fmt(m.get('operating_income'))}"
             f"\n  Operating Cash Flow:  {_fmt(m.get('operating_cash_flow'))}"
             f"\n  Total Assets:         {_fmt(m.get('total_assets'))}"
+            f"\n  Total Liabilities:    {_fmt(m.get('total_liabilities'))}"
+            f"\n  Total Equity:         {_fmt(m.get('total_equity'))}"
             f"\n  Total Debt:           {_fmt(m.get('total_debt'))}"
+            f"\n  R&D Expense:          {_fmt(m.get('rd_expense'))}"
             f"\n  Gross Margin:         {_fmt(m.get('gross_margin_pct'), pct=True)}"
             f"\n  Revenue YoY Growth:   {_fmt(m.get('revenue_yoy_growth_pct'), pct=True)}"
             f"\n  Debt/Equity:          {str(round(m['debt_to_equity'], 2)) + 'x' if m.get('debt_to_equity') is not None else 'N/A'}"
@@ -550,8 +553,10 @@ def get_quarterly_metrics(
             f"\n  Operating Income:     {_fmt(m.get('operating_income'))}"
             f"\n  Operating Cash Flow:  {_fmt(m.get('operating_cash_flow'))}"
             f"\n  Total Assets:         {_fmt(m.get('total_assets'))}"
+            f"\n  Total Liabilities:    {_fmt(m.get('total_liabilities'))}"
             f"\n  Total Equity:         {_fmt(m.get('total_equity'))}"
             f"\n  Total Debt:           {_fmt(m.get('total_debt'))}"
+            f"\n  R&D Expense:          {_fmt(m.get('rd_expense'))}"
             f"\n  Gross Margin:         {_fmt(m.get('gross_margin_pct'), pct=True)}"
             f"\n  Revenue YoY (same Q): {_fmt(m.get('revenue_yoy_growth_pct'), pct=True)}"
             f"\n  Debt/Equity:          {str(round(m['debt_to_equity'], 2)) + 'x' if m.get('debt_to_equity') is not None else 'N/A'}"
@@ -934,6 +939,20 @@ You:  "Amazon's Q1 FY2024 net income isn't tagged in the underlying 10-Q
       [Source: AMZN | FY2024 Q1 | metrics]"
       (NOTE the structure: refuse the specific metric in paragraph 1; only
        then introduce the related figures as context, never as the answer.)
+
+User: "Summarize McDonald's risk factors from their FY2023 10-K."
+      (search_filings returns no passages — MCD 10-K text didn't extract
+       into the silver section table; only their 10-Q narrative is indexed)
+You:  "I cannot answer this. McDonald's (MCD) annual 10-K narrative isn't
+      in the FinSage retrieval index — there's a known section-extraction
+      gap for MCD's 10-K filings (the silver layer captured 0 sections from
+      their 7 10-K documents, while their 10-Q narrative did extract
+      cleanly). I have MCD's annual structured metrics (revenue, margins,
+      etc.) and 10-Q MD&A text, but not 10-K Risk Factors or Business
+      narrative. Want me to pull the 10-Q risk-factor updates instead, or
+      summarize the structured financials?"
+      (NOTE no [Source:] line — there's nothing to cite. Refusals never
+       fabricate a source.)
 """
 
 
@@ -994,15 +1013,21 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
             """Final-stage safety net: if the LLM forgot to mark a retrieval-grounded
             answer with [SUMMARY] / [Source: ...], we add them. Metrics-only answers
             are NOT mutated — the system prompt already requires the LLM to emit
-            `[Source: TICKER | FY#### | metrics]` itself."""
+            `[Source: TICKER | FY#### | metrics]` itself.
+
+            Critical: only fires when search_filings actually returned non-empty
+            results (`tool_sources` is non-empty). If retrieval ran but came back
+            empty (e.g. MCD 10-K text gap), the LLM correctly produces a refusal
+            and we MUST NOT prepend [SUMMARY] — that turns a clean refusal into a
+            falsely-cited answer that confuses both users and eval scorers."""
             if not content:
                 return content
-            if not used_retrieval:
+            if not used_retrieval or not tool_sources:
                 return content
             final = content
             if not re.search(r"\[(VERBATIM|SUMMARY)\]", final, flags=re.IGNORECASE):
                 final = "[SUMMARY] " + final
-            if not source_pattern.search(final) and tool_sources:
+            if not source_pattern.search(final):
                 deduped = []
                 seen = set()
                 for src in tool_sources:

@@ -162,13 +162,29 @@ _SOURCE_LINE  = re.compile(r"\[Source:\s*[A-Z]+\s*\|\s*FY\d{4}", re.IGNORECASE)
 
 @scorer
 def citation_format(*, inputs=None, outputs=None, expectations=None, trace=None, **_):
+    """Pass when retrieval-grounded answers carry both a [VERBATIM]/[SUMMARY]
+    tag and a [Source: TICKER | FY####...] line. Skip when the answer is
+    deterministic (metrics tool, filing-metadata tool, refusal) — those don't
+    quote retrieved text and the SYSTEM_PROMPT explicitly omits the verbatim
+    tag for them."""
     exp = expectations or {}
     cat = exp.get("category")
+    src = (exp.get("source_section") or "").strip()
     if cat not in ("risk_summary", "citation_validation", "yoy_comparison", "numerical_lookup"):
         return None
-    if exp.get("source_section") == "metrics":
-        return None  # metrics-tool answers don't require [VERBATIM]/[SUMMARY]
+    # Deterministic answer paths don't go through search_filings, so the
+    # VERBATIM/SUMMARY contract doesn't apply:
+    #   "metrics"        — get_company_metrics / get_quarterly_metrics output
+    #   "10-K Cover Page" — get_filing_metadata output
+    #   ""               — empty/unknown source_section, treat as deterministic
+    if src in ("metrics", "10-K Cover Page", ""):
+        return None
     response = _response_text(outputs)
+    # Also skip if the response itself is clearly a metrics or cover-page
+    # answer (the LLM may route an E/D-shape question through filing metadata
+    # even when source_section is "Income Statement" etc.).
+    if re.search(r"\[Source:[^\]]*(?:metrics|Cover Page)\s*\]", response, re.IGNORECASE):
+        return None
     has_tag    = bool(_CITATION_TAG.search(response))
     has_source = bool(_SOURCE_LINE.search(response))
     passed = has_tag and has_source
@@ -180,10 +196,25 @@ def citation_format(*, inputs=None, outputs=None, expectations=None, trace=None,
 # ─────────────────────────────────────────────────────────────────────────────
 
 _REFUSAL_PHRASES = (
-    "cannot", "can't", "cant", "unable", "not available", "not present",
-    "not in the corpus", "out of scope", "outside", "no data", "no record",
-    "decline", "i'm sorry", "i am sorry", "do not have", "don't have",
-    "not supported", "not stored", "not covered",
+    # Direct refusal verbs
+    "cannot", "can't", "cant", "couldn't", "could not", "unable",
+    "decline", "i'm sorry", "i am sorry",
+    # Negation + auxiliary (modern conversational refusals from the LLM-driven
+    # SYSTEM_PROMPT — e.g. "Apple's FY2030 hasn't occurred yet", "IBM isn't in
+    # the FinSage corpus", "Q4 isn't stored as a standalone quarter")
+    "isn't", "is not", "aren't", "are not", "wasn't", "was not",
+    "weren't", "were not", "hasn't", "has not", "haven't", "have not",
+    "doesn't", "does not", "don't have", "do not have", "didn't",
+    # Lexical hooks for "this isn't supported / data missing"
+    "not available", "not present", "not in the corpus", "not in finsage",
+    "not currently in", "not tracked", "not covered", "not stored",
+    "not supported", "not directly provided",
+    "out of scope", "outside", "outside the corpus",
+    "no data", "no record", "no relevant", "no passages",
+    "no longer in", "no longer covered",
+    # Period-related
+    "future period", "hasn't occurred", "has not occurred", "yet to be filed",
+    "former ticker", "deprecated",
 )
 
 # Per-question expected refusal-context tokens. The agent must mention at
