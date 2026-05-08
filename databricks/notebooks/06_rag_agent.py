@@ -88,6 +88,15 @@ print(f"[CONFIG restored] catalog={CATALOG} | llm={LLM_ENDPOINT} | metrics={METR
 # ── 3. Pre-load Gold metrics into memory ──────────────────────────────────────
 # company_metrics has only 180 rows — load once as a nested dict for zero-latency
 # lookup inside the pyfunc serving container (no SQL warehouse needed at runtime).
+#
+# Defensive re-read: if a user runs THIS cell standalone (after restartPython
+# wiped state but before cell 2's re-import block has run), recover from widgets
+# rather than NameError-ing on METRICS_TABLE. This makes the notebook safe to
+# step through cell-by-cell or in any order.
+CATALOG                 = dbutils.widgets.get("catalog")
+METRICS_TABLE           = f"{CATALOG}.finsage_gold.company_metrics"
+METRICS_QUARTERLY_TABLE = f"{CATALOG}.finsage_gold.company_metrics_quarterly"
+SILVER_FINANCIALS_TABLE = f"{CATALOG}.finsage_silver.financial_statements"
 
 def _load_metrics_cache(table: str) -> dict:
     df = spark.table(table).select(
