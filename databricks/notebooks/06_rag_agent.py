@@ -801,10 +801,11 @@ print(f"[TOOLS] Registered: {list(TOOL_DISPATCH.keys())}")
 
 # ── 7. FinSageAgent — pyfunc model class ──────────────────────────────────────
 
-# Defensive re-init — the class declaration below subclasses
-# mlflow.pyfunc.PythonModel and uses re.compile() at module scope.
-import mlflow
-import re
+# Defensive re-init — class definition AND predict() at runtime both reference
+# these names. Even when this cell runs after restartPython() wiped state,
+# the class body and predict() resolve cleanly.
+import mlflow, re, json, time
+MAX_ITERATIONS = 5  # also exposed as class attribute below — see FinSageAgent
 
 SYSTEM_PROMPT = """\
 You are FinSage — an expert financial analyst AI deployed inside a chat
@@ -996,6 +997,10 @@ You:  "I cannot answer this. McDonald's (MCD) annual 10-K narrative isn't
 
 class FinSageAgent(mlflow.pyfunc.PythonModel):
 
+    # Class attribute so predict() never depends on module-global MAX_ITERATIONS
+    # — survives any cell-execution order after restartPython.
+    MAX_ITERATIONS = 5
+
     def load_context(self, context):
         import json
         # Annual metrics cache (required)
@@ -1122,7 +1127,7 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
 
         deploy_client = mlflow.deployments.get_deploy_client("databricks")
 
-        for iteration in range(MAX_ITERATIONS):
+        for iteration in range(self.MAX_ITERATIONS):
             if time.time() - started_at > max_runtime_seconds:
                 break
             response = deploy_client.predict(
@@ -1233,15 +1238,19 @@ print("[FinSageAgent] Class defined.")
 
 # ── 8. Local smoke tests ──────────────────────────────────────────────────────
 
-# Defensive re-init for the widget-derived constants this cell uses. Note
-# that this cell still requires cells 4 (caches) and 7 (FinSageAgent class)
-# to have run in this kernel — those produce non-widget objects.
+# Defensive re-init for everything this cell + agent.predict() touch at
+# module level. Note that this cell still requires cells 4 (caches) and 7
+# (FinSageAgent class) to have run in this kernel — those produce non-widget
+# objects (METRICS_CACHE, QUARTERLY_METRICS_CACHE, FILING_METADATA_CACHE,
+# FinSageAgent, TOOL_SCHEMAS, search_filings + the metric tools).
+import json, time, re
 CATALOG              = dbutils.widgets.get("catalog")
 LLM_ENDPOINT         = dbutils.widgets.get("llm_endpoint")
 VS_ENDPOINT          = dbutils.widgets.get("vs_endpoint")
 VS_INDEX_NAME        = f"{CATALOG}.finsage_gold.filing_chunks_index"
 NUM_RESULTS          = int(dbutils.widgets.get("num_results"))
 SIMILARITY_THRESHOLD = float(dbutils.widgets.get("similarity_threshold"))
+MAX_ITERATIONS       = 5
 
 agent = FinSageAgent()
 
