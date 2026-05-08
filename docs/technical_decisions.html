@@ -502,5 +502,129 @@ sec-parser MD&amp;A tail:
         <strong>A production extractor must degrade gracefully at the section level, not the filing level, and every section row must record which extractor produced it. Without per-section fallback, sec-parser's partial wins silently dropped required sections for bank-style filers; without per-row provenance, regex-era rows survived a merge-based silver rebuild and inflated MD&amp;A embeddings by 3×. Fixing both — plus a three-line heading-preference rule for MSFT's TOC-stub pattern — dropped the filer-specific error surface from 67 to ~15 and replaced "30/30 tickers" with a number that is actually audit-trail-defensible.</strong>
     </p>
 
+    <hr>
+
+    <h2>13. Multi-Dimensional Eval over a Single LLM-as-Judge</h2>
+    <p>
+        <strong>Decision:</strong> The agent evaluation harness in <code>07_evaluation.py</code> runs <strong>eight</strong> independent scorers per question against the 100-question stratified ground-truth set, not a single "is the answer right?" LLM judge. Each scorer measures one specific dimension (correctness, citation grammar, refusal-reason validity, tool routing, numerical tolerance, derived-metric tolerance, retrieval grounding, ticker+year citation), can SKIP rows that aren't applicable, and persists its outcome row-level to <code>main.finsage_gold.eval_question_outcomes</code> so failures are diagnosable by dimension rather than as a single fuzzy "looks bad" verdict.
+    </p>
+
+    <h3>Why a Single LLM Judge Is the Wrong Abstraction</h3>
+    <p>
+        The default temptation when evaluating an LLM agent is to pose the question to another LLM ("here's the agent's answer, here's the expected answer — same?") and aggregate to a percentage. This collapses every failure mode into one channel and produces three predictable pathologies:
+    </p>
+    <ul>
+        <li>
+            <strong>Phrasing-vs-correctness confusion.</strong> The judge can't reliably distinguish "the answer is mathematically wrong" from "the answer is right but uses different precision (<code>$391.04B</code> vs <code>$391,035,000,000</code>)". Both surface as a binary fail; you can't tell which without re-reading every trace.
+        </li>
+        <li>
+            <strong>No notion of applicability.</strong> A refusal-test question and a numerical-lookup question fail for completely different reasons. Asking the same judge to score both with one rubric forces it into mushy generalities ("the answer is reasonable") that don't catch real regressions.
+        </li>
+        <li>
+            <strong>Over-strict on precision, under-strict on grounding.</strong> Real failure modes — agent cited a different ticker than the one retrieved, agent volunteered a substitute number when the requested metric was N/A, agent used the annual tool for a quarterly question — all blur under a single "correctness" verdict.
+        </li>
+    </ul>
+
+    <h3>The Eight Scorers, Their Domain, and Their Math</h3>
+
+    <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%; font-size: 0.9em;">
+        <thead style="background-color: #f2f2f2;">
+            <tr>
+                <th style="width: 22%;">Scorer</th>
+                <th style="width: 14%;">Type</th>
+                <th style="width: 42%;">What passes</th>
+                <th style="width: 22%;">When it SKIPs</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><code>correctness</code></td>
+                <td>LLM judge (built-in)</td>
+                <td>llama-3.3-70b says the response is semantically equivalent to <code>expected_response</code>.</td>
+                <td>Never — applies to every row.</td>
+            </tr>
+            <tr>
+                <td><code>cites_ticker_and_year</code></td>
+                <td>LLM judge (Guidelines)</td>
+                <td>The judge confirms the response cites both a ticker symbol and a fiscal year when discussing any financial figure.</td>
+                <td>Never — applies to every row.</td>
+            </tr>
+            <tr>
+                <td><code>numerical_tolerance</code></td>
+                <td>Custom <code>@scorer</code></td>
+                <td>B/M/K-aware extraction of the first numeric figure from response vs <code>expected_response</code>; relative error ≤ 1%.</td>
+                <td><code>category != numerical_lookup</code>.</td>
+            </tr>
+            <tr>
+                <td><code>derived_metric_match</code></td>
+                <td>Custom <code>@scorer</code></td>
+                <td>Same number extraction, but applied to derived ratios (margins, growth rates, D/E). Tolerance is <code>max(rel_err ≤ 1%, abs_err ≤ 0.005)</code> — the absolute floor matters for small ratios where 1% relative is noisy.</td>
+                <td><code>category</code> not in <code>{numerical_lookup, yoy_comparison, multi_company}</code>.</td>
+            </tr>
+            <tr>
+                <td><code>citation_format</code></td>
+                <td>Custom <code>@scorer</code></td>
+                <td>Response contains both a <code>[VERBATIM]</code>/<code>[SUMMARY]</code> tag and a <code>[Source: TICKER | FY####...]</code> line.</td>
+                <td><code>source_section</code> in <code>{metrics, 10-K Cover Page, ""}</code> (deterministic answers don't quote retrieved text).</td>
+            </tr>
+            <tr>
+                <td><code>refusal_correctness</code></td>
+                <td>Custom <code>@scorer</code></td>
+                <td>Response contains a refusal phrase from a broad whitelist (modern negation+auxiliary forms included: "isn't", "hasn't occurred", "couldn't find", etc.) AND mentions at least one expected reason token from <code>_REFUSAL_CONTEXT_TOKENS[qid]</code>.</td>
+                <td><code>category != refusal_test</code>.</td>
+            </tr>
+            <tr>
+                <td><code>tool_routing_correctness</code></td>
+                <td>Custom <code>@scorer</code></td>
+                <td>Response's source-line shape matches the expected tool for that question: <code>FY####  | metrics</code> for annual, <code>FY#### Q#</code> for quarterly, <code>10-K Cover Page</code> for filing metadata, <code>10-K | Section</code> or <code>10-Q | Section</code> for retrieval.</td>
+                <td>Refusal-test rows (no tool expected); rows where category doesn't constrain a single tool.</td>
+            </tr>
+            <tr>
+                <td><code>retrieval_grounded_when_used</code></td>
+                <td>Custom <code>@scorer</code></td>
+                <td>Trace contains a <code>RETRIEVER</code> span AND the response cites a ticker that overlaps with at least one retrieved chunk's ticker.</td>
+                <td>No <code>RETRIEVER</code> span in the trace (agent answered without invoking <code>search_filings</code>) — this is the SKIP-not-ERROR replacement for MLflow's built-in <code>RetrievalGroundedness</code>, which hard-errors on traces with no retrieval.</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3>Why SKIP, Not FAIL, on Inapplicability</h3>
+    <p>
+        The default MLflow GenAI scorer pattern returns <code>True</code>/<code>False</code>. Returning <code>None</code> is the documented signal that the row is not applicable to this scorer. We use it aggressively. The reason is statistical — if <code>numerical_tolerance</code> ran on all 100 questions and forced a False on the 80 questions that aren't numerical lookups, the headline pass-rate would be a meaningless 20%. With SKIP, the pass-rate denominator is the 20 applicable rows, and a 19/20 PASS reads honestly as 95% on the dimension that scorer measures. Equally important: a SKIP doesn't pollute the regression diff. When we compare v20 → v21, we want to see "20/20 → 18/20 on numerical_tolerance" — not 18/20 dragged into a 100-row average where 80 of the rows are noise.
+    </p>
+
+    <h3>Why Sum-of-Fails Across Scorers ≠ Number of Broken Questions</h3>
+    <p>
+        A single bad answer typically trips multiple scorers at once. Question A014 (BAC FY2022 total_liabilities) failed in the v21 run on <code>correctness</code>, <code>cites_ticker_and_year</code>, AND <code>numerical_tolerance</code> — three fails from one root cause (the agent's <code>get_company_metrics</code> tool didn't display <code>total_liabilities</code> in its formatted output). When that single fix landed, all three fail counts drop together. This is a feature, not a bug: it confirms the scorers measure independent dimensions of the same underlying answer quality, and lets us attribute fail-count deltas to specific code changes. A single LLM judge would have just nudged its score down by an arbitrary amount with no diagnostic signal.
+    </p>
+
+    <h3>Persistence Schema and Why It's Delta, Not MLflow-Only</h3>
+    <p>
+        Every scorer outcome lands in <code>main.finsage_gold.eval_question_outcomes</code> with columns <code>(run_id, question_id, scorer_name, category, ticker, fiscal_year, fiscal_quarter, difficulty, outcome, value_numeric, rationale, error_message, agent_response, expected_response, recorded_at)</code>, partitioned by <code>run_id</code>. The aggregate per-run row lands in <code>eval_run_summaries</code> with metrics_json, agent_version, dataset_hash, git_commit, mlflow_url. Both tables MERGE on <code>run_id</code> — idempotent on re-runs of the persistence cell. The reason for Delta over relying solely on MLflow's experiment store: MLflow assessments are scoped to one run at a time and have no SQL surface. We want regression-diff queries like "<em>show me every run since v15 where <code>numerical_tolerance/pass_rate</code> &lt; 0.85, ordered by recorded_at</em>" — that's one Delta query, not a chain of MLflow REST calls.
+    </p>
+
+    <h3>The Trade-off We Accepted</h3>
+    <ul>
+        <li>
+            <strong>More scorers means more wall-clock per run.</strong> Eight scorers × 100 questions × LLM-judge round-trips for the LLM-judge subset gives ~5 minutes per run. Acceptable: we run eval on demand after a redeploy, not in a hot loop.
+        </li>
+        <li>
+            <strong>More scorers means more code to maintain.</strong> Mitigated by the unit-test gate — <code>tests/unit/test_scorers.py</code> + <code>test_eval_preflight.py</code> total 67 cases that catch scorer-wiring regressions in &lt;1s locally.
+        </li>
+        <li>
+            <strong>The LLM-judge scorers (<code>correctness</code>, <code>cites_ticker_and_year</code>) can still be wrong both ways.</strong> They're useful as the wide semantic check but should never be the sole gate. Custom math scorers (<code>numerical_tolerance</code>, <code>derived_metric_match</code>) are the deterministic second opinion that prevents an LLM-judge whim from masking a real regression.
+        </li>
+    </ul>
+
+    <h3>Relationship to Prior Decisions</h3>
+    <p>
+        <strong>Decision #3 (Never Swallow Failures):</strong> The eight-scorer architecture is the runtime expression of #3 — every failure mode has a named channel, no silent regressions. <strong>Decision #6 (XBRL as the Numerical System of Record):</strong> <code>numerical_tolerance</code> and <code>derived_metric_match</code> compare against XBRL-sourced gold values, not LLM-derived ones — the eval is itself anchored on XBRL provenance. <strong>Decision #11 (Per-Section Fallback Merge):</strong> the <code>extractor_used</code> column we added there is exactly the kind of row-level provenance that the persistence schema mirrors here — a fail row in <code>eval_question_outcomes</code> always carries enough metadata to drill back to the underlying question and trace.
+    </p>
+
+    <h3>Takeaway</h3>
+    <p>
+        <strong>A single LLM-as-judge is the easy way to evaluate an agent and the wrong way to improve one. It collapses orthogonal failure modes into one fuzzy verdict and gives no diagnostic signal when the score moves. Eight independent scorers, each with a named domain and an honest SKIP for inapplicable rows, turn the eval from "is the agent good?" into "on which dimension did this build regress, by how much, on which questions, and which root cause does that imply?" — and that turns the eval into something an engineer can actually act on.</strong>
+    </p>
+
 </body>
 </html>
