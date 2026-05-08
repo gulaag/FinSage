@@ -133,6 +133,53 @@ def test_refusal_correctness_skips_non_refusal_categories():
     assert refusal_correctness(outputs=out, expectations=exp) is None
 
 
+def test_refusal_correctness_recognizes_modern_phrasings():
+    """v21+ SYSTEM_PROMPT produces conversational refusals like
+    'IBM isn't in the FinSage corpus' instead of 'I cannot answer'.
+    The scorer must recognize the negation+auxiliary form."""
+    cases = [
+        # (response, qid, expected_pass)
+        ("Apple's fiscal year 2030 hasn't occurred yet — it's a future period.",
+         "F001", True),
+        ("IBM isn't in the FinSage corpus — I track 30 specific companies.",
+         "F002", True),
+        ("Q4 isn't stored as a standalone quarter in the FinSage data.",
+         "F003", True),
+        ("Unfortunately, I couldn't find any relevant narrative discussion of FY2023 from McDonald's (MCD) 10-K filing.",
+         "F004", True),
+        ("FB was Meta's former ticker and isn't currently in the FinSage corpus.",
+         "F005", True),
+    ]
+    for response_text, qid, want in cases:
+        out = _outputs(response_text)
+        exp = _expectations(category="refusal_test", question_id=qid)
+        got = _value(refusal_correctness(outputs=out, expectations=exp))
+        assert got is want, f"qid={qid} response={response_text!r} got={got} want={want}"
+
+
+def test_citation_format_skips_filing_metadata():
+    """Filing-metadata answers (E-category) are deterministic lookups from
+    SEC DEI namespace — the SYSTEM_PROMPT explicitly omits VERBATIM/SUMMARY
+    tags for them. Scorer must SKIP, not FAIL."""
+    out = _outputs(
+        "Microsoft Corporation filed its FY2021 10-K with the SEC on July 29, 2021.\n\n"
+        "[Source: MSFT | FY2021 | 10-K Cover Page]"
+    )
+    exp = _expectations(category="citation_validation", source_section="10-K Cover Page")
+    assert citation_format(outputs=out, expectations=exp) is None
+
+
+def test_citation_format_skips_when_response_cites_cover_page():
+    """Even if expectations.source_section is something else, if the agent's
+    response uses a 'Cover Page' or 'metrics' source line, the verbatim
+    contract doesn't apply."""
+    out = _outputs(
+        "Visa filed its FY2024 10-K on November 13, 2024.\n[Source: V | FY2024 | 10-K Cover Page]"
+    )
+    exp = _expectations(category="citation_validation", source_section="Income Statement")
+    assert citation_format(outputs=out, expectations=exp) is None
+
+
 # ── tool_routing_correctness ────────────────────────────────────────────────
 
 def test_routing_passes_for_quarterly_question():
