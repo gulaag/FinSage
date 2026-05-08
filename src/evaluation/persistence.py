@@ -134,6 +134,43 @@ def normalize_outcome(raw_value, has_error: bool) -> tuple[str, float | None]:
 # Writers
 # ─────────────────────────────────────────────────────────────────────────────
 
+_RUN_SUMMARY_SCHEMA = """
+    run_id              STRING,
+    run_name            STRING,
+    experiment_id       STRING,
+    run_started_at_ms   BIGINT,
+    run_finished_at_ms  BIGINT,
+    duration_seconds    DOUBLE,
+    agent_endpoint      STRING,
+    agent_version       STRING,
+    judge_endpoint      STRING,
+    num_questions       INT,
+    dataset_path        STRING,
+    dataset_hash        STRING,
+    scorer_metrics_json STRING,
+    param_json          STRING,
+    mlflow_url          STRING,
+    git_commit          STRING
+"""
+
+_OUTCOMES_SCHEMA = """
+    run_id            STRING,
+    question_id       STRING,
+    scorer_name       STRING,
+    category          STRING,
+    ticker            STRING,
+    fiscal_year       INT,
+    fiscal_quarter    INT,
+    difficulty        STRING,
+    outcome           STRING,
+    value_numeric     DOUBLE,
+    rationale         STRING,
+    error_message     STRING,
+    agent_response    STRING,
+    expected_response STRING
+"""
+
+
 def merge_run_summary(
     spark,
     *,
@@ -153,30 +190,34 @@ def merge_run_summary(
     mlflow_url: str,
     git_commit: str | None,
 ) -> None:
-    """Idempotent MERGE into eval_run_summaries on run_id."""
-    from pyspark.sql import Row, functions as F
+    """Idempotent MERGE into eval_run_summaries on run_id.
+
+    Uses an explicit DDL schema because Spark Connect cannot infer types from
+    a single-row tuple containing None values (e.g. agent_version, git_commit).
+    """
+    from pyspark.sql import functions as F
 
     duration_seconds = max(0.0, (run_finished_at_ms - run_started_at_ms) / 1000.0)
-    row = Row(
-        run_id=run_id,
-        run_name=run_name,
-        experiment_id=experiment_id,
-        run_started_at_ms=int(run_started_at_ms),
-        run_finished_at_ms=int(run_finished_at_ms),
-        duration_seconds=float(duration_seconds),
-        agent_endpoint=agent_endpoint,
-        agent_version=agent_version,
-        judge_endpoint=judge_endpoint,
-        num_questions=int(num_questions),
-        dataset_path=dataset_path,
-        dataset_hash=dataset_hash,
-        scorer_metrics_json=json.dumps(scorer_metrics, sort_keys=True),
-        param_json=json.dumps(params, sort_keys=True, default=str),
-        mlflow_url=mlflow_url,
-        git_commit=git_commit,
-    )
+    tuple_row = [(
+        run_id,
+        run_name,
+        experiment_id,
+        int(run_started_at_ms),
+        int(run_finished_at_ms),
+        float(duration_seconds),
+        agent_endpoint,
+        agent_version,
+        judge_endpoint,
+        int(num_questions),
+        dataset_path,
+        dataset_hash,
+        json.dumps(scorer_metrics, sort_keys=True),
+        json.dumps(params, sort_keys=True, default=str),
+        mlflow_url,
+        git_commit,
+    )]
     df = (
-        spark.createDataFrame([row])
+        spark.createDataFrame(tuple_row, schema=_RUN_SUMMARY_SCHEMA)
         .withColumn("run_started_at",  (F.col("run_started_at_ms")  / 1000).cast("timestamp"))
         .withColumn("run_finished_at", (F.col("run_finished_at_ms") / 1000).cast("timestamp"))
         .drop("run_started_at_ms", "run_finished_at_ms")
@@ -193,32 +234,37 @@ def merge_run_summary(
 
 
 def merge_question_outcomes(spark, run_id: str, rows: list[dict]) -> None:
-    """Idempotent MERGE into eval_question_outcomes on (run_id, qid, scorer)."""
+    """Idempotent MERGE into eval_question_outcomes on (run_id, qid, scorer).
+
+    Explicit DDL schema avoids Spark Connect CANNOT_DETERMINE_TYPE failures
+    on the many nullable columns (fiscal_year, fiscal_quarter, value_numeric,
+    rationale, error_message, agent_response, expected_response).
+    """
     if not rows:
         return
-    from pyspark.sql import Row, functions as F
+    from pyspark.sql import functions as F
 
-    spark_rows = [
-        Row(
-            run_id=run_id,
-            question_id=r["question_id"],
-            scorer_name=r["scorer_name"],
-            category=r.get("category"),
-            ticker=r.get("ticker"),
-            fiscal_year=int(r["fiscal_year"]) if r.get("fiscal_year") is not None else None,
-            fiscal_quarter=int(r["fiscal_quarter"]) if r.get("fiscal_quarter") is not None else None,
-            difficulty=r.get("difficulty"),
-            outcome=r["outcome"],
-            value_numeric=r.get("value_numeric"),
-            rationale=r.get("rationale"),
-            error_message=r.get("error_message"),
-            agent_response=r.get("agent_response"),
-            expected_response=r.get("expected_response"),
+    tuples = [
+        (
+            run_id,
+            r["question_id"],
+            r["scorer_name"],
+            r.get("category"),
+            r.get("ticker"),
+            int(r["fiscal_year"]) if r.get("fiscal_year") is not None else None,
+            int(r["fiscal_quarter"]) if r.get("fiscal_quarter") is not None else None,
+            r.get("difficulty"),
+            r["outcome"],
+            float(r["value_numeric"]) if r.get("value_numeric") is not None else None,
+            r.get("rationale"),
+            r.get("error_message"),
+            r.get("agent_response"),
+            r.get("expected_response"),
         )
         for r in rows
     ]
     df = (
-        spark.createDataFrame(spark_rows)
+        spark.createDataFrame(tuples, schema=_OUTCOMES_SCHEMA)
         .withColumn("recorded_at", F.current_timestamp())
     )
     df.createOrReplaceTempView("_finsage_eval_outcomes_src")
