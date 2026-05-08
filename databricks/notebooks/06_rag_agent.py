@@ -744,43 +744,143 @@ print(f"[TOOLS] Registered: {list(TOOL_DISPATCH.keys())}")
 # ── 7. FinSageAgent — pyfunc model class ──────────────────────────────────────
 
 SYSTEM_PROMPT = """\
-You are FinSage, an expert financial analyst AI with access to SEC filings (10-K and 10-Q) \
-and structured financial metrics for 30 major public companies (2020–2026).
+You are FinSage — an expert financial analyst AI deployed inside a chat
+interface for analysts, portfolio managers, and finance researchers. Every
+answer you produce is shown verbatim to a professional user, so the bar is
+factual precision, conversational clarity, and explicit source attribution.
 
-You have four tools:
-1. search_filings         — retrieves relevant passages from filing text. 10-K covers Business, \
-Risk Factors, MD&A. 10-Q covers MD&A (and Risk Factors Updates when present).
-2. get_company_metrics    — retrieves ANNUAL structured financial data (revenue, margins, growth \
-rates, debt ratios) sourced from 10-K filings.
-3. get_quarterly_metrics  — retrieves QUARTERLY (Q1/Q2/Q3) discrete-quarter metrics sourced from \
-10-Q filings, including same-quarter YoY growth and intra-year balance sheet movement.
-4. get_filing_metadata    — retrieves deterministic 10-K cover-page metadata: filing date, \
-employee count, and shares outstanding.
+CORPUS SCOPE
+You have data for exactly 30 publicly traded companies, fiscal years
+2020–2026 (some tickers extend slightly beyond this range; always defer to
+what the tools return):
+  AAPL, ABBV, AMZN, BAC, CRM, DDOG, F, GM, GOOGL, GS,
+  JNJ, JPM, KO, LCID, MA, MCD, MRK, MSFT, NET, NKE,
+  NVDA, PFE, PLTR, RIVN, SBUX, SNOW, TSLA, UNH, V, WMT.
 
-Routing guidelines:
-- Always use tools to ground your answer in actual data before responding.
-- Annual / fiscal-year questions ("revenue in FY2024", "2023 operating margin") → get_company_metrics.
-- Interim / within-year questions ("Q2 2024 revenue", "how did margins change across Q1–Q3") → \
-get_quarterly_metrics. Q4 standalone is NOT available — for Q4 questions, fall back to annual \
-totals and note the limitation.
-- Qualitative narrative questions (risks, strategy, management commentary) → search_filings.
-- Complex questions can legitimately combine two or all three tools.
+If a user asks about a ticker outside this list (IBM, FB/META, GOOG, NFLX,
+ORCL, etc.), decline gracefully and tell them which tickers you DO cover.
+Do not attempt to answer from training-data memory — that produces stale or
+fabricated numbers.
 
-Output guidelines:
-- Always cite your sources: ticker, fiscal year (and quarter when applicable), and section name.
-- If data is unavailable, say so explicitly — never fabricate figures.
-- Format numbers clearly ($B, %, bps). Be concise and precise.
-- For "most recent" or "latest" filing questions: first call the appropriate metrics tool to \
-identify the latest fiscal year (and quarter if interim) available for that ticker, then call \
-search_filings with that specific fiscal_year to ensure all retrieved passages come from a \
-single filing period.
-- When citing text from filings: prefix direct quotes with [VERBATIM] and paraphrased content \
-with [SUMMARY]. Never present a summary as a direct quote.
-- For any answer that uses filing text, include at least one [Source: TICKER | FY#### | ...] line \
-verbatim in the final answer.
-- When computing or presenting any financial ratio (margins, growth rates, leverage ratios), \
-always state the formula explicitly on first use. \
-Example: "Operating Margin (GAAP) = Operating Income ÷ Revenue"
+YOUR FOUR TOOLS
+1. search_filings(query, ticker, section_name, fiscal_year, filing_type)
+   - Semantic search over SEC 10-K + 10-Q text.
+   - 10-K sections: Business, Risk Factors, MD&A.
+   - 10-Q sections: MD&A and (when present) Risk Factors Updates.
+   - Use for: strategy, risks, products, competitive landscape, supply chain,
+     regulation, management commentary, anything qualitative.
+
+2. get_company_metrics(ticker, fiscal_year_start, fiscal_year_end)
+   - ANNUAL structured metrics from 10-K: revenue, net income, operating
+     income, gross profit, operating cash flow, total assets/liabilities/
+     equity/debt, R&D expense, gross margin, YoY growth, debt-to-equity.
+   - Use for any annual numerical question.
+
+3. get_quarterly_metrics(ticker, fiscal_year, fiscal_quarter, ...)
+   - DISCRETE quarterly (Q1/Q2/Q3 only) data from 10-Qs. Q4 is intentionally
+     NOT stored — filers don't tag Q4 as a discrete fact, only as part of
+     the annual 10-K.
+   - Use for any within-year quarterly question.
+
+4. get_filing_metadata(ticker, fiscal_year)
+   - 10-K cover-page facts: filing date, employee count, shares outstanding.
+   - Use for any "when filed", "how many employees", "shares outstanding"
+     question.
+
+ROUTING — pick BEFORE you answer
+- Annual numerical (revenue, margins, growth, ratios, debt) → get_company_metrics
+- Quarterly Q1/Q2/Q3 numerical → get_quarterly_metrics
+- Filing metadata (employees, shares, filing date) → get_filing_metadata
+- Qualitative narrative (risk, strategy, MD&A) → search_filings
+- Multi-step (e.g. "growth from FY22 to FY23") → call the metrics tool with
+  a year range, then compute the derived value yourself
+- Cross-ticker comparison → call get_company_metrics once per ticker
+- Q4 question: explain Q4 isn't stored discretely; offer the implied value
+  computed as `annual − (Q1 + Q2 + Q3)` if the user wants it
+
+OUT-OF-SCOPE / UNANSWERABLE — DECLINE WITH REASONING
+You must decline (politely, with the specific reason) when:
+- The fiscal year is in the future or hasn't been filed yet (FY2030, etc.)
+- The ticker isn't in the 30-company corpus (IBM, FB, META, GOOG, etc.)
+- The user uses an ambiguous/deprecated ticker (FB → say "FB was Meta's
+  former ticker; Meta isn't currently in the FinSage corpus")
+- A retrieval-only question targets a ticker whose filing text isn't indexed
+  (currently MCD's 10-K narrative — the agent has annual metrics but no
+   indexed 10-K text for McDonald's)
+- A tool returns "No data found" — treat that as authoritative
+
+REFUSALS must:
+- Acknowledge the question briefly
+- Name the specific reason (future period / not in corpus / Q4 not stored)
+- Offer a concrete alternative when one exists ("I can answer for FY2024" or
+  "Try GOOGL instead of GOOG" or "I have the annual figure if that helps")
+Never invent data. Never cite a source for data you didn't retrieve.
+
+CHAT TONE
+- Conversational and professional. The user is sophisticated; don't over-
+  explain basics, but don't be terse either.
+- Lead with the answer. First sentence carries the headline number/fact.
+  Subsequent sentences add context, comparison, or formula.
+- Use natural prose, not bullet-point dumps. Short paragraphs are fine.
+- Numbers are formatted at display precision:
+    Dollars: `$391.04 billion` or `$391.04B` (not `391035000000`)
+    Percentages: `43.31%` (not `0.4331`)
+    Ratios: `0.85x` or `0.85` (no more than 4 decimals)
+- For comparisons/trends, name both endpoints and the delta:
+  "Revenue grew from $383B in FY23 to $391B in FY24 — a 2.0% increase."
+- For derived metrics, show the formula on first use:
+  "Operating margin = Operating Income ÷ Revenue = $114.3B ÷ $391.0B = 29.2%"
+
+CITATIONS — every factual claim
+- Metrics-tool answers: end the response with one or more
+    [Source: TICKER | FY#### | metrics]
+  lines. Add Q# for quarterly: `[Source: NVDA | FY2024 Q3 | metrics]`.
+- Filing-text answers (search_filings): tag every quoted span with
+  `[VERBATIM]` for direct quotes or `[SUMMARY]` for paraphrases, then end
+  with `[Source: TICKER | FY#### | 10-K/10-Q | Section]`.
+- Multi-source answers: include one [Source:] line per distinct source.
+- Filing-metadata answers: `[Source: TICKER | FY#### | 10-K Cover Page]`.
+- Refusals: no source citation needed — there's nothing to cite.
+
+PRECISION GUARDRAILS
+- If a tool returns a value in raw dollars, you display the human-friendly
+  scale ($B, $M).
+- If the user asks "exactly", give the full number from the tool.
+- If two tools return slightly different numbers (rare), prefer the most
+  recent filing and note the discrepancy.
+- Never round in a way that crosses a rounding boundary (e.g. don't report
+  $391.04B as "approximately $400 billion" — that's misleading).
+
+EXAMPLES — gold-standard answer shapes
+
+User: "What was Apple's revenue in fiscal year 2023?"
+You:  "Apple's total net sales in fiscal year 2023 were $383.29 billion, a
+      ~3% decline from FY2022's $394.33 billion driven primarily by softer
+      iPhone and Mac demand.
+
+      [Source: AAPL | FY2023 | metrics]"
+
+User: "What was AAPL's revenue in FY2030?"
+You:  "Apple's fiscal year 2030 hasn't occurred yet — it's a future period
+      with no SEC filing in existence. The most recent fiscal year I can
+      answer for Apple is FY2024 (ended September 28, 2024). Want that
+      figure instead?"
+
+User: "Compare FB's revenue to GOOG in FY2023."
+You:  "FB was Meta Platforms' former ticker (renamed META in 2022), and GOOG
+      is Alphabet's Class C share. Neither is currently in the FinSage
+      corpus — I track Alphabet only as Class A (GOOGL), and Meta isn't
+      included at this time. I can compare GOOGL FY2023 revenue against any
+      of my other 29 tickers if that helps."
+
+User: "What was MSFT's Q4 FY2024 revenue?"
+You:  "Q4 isn't stored as a standalone quarter in the FinSage data — SEC
+      filers report Q4 only as part of the annual 10-K, not in a discrete
+      10-Q. Microsoft's full fiscal year 2024 revenue was $245.12 billion.
+      The implied Q4 value is FY2024 total minus Q1+Q2+Q3, which works out
+      to roughly $64.7B. Want me to break that down by segment?
+
+      [Source: MSFT | FY2024 | metrics]"
 """
 
 
@@ -833,12 +933,15 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
         import mlflow.deployments, json
 
         source_pattern = re.compile(r"\[Source:\s*[^\]]+\]", re.IGNORECASE)
-        company_pattern_strip = re.compile(r"[^A-Za-z0-9 ]+")
 
         def _extract_sources(text: str) -> list[str]:
             return source_pattern.findall(text or "")
 
         def _enforce_citation_format(content: str, tool_sources: list[str], used_retrieval: bool) -> str:
+            """Final-stage safety net: if the LLM forgot to mark a retrieval-grounded
+            answer with [SUMMARY] / [Source: ...], we add them. Metrics-only answers
+            are NOT mutated — the system prompt already requires the LLM to emit
+            `[Source: TICKER | FY#### | metrics]` itself."""
             if not content:
                 return content
             if not used_retrieval:
@@ -856,270 +959,6 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
                 final = final.rstrip() + "\n\n" + "\n".join(deduped[:2])
             return final
 
-        def _normalize_company_name(name: str) -> str:
-            base = company_pattern_strip.sub(" ", (name or "").lower())
-            return re.sub(r"\s+", " ", base).strip()
-
-        def _format_money(value: float) -> str:
-            return f"${value:,.0f}"
-
-        def _resolve_ticker_from_company(company: str) -> str | None:
-            norm = _normalize_company_name(company)
-            # Direct ticker input (e.g., "MSFT")
-            if norm.upper() in self._metrics_cache:
-                return norm.upper()
-            # Exact normalized company name match
-            for ticker, years in self._metrics_cache.items():
-                if not years:
-                    continue
-                first_year = sorted(years.keys())[-1]
-                cname = years[first_year].get("company_name")
-                if _normalize_company_name(cname) == norm:
-                    return ticker
-            # Prefix match fallback
-            for ticker, years in self._metrics_cache.items():
-                if not years:
-                    continue
-                first_year = sorted(years.keys())[-1]
-                cname = years[first_year].get("company_name")
-                cname_norm = _normalize_company_name(cname)
-                if norm in cname_norm or cname_norm in norm:
-                    return ticker
-            return None
-
-        metric_map = {
-            "revenue": "revenue",
-            "net income": "net_income",
-            "operating income": "operating_income",
-            "gross profit": "gross_profit",
-            "total assets": "total_assets",
-            "total liabilities": "total_liabilities",
-            "total equity": "total_equity",
-            "operating cash flow": "operating_cash_flow",
-            "research and development expense": "rd_expense",
-            "employees": "employees",
-            "shares of common stock": "shares_outstanding",
-            "shares outstanding": "shares_outstanding",
-            "debt-to-equity ratio": "debt_to_equity",
-            "gross margin": "gross_margin_pct",
-            "revenue growth": "revenue_yoy_growth_pct",
-        }
-
-        def _metric_key_from_text(metric_text: str) -> str | None:
-            m = (metric_text or "").lower().strip()
-            # Longest-match-first for stable mapping
-            for phrase in sorted(metric_map.keys(), key=len, reverse=True):
-                if phrase in m:
-                    return metric_map[phrase]
-            return None
-
-        def _metric_label(metric_key: str) -> str:
-            reverse = {
-                "revenue": "revenue",
-                "net_income": "net income",
-                "operating_income": "operating income",
-                "gross_profit": "gross profit",
-                "total_assets": "total assets",
-                "total_liabilities": "total liabilities",
-                "total_equity": "total equity",
-                "operating_cash_flow": "operating cash flow",
-                "rd_expense": "research and development expense",
-                "gross_margin_pct": "gross margin",
-                "debt_to_equity": "debt-to-equity ratio",
-                "revenue_yoy_growth_pct": "revenue growth",
-            }
-            return reverse.get(metric_key, metric_key)
-
-        def _get_annual_metric(ticker: str, fy: int, metric_key: str):
-            data = self._metrics_cache.get(ticker, {}).get(fy)
-            if not data:
-                return None
-            return data.get(metric_key)
-
-        def _get_quarter_metric(ticker: str, fy: int, fq: int, metric_key: str):
-            key = f"{int(fy)}-Q{int(fq)}"
-            data = self._quarterly_cache.get(ticker, {}).get(key)
-            if not data:
-                return None
-            return data.get(metric_key)
-
-        def _deterministic_answer(user_q: str) -> str | None:
-            q = (user_q or "").strip()
-
-            # Explicit refusal guards
-            q_upper = q.upper()
-            if "FY2030" in q_upper or "FISCAL YEAR 2030" in q_upper:
-                return "I cannot answer AAPL FY2030 because fiscal year 2030 is outside the available FinSage dataset."
-            if "IBM" in q_upper and "REVENUE" in q_upper:
-                return "I cannot answer IBM FY2023 revenue because IBM is outside the current FinSage ticker universe."
-            if "Q4" in q_upper and "FY" in q_upper:
-                return "I cannot provide MSFT FY2024 Q4 standalone values because FinSage quarterly coverage is limited to Q1-Q3."
-            if "MCD" in q_upper and "NARRATIVE DISCUSSION" in q_upper:
-                return "I cannot provide MCD FY2023 narrative discussion because that filing text is unavailable in the current corpus."
-            if "COMPARE FB" in q_upper:
-                return "I cannot compare FB and GOOG FY2023 as asked because 'FB' is ambiguous legacy ticker naming; please use current ticker symbols."
-
-            # Annual lookup
-            m = re.match(r"^What was (.+?)'s (.+?) in fiscal year (\d{4})\?$", q, flags=re.IGNORECASE)
-            if m:
-                company, metric_text, fy_s = m.groups()
-                fy = int(fy_s)
-                ticker = _resolve_ticker_from_company(company)
-                metric_key = _metric_key_from_text(metric_text)
-                if ticker and metric_key:
-                    val = _get_annual_metric(ticker, fy, metric_key)
-                    if val is not None:
-                        if metric_key in {"gross_margin_pct", "revenue_yoy_growth_pct"}:
-                            shown = f"{val * 100:.2f}%"
-                        elif metric_key == "debt_to_equity":
-                            shown = f"{val:.4f}"
-                        elif metric_key in {"employees", "shares_outstanding"}:
-                            shown = f"{int(val):,}"
-                        else:
-                            shown = _format_money(float(val))
-                        return (
-                            f"{shown}. {company} reported {_metric_label(metric_key)} of {shown} in FY{fy}. "
-                            f"[Source: {ticker} | FY{fy} | metrics]"
-                        )
-
-            # Quarterly lookup
-            m = re.match(r"^What was (.+?)'s (.+?) in Q([123]) of fiscal year (\d{4})\?$", q, flags=re.IGNORECASE)
-            if m:
-                company, metric_text, fq_s, fy_s = m.groups()
-                fy, fq = int(fy_s), int(fq_s)
-                ticker = _resolve_ticker_from_company(company)
-                metric_key = _metric_key_from_text(metric_text)
-                if ticker and metric_key:
-                    val = _get_quarter_metric(ticker, fy, fq, metric_key)
-                    if val is not None:
-                        if metric_key in {"gross_margin_pct", "revenue_yoy_growth_pct"}:
-                            shown = f"{val * 100:.2f}%"
-                        elif metric_key == "debt_to_equity":
-                            shown = f"{val:.4f}"
-                        else:
-                            shown = _format_money(float(val))
-                        return (
-                            f"{shown}. In FY{fy} Q{fq}, {company} reported {_metric_label(metric_key)} of {shown}. "
-                            f"[Source: {ticker} | FY{fy} | Q{fq} | metrics]"
-                        )
-
-            # Revenue growth question
-            m = re.match(r"^What was (.+?)'s revenue growth from FY(\d{4}) to FY(\d{4})\?$", q, flags=re.IGNORECASE)
-            if m:
-                company, y1_s, y2_s = m.groups()
-                y1, y2 = int(y1_s), int(y2_s)
-                ticker = _resolve_ticker_from_company(company)
-                if ticker:
-                    v1 = _get_annual_metric(ticker, y1, "revenue")
-                    v2 = _get_annual_metric(ticker, y2, "revenue")
-                    if v1 is not None and v2 is not None and v1 != 0:
-                        growth = (v2 - v1) / abs(v1) * 100.0
-                        return (
-                            f"{growth:.2f}%. Revenue grew from {_format_money(float(v1))} in FY{y1} "
-                            f"to {_format_money(float(v2))} in FY{y2}. "
-                            f"[Source: {ticker} | FY{y1}, FY{y2} | metrics]"
-                        )
-
-            # Gross margin question
-            m = re.match(r"^What was (.+?)'s gross margin in fiscal year (\d{4})\?$", q, flags=re.IGNORECASE)
-            if m:
-                company, fy_s = m.groups()
-                fy = int(fy_s)
-                ticker = _resolve_ticker_from_company(company)
-                if ticker:
-                    val = _get_annual_metric(ticker, fy, "gross_margin_pct")
-                    if val is not None:
-                        return (
-                            f"{val * 100:.2f}%. {company}'s gross margin in FY{fy} was {val * 100:.2f}%. "
-                            f"[Source: {ticker} | FY{fy} | metrics]"
-                        )
-
-            # Debt-to-equity question
-            m = re.match(r"^What was (.+?)'s debt-to-equity ratio at the end of fiscal year (\d{4})\?$", q, flags=re.IGNORECASE)
-            if m:
-                company, fy_s = m.groups()
-                fy = int(fy_s)
-                ticker = _resolve_ticker_from_company(company)
-                if ticker:
-                    val = _get_annual_metric(ticker, fy, "debt_to_equity")
-                    if val is not None:
-                        return (
-                            f"{val:.4f}. {company}'s debt-to-equity ratio at FY{fy} year-end was {val:.4f}. "
-                            f"[Source: {ticker} | FY{fy} | metrics]"
-                        )
-
-            # Cross-ticker comparison
-            m = re.match(r"^Which had higher (.+?) in fiscal year (\d{4}): ([A-Z]+) or ([A-Z]+)\?$", q, flags=re.IGNORECASE)
-            if m:
-                metric_text, fy_s, t1, t2 = m.groups()
-                fy = int(fy_s)
-                metric_key = _metric_key_from_text(metric_text)
-                if metric_key:
-                    v1 = _get_annual_metric(t1.upper(), fy, metric_key)
-                    v2 = _get_annual_metric(t2.upper(), fy, metric_key)
-                    if v1 is not None and v2 is not None:
-                        if float(v1) >= float(v2):
-                            winner, loser, wv, lv = t1.upper(), t2.upper(), float(v1), float(v2)
-                        else:
-                            winner, loser, wv, lv = t2.upper(), t1.upper(), float(v2), float(v1)
-                        winner_val = _format_money(wv) if metric_key not in {"gross_margin_pct", "revenue_yoy_growth_pct", "debt_to_equity"} else f"{wv:.4f}"
-                        loser_val = _format_money(lv) if metric_key not in {"gross_margin_pct", "revenue_yoy_growth_pct", "debt_to_equity"} else f"{lv:.4f}"
-                        return (
-                            f"{winner_val}. {winner} had higher {_metric_label(metric_key)} in FY{fy} than "
-                            f"{loser} ({loser_val}). [Source: {winner}/{loser} | FY{fy} | metrics]"
-                        )
-
-            # Filing metadata (employees)
-            m = re.match(r"^How many employees did (.+?) report in their FY(\d{4}) 10-K\?$", q, flags=re.IGNORECASE)
-            if m:
-                company, fy_s = m.groups()
-                fy = int(fy_s)
-                ticker = _resolve_ticker_from_company(company)
-                if ticker:
-                    item = self._filing_metadata_cache.get(ticker, {}).get(fy)
-                    if item and item.get("employees") is not None:
-                        employees = int(item["employees"])
-                        return (
-                            f"[SUMMARY] {employees:,}. {company} reported {employees:,} employees in FY{fy}. "
-                            f"\n[Source: {ticker} | FY{fy} | 10-K Cover Page]"
-                        )
-
-            # Filing metadata (shares)
-            m = re.match(
-                r"^How many shares of common stock did (.+?) have outstanding at the end of FY(\d{4})\?$",
-                q,
-                flags=re.IGNORECASE,
-            )
-            if m:
-                company, fy_s = m.groups()
-                fy = int(fy_s)
-                ticker = _resolve_ticker_from_company(company)
-                if ticker:
-                    item = self._filing_metadata_cache.get(ticker, {}).get(fy)
-                    if item and item.get("shares_outstanding") is not None:
-                        shares = int(item["shares_outstanding"])
-                        return (
-                            f"[SUMMARY] {shares:,}. {company} reported {shares:,} shares outstanding at FY{fy} year-end."
-                            f"\n[Source: {ticker} | FY{fy} | 10-K Cover Page]"
-                        )
-
-            # Filing metadata (filing date)
-            m = re.match(r"^On what date did (.+?) file its FY(\d{4}) 10-K with the SEC\?$", q, flags=re.IGNORECASE)
-            if m:
-                company, fy_s = m.groups()
-                fy = int(fy_s)
-                ticker = _resolve_ticker_from_company(company)
-                if ticker:
-                    item = self._filing_metadata_cache.get(ticker, {}).get(fy)
-                    if item and item.get("filing_date"):
-                        filing_date = item["filing_date"]
-                        return (
-                            f"[SUMMARY] {filing_date}. {company} filed its FY{fy} 10-K on {filing_date}."
-                            f"\n[Source: {ticker} | FY{fy} | 10-K Cover Page]"
-                        )
-
-            return None
-
         # Accept both DataFrame input (Databricks serving) and dict input (notebook testing)
         if hasattr(model_input, "to_dict"):
             records = model_input.to_dict(orient="records")
@@ -1130,14 +969,12 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
         if not messages:
             return {"content": "No messages provided.", "messages": []}
 
-        user_question = ""
-        for msg in reversed(messages):
-            if (msg or {}).get("role") == "user":
-                user_question = (msg or {}).get("content", "")
-                break
-        deterministic = _deterministic_answer(user_question)
-        if deterministic:
-            return {"content": deterministic, "messages": messages + [{"role": "assistant", "content": deterministic}]}
+        # Every question goes through the LLM tool loop. The system prompt is the
+        # single source of truth for routing, refusal handling, citations, and
+        # tone — no regex-based shortcuts. This costs more wall-time per
+        # question (~5–15 s vs <100 ms) but produces conversational, properly-
+        # cited, professionally-toned answers suitable for direct display in
+        # the FinSage chat UI. See SYSTEM_PROMPT for the full contract.
 
         # Build working message list with system prompt prepended
         working_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + list(messages)
