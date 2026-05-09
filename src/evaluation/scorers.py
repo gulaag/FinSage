@@ -100,8 +100,23 @@ def best_predicted_number(candidates: list[float], target: float) -> float | Non
 
 
 def _response_text(outputs) -> str:
-    """Extract assistant content from a chat-completion-shaped response."""
+    """Extract assistant content from a model-output payload.
+
+    Handles three shapes:
+      1. FinSage agent: {"content": "...", "messages": [...], "citations": [...]}
+         The "content" key is the canonical answer text. Reading it directly
+         keeps chunk text inside `citations` from polluting the regex extractors
+         used by numerical_tolerance / derived_metric_match (chunks contain
+         numbers from filings that could otherwise be picked up as the answer).
+      2. OpenAI-style chat completion: {"choices": [{"message": {"content"}}]}.
+      3. Any other type: str() coercion.
+    """
     if isinstance(outputs, dict):
+        # FinSage agent shape — preferred path.
+        content = outputs.get("content")
+        if isinstance(content, str) and content:
+            return content
+        # Chat-completion shape fallback.
         try:
             return outputs["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError):
