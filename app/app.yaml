@@ -1,0 +1,14 @@
+command:
+  - "streamlit"
+  - "run"
+  - "main.py"
+  - "--server.address"
+  - "0.0.0.0"
+  - "--server.headless"
+  - "true"
+
+env:
+  - name: FINSAGE_AGENT_ENDPOINT
+    value: "finsage_agent_endpoint"
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: sql-warehouse
