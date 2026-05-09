@@ -339,7 +339,7 @@ log.info("VS index columns present: %s (filing_type supported=%s)",
 
 
 @mlflow.trace(name="search_filings", span_type="RETRIEVER")
-def search_filings(
+def _search_filings_structured(
     query: str,
     ticker: str = None,
     section_name: str = None,
@@ -347,15 +347,20 @@ def search_filings(
     filing_type: str = None,
     num_results: int = NUM_RESULTS,
     similarity_threshold: float = SIMILARITY_THRESHOLD,
-) -> str:
-    """
-    Semantic search over SEC 10-K and 10-Q filing sections.
-    Returns relevant passages with source metadata.
+) -> dict:
+    """Internal: returns BOTH the LLM-facing text and structured per-chunk
+    metadata. Used by FinSageAgent.predict() to populate the citations[]
+    response field so the chat UI can drill from a citation chip down to
+    the source filing section.
 
-    10-K sections: Business, Risk Factors, MD&A.
-    10-Q sections: MD&A, Risk Factors Updates (when the filer includes them).
-    Pass filing_type='10-K' or '10-Q' to scope results to annual vs interim
-    (only applied if the live VS index has indexed the `filing_type` column).
+    The MLflow trace `name` is kept as 'search_filings' so the eval suite's
+    retrieval_grounded_when_used scorer can find the RETRIEVER span by its
+    public name regardless of which Python symbol invokes it.
+
+    Returns:
+      {"text":   <LLM-facing passages joined with [Source:] tags>,
+       "chunks": [{"ticker", "fiscal_year", "filing_type", "section_name",
+                   "chunk_text", "score"}, ...]}
     """
     vsc = VectorSearchClient(disable_notice=True)
     index = vsc.get_index(endpoint_name=VS_ENDPOINT, index_name=VS_INDEX_NAME)
@@ -389,16 +394,17 @@ def search_filings(
         )
     except Exception as e:
         log.warning("Vector search failed: %s", e)
-        return f"Search failed: {str(e)}"
+        return {"text": f"Search failed: {str(e)}", "chunks": []}
 
     data = results.get("result", {}).get("data_array", [])
     if not data:
-        return "No relevant passages found for this query."
+        return {"text": "No relevant passages found for this query.", "chunks": []}
 
     # Map column name → positional index so we read each row robustly whether
     # `filing_type` is present or not.
     col_pos = {c: i for i, c in enumerate(columns_to_fetch)}
-    passages = []
+    passages_text: list[str] = []
+    chunks: list[dict] = []
     for row in data:
         score = row[len(columns_to_fetch)] if len(row) > len(columns_to_fetch) else None
         if score is not None and score < similarity_threshold:
@@ -406,18 +412,47 @@ def search_filings(
         ticker_val = row[col_pos["ticker"]]
         fy         = row[col_pos["fiscal_year"]]
         section    = row[col_pos["section_name"]]
-        text       = row[col_pos["chunk_text"]]
+        text       = row[col_pos["chunk_text"]] or ""
         f_type     = row[col_pos["filing_type"]] if "filing_type" in col_pos else None
         src_parts  = [ticker_val, f"FY{int(fy)}"]
         if f_type:
             src_parts.append(f_type)
         src_parts.append(section)
-        passages.append(f"[Source: {' | '.join(src_parts)}]\n{text[:1200]}")
+        passages_text.append(f"[Source: {' | '.join(src_parts)}]\n{text[:1200]}")
+        chunks.append({
+            "ticker":       str(ticker_val).upper() if ticker_val else None,
+            "fiscal_year":  int(fy) if fy is not None else None,
+            "filing_type":  f_type,
+            "section_name": section,
+            "chunk_text":   text,  # FULL text — required for tier-2 highlight in app
+            "score":        float(score) if score is not None else None,
+        })
 
-    if not passages:
-        return "No passages met the similarity threshold. Try a broader query."
+    if not passages_text:
+        return {"text": "No passages met the similarity threshold. Try a broader query.", "chunks": []}
 
-    return "\n\n---\n\n".join(passages)
+    return {"text": "\n\n---\n\n".join(passages_text), "chunks": chunks}
+
+
+def search_filings(
+    query: str,
+    ticker: str = None,
+    section_name: str = None,
+    fiscal_year: int = None,
+    filing_type: str = None,
+    num_results: int = NUM_RESULTS,
+    similarity_threshold: float = SIMILARITY_THRESHOLD,
+) -> str:
+    """Public string-returning wrapper around _search_filings_structured.
+    Preserves the historical signature so notebook smoke tests, the eval
+    suite's tool-routing scorer, and any pickled callers see the same
+    text-only contract they had in v22 and earlier.
+    """
+    return _search_filings_structured(
+        query=query, ticker=ticker, section_name=section_name,
+        fiscal_year=fiscal_year, filing_type=filing_type,
+        num_results=num_results, similarity_threshold=similarity_threshold,
+    )["text"]
 
 
 # Quick smoke test
@@ -898,11 +933,14 @@ REFUSALS must:
 Never invent data. Never cite a source for data you didn't retrieve.
 
 CHAT TONE
-- Conversational and professional. The user is sophisticated; don't over-
-  explain basics, but don't be terse either.
+- Conversational and professional, written in the voice of a senior equity
+  analyst briefing a portfolio manager. The user is sophisticated; don't
+  over-explain basics, but DO give them the analytical context that
+  separates a useful answer from a calculator readout.
 - Lead with the answer. First sentence carries the headline number/fact.
-  Subsequent sentences add context, comparison, or formula.
-- Use natural prose, not bullet-point dumps. Short paragraphs are fine.
+  Subsequent sentences add context, comparison, business driver color, or
+  formula derivation.
+- Use natural prose in flowing paragraphs, not bullet-point dumps.
 - Numbers — EXACT FIRST, then rounded for readability:
     Dollars: lead with the exact figure from the tool, then add the
              rounded form in parentheses on first mention.
@@ -925,6 +963,48 @@ CHAT TONE
   "Operating margin = Operating Income ÷ Revenue
                     = $114,301,000,000 ÷ $391,035,000,000
                     = 29.23% (i.e. ≈ 29.2%)"
+
+RESPONSE STRUCTURE — write like a senior equity analyst, not a calculator
+For numerical questions (revenue, margins, growth, ratios, balance sheet
+items), aim for 2–3 short paragraphs:
+  • Paragraph 1 (headline): the exact figure with rounded gloss, plus a
+    one-line characterization of magnitude or direction (e.g. "a record
+    high", "a 3% YoY decline", "the strongest gross margin in five years").
+  • Paragraph 2 (context): comparison to the prior year (or prior period
+    for quarterly questions), the implied trend, and any segment- or
+    business-line color the metric reflects. Use exact figures when
+    comparing endpoints, and follow the EXACT-FIRST rule above.
+  • Paragraph 3 (interpretation, optional): a brief synthesis of what the
+    number implies — only when the data clearly supports it. Do NOT
+    speculate about causes the tool output does not establish.
+
+For qualitative questions (search_filings):
+  • Paragraph 1: a 2–3 sentence summary of what the retrieved passages say,
+    leading with the most important risk, strategy, or disclosure.
+  • Paragraph 2: 1–2 short verbatim quotes from the retrieved passages,
+    each tagged [VERBATIM], showing the user the exact filing language.
+  • Paragraph 3 (optional): a brief synthesis tying the disclosures together
+    or relating them to the broader business posture.
+
+For refusals:
+  • Keep refusals tight — single short paragraph. Name the specific reason
+    (per the REFUSALS rule above) and offer one concrete alternative.
+    Refusals must NEVER be padded into 2–3 paragraphs.
+
+For all answers, end with the [Source: ...] line(s) on a separate line
+after a blank line.
+
+ANTI-HALLUCINATION GUARDRAILS for the verbose paragraphs
+  • Context paragraphs must use ONLY values returned by the tools. Never
+    pull numbers (revenue, margin, growth) from your training-data memory
+    even when you "remember" them.
+  • Segment- or product-line color is allowed only when the user's question
+    invites it AND the metric trend obviously implies it (e.g. "iPhone
+    softness" is a fair color when iPhone is Apple's largest segment and
+    revenue declined). When unsure, stick to financial-statement-level
+    commentary (line items, ratios, growth rates).
+  • Never invent a source filing or a metric that wasn't returned. The
+    [Source:] tags MUST correspond to data the tools actually surfaced.
 
 CITATIONS — every factual claim
 - Metrics-tool answers: end the response with one or more
@@ -966,13 +1046,27 @@ EXAMPLES — gold-standard answer shapes
 
 User: "What was Apple's revenue in fiscal year 2023?"
 You:  "Apple's total net sales in fiscal year 2023 were $383,285,000,000
-      (about $383.29 billion), a ~3% decline from FY2022's
-      $394,328,000,000 (about $394.33 billion) driven primarily by softer
-      iPhone and Mac demand.
+      (about $383.29 billion) — the company's first annual revenue
+      contraction since FY2019 and a clear pause after a multi-year run of
+      double-digit top-line growth.
+
+      For context, FY2022 revenue was $394,328,000,000 (about $394.33
+      billion), so the year-over-year change works out to roughly −2.8%, an
+      absolute decline of about $11.0B. Operating cash flow held up
+      relatively well at $110.54B, which suggests the topline softness was
+      cyclical rather than a structural margin issue.
+
+      The pullback is consistent with a hardware-led demand digestion
+      cycle: Apple's largest revenue driver is iPhone, and FY2023 was the
+      year smartphone demand globally reset off pandemic-era highs.
+      Services revenue continued to grow, partially cushioning the hardware
+      weakness — but it wasn't enough to keep total revenue positive.
 
       [Source: AAPL | FY2023 | metrics]"
-      (NOTE the structure: exact-then-rounded for both endpoints. After
-       the first mention you may use the rounded form alone for readability.)
+      (NOTE the structure: paragraph 1 is the exact-then-rounded headline
+       with one-line characterization. Paragraph 2 is comparison + trend.
+       Paragraph 3 is interpretation tied to the business — but every
+       quantitative claim is grounded in tool output.)
 
 User: "What was AAPL's revenue in FY2030?"
 You:  "Apple's fiscal year 2030 hasn't occurred yet — it's a future period
@@ -1156,9 +1250,38 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
         # Build working message list with system prompt prepended
         working_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + list(messages)
         collected_sources = []
+        # Structured per-chunk metadata accumulated across every search_filings
+        # invocation in this turn. Returned to the caller as `citations` so the
+        # FinSage chat UI can populate its source-drill panel without having to
+        # re-issue the vector search.
+        collected_chunks: list[dict] = []
+        seen_chunk_keys: set = set()
         used_retrieval_tool = False
         max_runtime_seconds = 150
         started_at = time.time()
+
+        def _ingest_chunks(new_chunks: list) -> None:
+            """Dedup by (ticker, fy, filing_type, section, chunk_text)."""
+            for c in new_chunks or []:
+                key = (
+                    c.get("ticker"), c.get("fiscal_year"),
+                    c.get("filing_type"), c.get("section_name"),
+                    c.get("chunk_text"),
+                )
+                if key in seen_chunk_keys:
+                    continue
+                seen_chunk_keys.add(key)
+                collected_chunks.append(c)
+
+        def _sort_citations(chunks: list, top_n: int = 12) -> list:
+            """Rank by similarity score (desc) and cap to a reasonable max.
+            None scores sort last. The cap keeps the response payload bounded
+            even when the LLM probes the index multiple times in one turn."""
+            scored = sorted(
+                chunks,
+                key=lambda c: -(c.get("score") if c.get("score") is not None else -1.0),
+            )
+            return scored[:top_n]
 
         deploy_client = mlflow.deployments.get_deploy_client("databricks")
 
@@ -1190,7 +1313,11 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
                     used_retrieval=used_retrieval_tool,
                 )
                 working_messages.append({"role": "assistant", "content": final_content})
-                return {"content": final_content, "messages": working_messages[1:]}  # strip system prompt
+                return {
+                    "content":   final_content,
+                    "messages":  working_messages[1:],  # strip system prompt
+                    "citations": _sort_citations(collected_chunks),
+                }
 
             # Append assistant message with tool_calls to history
             working_messages.append(msg)
@@ -1206,7 +1333,7 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
 
                 if tool_name == "search_filings":
                     used_retrieval_tool = True
-                    result = search_filings(
+                    _struct = _search_filings_structured(
                         query=args.get("query", ""),
                         ticker=args.get("ticker"),
                         section_name=args.get("section_name"),
@@ -1215,6 +1342,8 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
                         num_results=args.get("num_results", self._num_results),
                         similarity_threshold=self._sim_threshold,
                     )
+                    result = _struct["text"]
+                    _ingest_chunks(_struct["chunks"])
                 elif tool_name == "get_company_metrics":
                     result = get_company_metrics(
                         ticker=args.get("ticker", ""),
@@ -1264,7 +1393,11 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
             tool_sources=collected_sources,
             used_retrieval=used_retrieval_tool,
         )
-        return {"content": final_content, "messages": working_messages[1:]}
+        return {
+            "content":   final_content,
+            "messages":  working_messages[1:],
+            "citations": _sort_citations(collected_chunks),
+        }
 
 
 print("[FinSageAgent] Class defined.")
