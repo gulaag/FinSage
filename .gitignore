@@ -30,3 +30,6 @@ docs/file_list.html
 
 # Local-only symlink to sibling repo
 graphify_module
+.venv310/
+.venv311/
+scripts/
