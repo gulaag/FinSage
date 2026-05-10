@@ -289,14 +289,15 @@ def _maybe_open_modal() -> None:
 def _render_empty_chat() -> None:
     st.markdown(
         f'<div class="finsage-landing">'
-        f'  <div class="finsage-landing-logo">{brand_mark(size=120, glow=True)}</div>'
+        f'  <div class="finsage-landing-eyebrow">SEC-grounded research</div>'
+        f'  <div class="finsage-landing-logo">{brand_mark(size=108, glow=True)}</div>'
         f'  <div class="finsage-landing-wordmark">{APP_NAME}</div>'
         f'  <div class="finsage-landing-tag">{APP_TAGLINE}</div>'
         f'  <div class="finsage-landing-sub">{APP_SUBLINE}</div>'
         f'  <div class="finsage-trust">'
-        f'    <span class="finsage-trust-pill">📊 30 companies</span>'
-        f'    <span class="finsage-trust-pill">🗓 FY2020–2026</span>'
-        f'    <span class="finsage-trust-pill">📑 SEC EDGAR grounded</span>'
+        f'    <span class="finsage-trust-pill"><b>30</b> companies</span>'
+        f'    <span class="finsage-trust-pill"><b>FY2020–2026</b></span>'
+        f'    <span class="finsage-trust-pill"><b>SEC EDGAR</b> grounded</span>'
         f'  </div>'
         f'  <div class="finsage-section-label">Try asking</div>'
         f'</div>',
@@ -308,7 +309,7 @@ def _render_empty_chat() -> None:
         target = chip_cols[1] if i % 2 == 0 else chip_cols[2]
         with target:
             if st.button(
-                f"{icon}  {q}",
+                f"{icon}   {q}",
                 key=f"example-{i}",
                 use_container_width=True,
             ):

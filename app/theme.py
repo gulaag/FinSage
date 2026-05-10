@@ -1,9 +1,11 @@
 """Visual design tokens, brand SVG, and CSS overrides for the FinSage chat app.
 
-Streamlit ships its own theme system (background / text / primary color via
-`.streamlit/config.toml`); CUSTOM_CSS layers on top to polish elements
-Streamlit's defaults can't reach — landing hero, gradient wordmark, chip
-buttons, citation chips, source-card hover, mark highlights inside the modal.
+Design language: editorial premium-product feel — warm surface tones,
+editorial serif typography for the wordmark and section labels, refined
+chip hover states, restrained animation. Indigo remains the brand primary;
+a coral-copper secondary accent (warm signature hue) anchors the
+hero and certain detail callouts so the page does not read as monochrome
+indigo. All component class names are stable so main.py needs no churn.
 
 `brand_mark(size)` returns the SVG mark used in the sidebar (small) and the
 landing hero (large). One source of truth, no PNG asset to ship.
@@ -18,47 +20,55 @@ APP_SUBLINE = (
     "Every number is sourced. Every quote is verifiable."
 )
 
-# Brand color (deep indigo — Radix iris 9 equivalent). Mirrored in
-# .streamlit/config.toml so Streamlit's primary widgets pick up the same hue
+# Indigo (brand primary) — Radix iris 9 equivalent. Mirrored in
+# .streamlit/config.toml so Streamlit's native widgets pick up the same hue
 # without us patching each one individually.
 BRAND_PRIMARY       = "#5b5bd6"
 BRAND_PRIMARY_LIGHT = "#8b8bf8"
 BRAND_PRIMARY_DARK  = "#4a4ab8"
 
-# Each example is (icon, question_text). The icon is rendered into the chip
-# label only — the staged question forwarded to the agent is the bare text.
+# Coral-copper secondary accent (warm editorial signature). Used sparingly:
+# brand-mark inner glint, hero serif sub-accent, refusal pill underline.
+BRAND_ACCENT        = "#d97757"
+BRAND_ACCENT_SOFT   = "#f4a574"
+
+# Each example is (icon, question_text). The icon renders in the chip label;
+# the staged question forwarded to the agent is the bare text only.
 EXAMPLE_QUESTIONS: list[tuple[str, str]] = [
-    ("💰", "What was Apple's revenue in fiscal year 2024?"),
-    ("⚖️", "Compare Microsoft and Alphabet's operating margins in 2023."),
-    ("⚠️", "Summarize NVIDIA's supply chain risks from their latest 10-K."),
-    ("📊", "What was Amazon's Q3 fiscal year 2024 net income?"),
-    ("🚗", "How did Tesla describe autonomous-driving risks in their latest 10-K?"),
-    ("🏦", "What was JPMorgan's debt-to-equity ratio in fiscal year 2023?"),
+    ("$",  "What was Apple's revenue in fiscal year 2024?"),
+    ("⇄", "Compare Microsoft and Alphabet's operating margins in 2023."),
+    ("△", "Summarize NVIDIA's supply chain risks from their latest 10-K."),
+    ("Q", "What was Amazon's Q3 fiscal year 2024 net income?"),
+    ("◎", "How did Tesla describe autonomous-driving risks in their latest 10-K?"),
+    ("%", "What was JPMorgan's debt-to-equity ratio in fiscal year 2023?"),
 ]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Brand mark — single rounded-square gradient SVG with a stylized "F".
-# Sized inline so we can drop a tiny version in the sidebar and a large one
-# in the landing hero without touching CSS.
+# Brand mark — softer rounded square with indigo gradient body, glassy top
+# highlight, coral inner glint, and a refined "F" wordmark. Sized inline so
+# the same SVG renders cleanly at sidebar (42px) and hero (108px) sizes.
 # ─────────────────────────────────────────────────────────────────────────────
 
-def brand_mark(size: int = 120, glow: bool = True) -> str:
+def brand_mark(size: int = 108, glow: bool = True) -> str:
     """Return the FinSage brand-mark SVG at the requested pixel size.
 
-    Three layers stacked inside a single SVG:
+    Layers stacked inside a single SVG:
       1. Indigo gradient fill on the rounded square (brand body)
-      2. White-tint glassy highlight on the top half (premium feel)
-      3. White stylized "F" (the wordmark)
+      2. White-tint glassy highlight on the top half
+      3. Coral inner glint anchored bottom-left (warm-copper signature)
+      4. White stylized "F" in slightly thinner geometry than v1
 
     Each gradient gets a size-suffixed id so multiple instances on one page
-    don't collide. `glow=True` adds an outer drop-shadow halo — used on the
-    landing hero, off in the sidebar.
+    do not collide. `glow=True` adds an indigo drop-shadow halo — used on
+    the landing hero, off in the sidebar.
     """
-    grad_id = f"finsage-grad-{size}"
-    hl_id   = f"finsage-hl-{size}"
+    grad_id  = f"finsage-grad-{size}"
+    hl_id    = f"finsage-hl-{size}"
+    glint_id = f"finsage-glint-{size}"
     glow_style = (
-        ' style="filter: drop-shadow(0 14px 32px rgba(91, 91, 214, 0.38));"'
+        ' style="filter: drop-shadow(0 16px 40px rgba(91, 91, 214, 0.32)) '
+        'drop-shadow(0 4px 12px rgba(217, 119, 87, 0.18));"'
         if glow else ""
     )
     return (
@@ -75,10 +85,16 @@ def brand_mark(size: int = 120, glow: bool = True) -> str:
         '      <stop offset="0%"   stop-color="rgba(255,255,255,0.22)"/>'
         '      <stop offset="55%"  stop-color="rgba(255,255,255,0)"/>'
         '    </linearGradient>'
+        f'    <radialGradient id="{glint_id}" cx="22%" cy="82%" r="42%">'
+        '      <stop offset="0%"   stop-color="rgba(244,165,116,0.55)"/>'
+        '      <stop offset="100%" stop-color="rgba(244,165,116,0)"/>'
+        '    </radialGradient>'
         '  </defs>'
         f'  <rect width="120" height="120" rx="28" fill="url(#{grad_id})"/>'
+        f'  <rect width="120" height="120" rx="28" fill="url(#{glint_id})"/>'
         f'  <rect width="120" height="120" rx="28" fill="url(#{hl_id})"/>'
-        '  <path d="M40 30 H82 V42 H52 V58 H76 V70 H52 V92 H40 Z" fill="white"/>'
+        '  <path d="M40 30 H82 V41 H52 V57 H76 V68 H52 V92 H40 Z" fill="white" '
+        'fill-opacity="0.97"/>'
         '</svg>'
     )
 
@@ -90,46 +106,78 @@ def brand_mark(size: int = 120, glow: bool = True) -> str:
 
 CUSTOM_CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&display=swap');
 
 :root {
+    /* Brand */
     --finsage-brand:           #5b5bd6;
     --finsage-brand-light:     #8b8bf8;
     --finsage-brand-dark:      #4a4ab8;
     --finsage-brand-soft:      rgba(91, 91, 214, 0.08);
     --finsage-brand-softer:    rgba(91, 91, 214, 0.04);
     --finsage-brand-border:    rgba(91, 91, 214, 0.22);
+
+    /* Coral-copper warmth (secondary accent) */
+    --finsage-accent:          #d97757;
+    --finsage-accent-soft:     rgba(217, 119, 87, 0.12);
+    --finsage-accent-softer:   rgba(217, 119, 87, 0.06);
+    --finsage-accent-border:   rgba(217, 119, 87, 0.28);
+
+    /* Highlight inside source modal */
     --finsage-mark-bg:         #fef3c7;
     --finsage-mark-text:       #78350f;
-    --finsage-page-bg:         #fbfbfd;
+
+    /* Surfaces (warm cream / parchment in light mode) */
+    --finsage-page-bg:         #faf9f6;
     --finsage-card-bg:         #ffffff;
-    --finsage-card-border:     #e5e7eb;
-    --finsage-card-hover-bord: #c4c4ee;
-    --finsage-muted:           #6b7280;
-    --finsage-muted-strong:    #4b5563;
+    --finsage-card-border:     #e8e6df;
+    --finsage-card-hover-bord: #d2cfc4;
+    --finsage-divider:         #ece9e0;
+
+    /* Type */
     --finsage-text:            #1c1c1f;
-    --finsage-divider:         #e9e9ee;
-    --finsage-shadow-card:     0 1px 2px rgba(15, 15, 35, 0.04);
-    --finsage-shadow-hover:    0 8px 24px rgba(91, 91, 214, 0.12);
+    --finsage-muted-strong:    #4b5563;
+    --finsage-muted:           #767472;
+
+    /* Shadow scale (gentler than v1, no bouncy drop) */
+    --finsage-shadow-card:     0 1px 2px rgba(28, 25, 23, 0.04);
+    --finsage-shadow-hover:    0 6px 18px rgba(91, 91, 214, 0.10),
+                               0 1px 3px  rgba(28, 25, 23, 0.04);
+
+    /* Type families */
+    --finsage-font-sans:       'Inter', system-ui, -apple-system, "Segoe UI",
+                                Roboto, "Helvetica Neue", Arial, sans-serif;
+    --finsage-font-serif:      'Source Serif 4', 'Charter', 'Iowan Old Style',
+                                Georgia, serif;
 }
 
 @media (prefers-color-scheme: dark) {
     :root {
         --finsage-mark-bg:         #78350f;
         --finsage-mark-text:       #fef3c7;
-        --finsage-page-bg:         #0c0c14;
-        --finsage-card-bg:         #1a1a22;
-        --finsage-card-border:     #2a2a35;
-        --finsage-card-hover-bord: #4a4ab0;
-        --finsage-muted:           #9ca3af;
-        --finsage-muted-strong:    #cbd0d9;
-        --finsage-text:            #f3f4f6;
-        --finsage-divider:         #2a2a35;
-        --finsage-brand-soft:      rgba(124, 124, 242, 0.12);
-        --finsage-brand-softer:    rgba(124, 124, 242, 0.06);
-        --finsage-brand-border:    rgba(124, 124, 242, 0.32);
-        --finsage-shadow-card:     0 1px 2px rgba(0, 0, 0, 0.30);
-        --finsage-shadow-hover:    0 8px 24px rgba(0, 0, 0, 0.45);
+
+        /* Warm dark surfaces — editorial-console feel, not cool blue-black */
+        --finsage-page-bg:         #1f1d1a;
+        --finsage-card-bg:         #2a2825;
+        --finsage-card-border:     #3a3733;
+        --finsage-card-hover-bord: #5a5550;
+        --finsage-divider:         #36332f;
+
+        --finsage-text:            #f3efe6;
+        --finsage-muted-strong:    #c8c2b6;
+        --finsage-muted:           #968f83;
+
+        --finsage-brand-soft:      rgba(124, 124, 242, 0.14);
+        --finsage-brand-softer:    rgba(124, 124, 242, 0.07);
+        --finsage-brand-border:    rgba(124, 124, 242, 0.30);
+
+        --finsage-accent-soft:     rgba(217, 119, 87, 0.18);
+        --finsage-accent-softer:   rgba(217, 119, 87, 0.08);
+        --finsage-accent-border:   rgba(217, 119, 87, 0.36);
+
+        --finsage-shadow-card:     0 1px 2px rgba(0, 0, 0, 0.32);
+        --finsage-shadow-hover:    0 6px 18px rgba(0, 0, 0, 0.42),
+                                   0 1px 3px  rgba(0, 0, 0, 0.40);
     }
 }
 
@@ -140,25 +188,20 @@ header         { visibility: hidden; }
 
 html, body, .stApp {
     background:
-      radial-gradient(circle at 1px 1px, rgba(91,91,214,0.07) 1px, transparent 0)
-          0 0 / 28px 28px,
-      radial-gradient(1100px 520px at 78% -8%,  rgba(91,91,214,0.07), transparent 60%),
-      radial-gradient(820px  460px at -10% 110%, rgba(139,139,248,0.06), transparent 60%),
+      radial-gradient(1200px 540px at 82% -10%, rgba(91, 91, 214, 0.07), transparent 60%),
+      radial-gradient(880px  480px at -8% 108%, rgba(217, 119, 87, 0.06), transparent 60%),
       var(--finsage-page-bg) !important;
     color: var(--finsage-text);
-    font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto,
-                 "Helvetica Neue", Arial, sans-serif;
-    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    font-family: var(--finsage-font-sans);
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
 }
 @media (prefers-color-scheme: dark) {
     html, body, .stApp {
         background:
-          radial-gradient(circle at 1px 1px, rgba(139,139,248,0.08) 1px, transparent 0)
-              0 0 / 28px 28px,
-          radial-gradient(1100px 520px at 78% -8%,  rgba(91,91,214,0.10),  transparent 60%),
-          radial-gradient(820px  460px at -10% 110%, rgba(139,139,248,0.08), transparent 60%),
+          radial-gradient(1200px 540px at 82% -10%, rgba(124, 124, 242, 0.10), transparent 60%),
+          radial-gradient(880px  480px at -8% 108%, rgba(217, 119, 87, 0.07),  transparent 60%),
           var(--finsage-page-bg) !important;
     }
 }
@@ -166,7 +209,7 @@ html, body, .stApp {
 section.main > div.block-container {
     padding-top: 1.4rem;
     padding-bottom: 0.75rem;
-    max-width: 1100px;
+    max-width: 1080px;
 }
 
 /* ─── Sidebar ─── */
@@ -175,7 +218,7 @@ section[data-testid="stSidebar"] {
     border-right: 1px solid var(--finsage-divider);
 }
 section[data-testid="stSidebar"] > div:first-child {
-    padding-top: 1.1rem;
+    padding-top: 1.2rem;
 }
 
 .finsage-brand {
@@ -188,24 +231,25 @@ section[data-testid="stSidebar"] > div:first-child {
 .finsage-brand-mark svg { display: block; border-radius: 12px; }
 .finsage-brand-text { display: flex; flex-direction: column; gap: 4px; }
 .finsage-brand-name {
-    font-size: 1.5rem;
-    font-weight: 800;
+    font-family: var(--finsage-font-serif);
+    font-size: 1.55rem;
+    font-weight: 600;
     letter-spacing: -0.6px;
     color: var(--finsage-text);
     line-height: 1.0;
 }
 .finsage-brand-eyebrow {
     font-size: 0.66rem;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 1.6px;
     color: var(--finsage-muted);
     text-transform: uppercase;
 }
 .finsage-tagline {
     color: var(--finsage-muted-strong);
-    font-size: 0.84rem;
-    padding: 12px 4px 4px;
-    line-height: 1.5;
+    font-size: 0.86rem;
+    padding: 14px 4px 4px;
+    line-height: 1.55;
 }
 
 .finsage-sidebar-footer {
@@ -225,20 +269,20 @@ section[data-testid="stSidebar"] > div:first-child {
 
 .finsage-status-dot {
     display: inline-block;
-    width: 8px; height: 8px;
+    width: 7px; height: 7px;
     border-radius: 50%;
     background: #10b981;
     margin-right: 6px;
     vertical-align: middle;
-    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
-    animation: finsage-pulse-dot 2.4s ease-in-out infinite;
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.18);
+    animation: finsage-pulse-dot 2.6s ease-in-out infinite;
 }
 @keyframes finsage-pulse-dot {
-    0%, 100% { box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.20); }
-    50%      { box-shadow: 0 0 0 7px rgba(16, 185, 129, 0.0);  }
+    0%, 100% { box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.20); }
+    50%      { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.0);  }
 }
 
-/* Sidebar expander — make the body actually look like a paragraph */
+/* Sidebar expander — make body actually look like a paragraph */
 section[data-testid="stSidebar"] .streamlit-expanderHeader,
 section[data-testid="stSidebar"] [data-testid="stExpander"] summary {
     font-weight: 600;
@@ -252,8 +296,8 @@ section[data-testid="stSidebar"] [data-testid="stExpander"] {
 section[data-testid="stSidebar"] [data-testid="stExpander"] p,
 section[data-testid="stSidebar"] [data-testid="stExpander"] li {
     color: var(--finsage-muted-strong);
-    font-size: 0.84rem;
-    line-height: 1.55;
+    font-size: 0.85rem;
+    line-height: 1.6;
 }
 section[data-testid="stSidebar"] [data-testid="stExpander"] strong {
     color: var(--finsage-text);
@@ -267,67 +311,63 @@ section[data-testid="stSidebar"] [data-testid="stExpander"] em {
 /* ─── Landing hero (empty chat state) ─── */
 .finsage-landing {
     text-align: center;
-    padding: 36px 16px 12px;
-    animation: finsage-fade-up 0.7s ease-out both;
+    padding: 28px 16px 8px;
+    animation: finsage-fade-up 0.6s cubic-bezier(.22,.61,.36,1) both;
 }
 @keyframes finsage-fade-up {
-    from { opacity: 0; transform: translateY(12px); }
+    from { opacity: 0; transform: translateY(10px); }
     to   { opacity: 1; transform: translateY(0);    }
+}
+
+.finsage-landing-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 1.8px;
+    text-transform: uppercase;
+    color: var(--finsage-accent);
+    margin-bottom: 22px;
+    padding: 6px 14px;
+    background: var(--finsage-accent-softer);
+    border: 1px solid var(--finsage-accent-border);
+    border-radius: 999px;
+}
+.finsage-landing-eyebrow::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--finsage-accent);
 }
 
 .finsage-landing-logo {
     position: relative;
     display: inline-block;
-    margin: 0 auto 26px;
-    animation: finsage-float 4.5s ease-in-out infinite;
-    transition: transform 0.3s ease;
+    margin: 0 auto 24px;
+    transition: transform 0.4s cubic-bezier(.22,.61,.36,1);
 }
-.finsage-landing-logo::before {
-    content: "";
-    position: absolute;
-    inset: -28%;
-    background: radial-gradient(closest-side,
-        rgba(91, 91, 214, 0.32) 0%,
-        rgba(91, 91, 214, 0.12) 45%,
-        transparent 70%);
-    border-radius: 50%;
-    z-index: 0;
-    pointer-events: none;
-    animation: finsage-pulse 3.6s ease-in-out infinite;
-}
-.finsage-landing-logo svg {
-    position: relative;
-    z-index: 1;
-}
-.finsage-landing-logo:hover {
-    transform: scale(1.04);
-}
-@keyframes finsage-float {
-    0%, 100% { transform: translateY(0); }
-    50%      { transform: translateY(-6px); }
-}
-@keyframes finsage-pulse {
-    0%, 100% { opacity: 0.7; transform: scale(1.0);  }
-    50%      { opacity: 1.0; transform: scale(1.10); }
-}
+.finsage-landing-logo svg { position: relative; z-index: 1; }
+.finsage-landing-logo:hover { transform: scale(1.03); }
 
 .finsage-landing-wordmark {
-    font-size: 4rem;
-    font-weight: 800;
-    letter-spacing: -2.4px;
+    font-family: var(--finsage-font-serif);
+    font-size: 3.6rem;
+    font-weight: 600;
+    letter-spacing: -1.6px;
     line-height: 1.05;
     background: linear-gradient(110deg,
         var(--finsage-brand)       0%,
-        var(--finsage-brand-light) 28%,
-        #e0e0ff                    50%,
-        var(--finsage-brand-light) 72%,
+        var(--finsage-brand-light) 32%,
+        var(--finsage-accent-soft) 50%,
+        var(--finsage-brand-light) 68%,
         var(--finsage-brand)       100%);
     background-size: 220% 100%;
     -webkit-background-clip: text;
             background-clip: text;
     -webkit-text-fill-color: transparent;
-    margin: 0 0 10px;
-    animation: finsage-shimmer 8s linear infinite;
+    margin: 0 0 14px;
+    animation: finsage-shimmer 12s linear infinite;
 }
 @keyframes finsage-shimmer {
     from { background-position: 100% 0; }
@@ -335,16 +375,18 @@ section[data-testid="stSidebar"] [data-testid="stExpander"] em {
 }
 .finsage-landing-tag {
     color: var(--finsage-muted-strong);
-    font-size: 1.1rem;
+    font-size: 1.08rem;
     font-weight: 500;
     margin: 0 0 8px;
+    font-family: var(--finsage-font-serif);
+    font-style: italic;
 }
 .finsage-landing-sub {
     color: var(--finsage-muted);
     font-size: 0.96rem;
-    line-height: 1.6;
+    line-height: 1.65;
     max-width: 580px;
-    margin: 0 auto 26px;
+    margin: 0 auto 30px;
 }
 
 .finsage-trust {
@@ -352,13 +394,13 @@ section[data-testid="stSidebar"] [data-testid="stExpander"] em {
     flex-wrap: wrap;
     justify-content: center;
     gap: 8px;
-    margin: 0 0 38px;
+    margin: 0 0 44px;
 }
 .finsage-trust-pill {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 12px;
+    padding: 6px 13px;
     border: 1px solid var(--finsage-card-border);
     border-radius: 999px;
     background: var(--finsage-card-bg);
@@ -368,21 +410,31 @@ section[data-testid="stSidebar"] [data-testid="stExpander"] em {
     box-shadow: var(--finsage-shadow-card);
     transition: all 0.18s ease;
 }
+.finsage-trust-pill b {
+    font-weight: 600;
+    color: var(--finsage-text);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.2px;
+}
 .finsage-trust-pill:hover {
-    border-color: var(--finsage-brand-border);
-    color: var(--finsage-brand);
+    border-color: var(--finsage-accent-border);
+    color: var(--finsage-accent);
+    background: var(--finsage-accent-softer);
     transform: translateY(-1px);
-    box-shadow: 0 6px 14px rgba(91, 91, 214, 0.10);
+}
+.finsage-trust-pill:hover b {
+    color: var(--finsage-accent);
 }
 
 .finsage-section-label {
     text-align: center;
     text-transform: uppercase;
-    letter-spacing: 2.2px;
+    letter-spacing: 2.4px;
     font-size: 0.7rem;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--finsage-muted);
-    margin: 6px 0 18px;
+    margin: 8px 0 22px;
+    font-family: var(--finsage-font-sans);
 }
 .finsage-section-label::before,
 .finsage-section-label::after {
@@ -395,7 +447,7 @@ section[data-testid="stSidebar"] [data-testid="stExpander"] em {
     margin: 0 12px;
 }
 
-/* ─── Generic Streamlit button → chip-style card ─── */
+/* ─── Streamlit button → editorial suggestion chip ─── */
 .stButton > button,
 [data-testid="stFormSubmitButton"] > button {
     background: var(--finsage-card-bg) !important;
@@ -408,14 +460,18 @@ section[data-testid="stSidebar"] [data-testid="stExpander"] em {
     line-height: 1.5 !important;
     text-align: left !important;
     box-shadow: var(--finsage-shadow-card) !important;
-    transition: all 0.18s ease !important;
+    transition:
+      background 0.18s ease,
+      border-color 0.18s ease,
+      color 0.18s ease,
+      transform 0.18s cubic-bezier(.22,.61,.36,1) !important;
 }
 .stButton > button:hover,
 [data-testid="stFormSubmitButton"] > button:hover {
-    border-color: var(--finsage-brand) !important;
+    border-color: var(--finsage-brand-border) !important;
     background: var(--finsage-brand-soft) !important;
     color: var(--finsage-brand) !important;
-    transform: translateY(-2px);
+    transform: translateY(-1px);
     box-shadow: var(--finsage-shadow-hover) !important;
 }
 .stButton > button:focus,
@@ -456,7 +512,7 @@ section[data-testid="stSidebar"] .stButton > button {
 .finsage-source-card-body {
     color: var(--finsage-text);
     font-size: 0.92rem;
-    line-height: 1.6;
+    line-height: 1.65;
     margin-bottom: 10px;
 }
 .finsage-source-card-footer {
@@ -470,9 +526,10 @@ section[data-testid="stSidebar"] .stButton > button {
     display: inline-flex;
     align-items: center;
     gap: 4px;
+    font-variant-numeric: tabular-nums;
 }
 
-/* ─── Badges (used in source cards + modal header) ─── */
+/* ─── Badges ─── */
 .finsage-badge {
     display: inline-flex;
     align-items: center;
@@ -482,6 +539,7 @@ section[data-testid="stSidebar"] .stButton > button {
     font-weight: 600;
     line-height: 1.45;
     letter-spacing: 0.2px;
+    font-variant-numeric: tabular-nums;
 }
 .finsage-badge-ticker {
     background: var(--finsage-brand);
@@ -492,9 +550,9 @@ section[data-testid="stSidebar"] .stButton > button {
     color: var(--finsage-text);
 }
 .finsage-badge-filing-10k {
-    background: rgba(245, 158, 11, 0.15);
-    color: #b45309;
-    border: 1px solid rgba(245, 158, 11, 0.3);
+    background: var(--finsage-accent-soft);
+    color: var(--finsage-accent);
+    border: 1px solid var(--finsage-accent-border);
 }
 .finsage-badge-filing-10q {
     background: var(--finsage-brand-soft);
@@ -515,9 +573,9 @@ mark.finsage-highlight {
     font-weight: 500;
 }
 .finsage-section-body {
-    font-family: 'Charter', 'Iowan Old Style', Georgia, serif;
-    font-size: 0.96rem;
-    line-height: 1.7;
+    font-family: var(--finsage-font-serif);
+    font-size: 1.0rem;
+    line-height: 1.75;
     color: var(--finsage-text);
     word-wrap: break-word;
 }
@@ -530,12 +588,18 @@ mark.finsage-highlight {
 /* ─── Assistant answer prose ─── */
 .finsage-answer {
     font-size: 1.0rem;
-    line-height: 1.75;
+    line-height: 1.78;
     color: var(--finsage-text);
     white-space: pre-wrap;
 }
+.finsage-answer h1, .finsage-answer h2, .finsage-answer h3 {
+    font-family: var(--finsage-font-serif);
+    font-weight: 600;
+    letter-spacing: -0.3px;
+}
+.finsage-answer strong { color: var(--finsage-text); font-weight: 600; }
 
-/* ─── Empty-state hero (used on Sources tab when no citations yet) ─── */
+/* ─── Empty-state hero (Sources tab when no citations yet) ─── */
 .finsage-hero {
     text-align: center;
     padding: 56px 16px 28px;
@@ -543,10 +607,11 @@ mark.finsage-highlight {
 }
 .finsage-hero-icon {
     font-size: 2.4rem;
-    opacity: 0.6;
+    opacity: 0.5;
 }
 .finsage-hero-title {
-    font-size: 1.35rem;
+    font-family: var(--finsage-font-serif);
+    font-size: 1.4rem;
     font-weight: 600;
     margin: 14px 0 8px;
     line-height: 1.3;
@@ -555,7 +620,7 @@ mark.finsage-highlight {
 .finsage-hero-subtitle {
     color: var(--finsage-muted);
     font-size: 0.94rem;
-    line-height: 1.6;
+    line-height: 1.65;
     max-width: 540px;
     margin: 0 auto 22px;
 }
@@ -567,7 +632,25 @@ mark.finsage-highlight {
     padding: 4px 0 6px;
 }
 [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
-    line-height: 1.7;
+    line-height: 1.75;
+}
+
+/* Chat input — slightly elevated, refined focus */
+[data-testid="stChatInput"] textarea,
+[data-testid="stChatInput"] [contenteditable="true"] {
+    font-family: var(--finsage-font-sans) !important;
+    font-size: 0.96rem !important;
+}
+[data-testid="stChatInput"] > div {
+    border: 1px solid var(--finsage-card-border) !important;
+    background: var(--finsage-card-bg) !important;
+    border-radius: 14px !important;
+    box-shadow: var(--finsage-shadow-card) !important;
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+[data-testid="stChatInput"] > div:focus-within {
+    border-color: var(--finsage-brand-border) !important;
+    box-shadow: 0 0 0 3px var(--finsage-brand-soft) !important;
 }
 
 /* ─── Tabs ─── */
@@ -593,5 +676,14 @@ hr.finsage-divider {
     border-top: 1px solid var(--finsage-divider);
     margin: 14px 0;
 }
+
+/* Scrollbar polish */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: var(--finsage-card-border);
+    border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--finsage-card-hover-bord); }
 </style>
 """
