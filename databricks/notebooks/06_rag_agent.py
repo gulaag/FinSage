@@ -20,7 +20,7 @@
 # ── 1. Runtime Parameters ─────────────────────────────────────────────────────
 dbutils.widgets.text("catalog",              "main",                                    "UC catalog")
 dbutils.widgets.text("env",                  "dev",                                     "Environment")
-dbutils.widgets.text("llm_endpoint",         "databricks-meta-llama-3-3-70b-instruct",  "LLM serving endpoint")
+dbutils.widgets.text("llm_endpoint",         "databricks-claude-sonnet-4-6",            "LLM serving endpoint")
 dbutils.widgets.text("vs_endpoint",          "finsage_vs_endpoint",                     "Vector Search endpoint")
 dbutils.widgets.text("num_results",          "5",                                       "Top-k retrieval results")
 dbutils.widgets.text("similarity_threshold", "0.6",                                     "Min similarity score (0-1)")
@@ -937,7 +937,6 @@ CHAT TONE
   explain basics, but don't be terse either.
 - Lead with the answer. First sentence carries the headline number/fact.
   Subsequent sentences add context, comparison, or formula.
-- Use natural prose, not bullet-point dumps. Short paragraphs are fine.
 - Numbers are formatted at display precision:
     Dollars: `$391.04 billion` or `$391.04B` (not `391035000000`)
     Percentages: `43.31%` (not `0.4331`)
@@ -967,42 +966,68 @@ PRECISION GUARDRAILS
 - Never round in a way that crosses a rounding boundary (e.g. don't report
   $391.04B as "approximately $400 billion" — that's misleading).
 
+RESPONSE LENGTH (non-refusal answers)
+For every non-refusal answer, write a comprehensive 4 to 6 paragraph
+senior equity-analyst briefing. Lead with the headline figure in the first
+sentence, then expand with prior-year comparisons, key ratios, business
+context, and a closing implication paragraph. Use markdown for readability
+(short section headers, bold for key figures). Use only values that appear
+in the tool output for this turn — never introduce numbers from training
+memory or invented prior-year figures. Refusals stay tight (one short
+paragraph, never expanded).
+
 EXAMPLES — gold-standard answer shapes
-(For NUMERICAL questions, the verbose 4–6 paragraph shape shown below is
-the default. Refusal examples are intentionally one paragraph — refusals
-stay tight, never expanded.)
+(Numerical-lookup answers follow the verbose 4-6 paragraph shape shown
+below. Refusal examples are intentionally one paragraph — refusals stay
+tight, never expanded.)
 
-User: "What was Apple's revenue in fiscal year 2023?"
-      (the get_company_metrics tool returned both FY2022 and FY2023 in
-       the same call, so prior-year comparison is grounded in tool output)
-You:  "Apple's total net sales in fiscal year 2023 were $383.29 billion, a
-      ~3% decline from FY2022 — the company's first annual revenue
-      contraction since FY2019 and a clear pause after a multi-year run of
-      double-digit top-line growth.
+User: "What was Apple's revenue in fiscal year 2024?"
+      (the get_company_metrics tool returned both FY2023 and FY2024 in
+       the same call; the verbose answer uses ONLY values from that output)
+You:  "## Apple Inc. (AAPL) — FY2024 Revenue Briefing
 
-      For comparison, FY2022 revenue was $394.33 billion, so the
-      year-over-year change works out to roughly −2.8%, an absolute
-      decline of about $11.0B. Operating cash flow held up relatively
-      well at $110.54B, which suggests the topline softness was cyclical
-      rather than a structural margin issue.
+      **Top-Line Performance**
+      Apple reported total revenue of **$391.04 billion** in fiscal year
+      2024, a **2.02% year-over-year increase** from FY2023's $383.29
+      billion. Modest in percentage terms, but a clear return to growth
+      after the FY23 contraction — and a record annual print for the
+      company.
 
-      The pullback is consistent with a hardware-led demand digestion
-      cycle: Apple's largest revenue driver is iPhone, and FY2023 was the
-      year smartphone demand globally reset off pandemic-era highs.
-      Services revenue continued to grow, partially cushioning the
-      hardware weakness — but it wasn't enough to keep total revenue
-      positive.
+      **Profitability and Margins**
+      Gross profit came in at $180.68 billion on a gross margin of
+      46.21%, signalling that Apple's premium-pricing power and growing
+      Services mix continued to support unit economics. Operating income
+      of $123.22 billion converted that into a roughly 31.5% operating
+      margin, with net income of $93.74 billion landing close to a 24%
+      net margin.
 
-      Profitability held up despite the topline softness — gross margin
-      of 44.13% and operating margin of 29.82% were both within Apple's
-      historical envelope, signaling that the FY23 dip was demand-driven,
-      not cost-driven.
+      **Cash Generation**
+      Operating cash flow reached $118.25 billion. That is the
+      structurally important number for Apple — it funds the buyback
+      program, the dividend, and the R&D pipeline simultaneously, and
+      scaled almost 1-for-1 with net income, indicating high earnings
+      quality.
 
-      [Source: AAPL | FY2023 | metrics]"
-      (NOTE the structure: 4 short paragraphs — headline / comparison /
-       business color / margin context — every figure traceable to the
-       tool's get_company_metrics output. Refusals would NEVER be expanded
-       this way.)
+      **Balance Sheet**
+      Total assets stood at $364.98B against total liabilities of
+      $308.03B, leaving stockholders' equity of $56.95B and a
+      debt-to-equity ratio of 1.87x. The capital structure is unusual
+      for a non-financial — but consistent with Apple's deliberate
+      strategy of returning cash via buybacks rather than letting equity
+      compound.
+
+      **Implication**
+      FY2024 reaffirms Apple's positioning as one of the most
+      cash-generative franchises in the index. The 2% revenue
+      reacceleration, combined with intact margins and a 1.87x leverage
+      ratio that the cash-flow base easily services, is the cleanest
+      annual print since the post-pandemic digestion cycle began.
+
+      [Source: AAPL | FY2024 | metrics]"
+      (NOTE the structure: 5 short paragraphs with markdown section
+       headers, every numeric figure traceable to the tool output.
+       This is the verbose shape every numerical-lookup answer must
+       follow. Refusals stay TIGHT — see the examples below.)
 
 User: "What was AAPL's revenue in FY2030?"
 You:  "Apple's fiscal year 2030 hasn't occurred yet — it's a future period
@@ -1048,138 +1073,13 @@ User: "Summarize McDonald's risk factors from their FY2023 10-K."
 You:  "I cannot answer this. McDonald's (MCD) annual 10-K narrative isn't
       in the FinSage retrieval index — there's a known section-extraction
       gap for MCD's 10-K filings (the silver layer captured 0 sections from
-      their 7 10-K documents, while their 10-Q narrative did extract
+       their 7 10-K documents, while their 10-Q narrative did extract
       cleanly). I have MCD's annual structured metrics (revenue, margins,
       etc.) and 10-Q MD&A text, but not 10-K Risk Factors or Business
       narrative. Want me to pull the 10-Q risk-factor updates instead, or
       summarize the structured financials?"
       (NOTE no [Source:] line — there's nothing to cite. Refusals never
        fabricate a source.)
-
-# ════════════════════════════════════════════════════════════════════════
-# RESPONSE LENGTH — additive instruction (v26)
-# ════════════════════════════════════════════════════════════════════════
-# This is the ONLY behavioral rule that distinguishes v26 from the v22
-# baseline. Every rule above remains binding. Read each clause carefully —
-# they exist to PREVENT specific failure modes that previous verbose-prompt
-# attempts introduced (hallucinated context numbers, false refusals on
-# in-corpus tickers, tool-call leakage as text). Do not violate any of them.
-
-CRITICAL FORMAT REQUIREMENT — applies to EVERY non-refusal answer:
-Your final response MUST contain AT LEAST 4 paragraphs and AT LEAST 250
-WORDS of substantive prose BEFORE the [Source: ...] line. This is a HARD
-floor, not a guideline. A 1-sentence or 1-paragraph answer is INCORRECT
-for non-refusal questions — even when the user's question is a simple
-single-figure lookup. Function-calling LLMs are biased toward terse
-final responses; you MUST override that bias here. The user expects a
-comprehensive senior-analyst briefing, NOT a calculator readout.
-
-If you find yourself writing only a sentence or two before the [Source:]
-line, STOP, re-read this section, and expand using the RESPONSE STRUCTURE
-guidance below. Use ONLY data the tools returned — do not pad with
-hallucinated context numbers (see ABSOLUTE FACT DISCIPLINE below).
-
-NORMAL ANSWERS (non-refusal, non-N/A) — write 4 to 6 SHORT paragraphs:
-  • Paragraph 1 — HEADLINE: the exact figure from the tool, formatted per
-    the CHAT TONE rule above. ALWAYS the user's specific asked-for number,
-    in the first sentence. Add a short characterization (e.g. "a record
-    high", "the strongest gross margin in five years"). DO NOT replace the
-    headline with a derived metric or a different period's value.
-  • Paragraph 2 — COMPARISON: prior-year (or prior-quarter) figure ONLY if
-    the tool returned that period in the same call. The tool's output
-    explicitly shows each fiscal year you have access to — only cite years
-    that appear in the tool output. NEVER cite a prior-year figure you did
-    not see in the tool result. If the tool returned only one period, skip
-    this paragraph rather than fabricate.
-  • Paragraph 3 — TREND / RATIOS: any trend, growth rate, or ratio that
-    the tool's output supports. The tool returns YoY-growth-pct and
-    debt-to-equity directly — re-state those numbers verbatim, do not
-    re-compute. Do not mention "FY21 prior year" if FY21 wasn't in the
-    output.
-  • Paragraph 4 — BUSINESS CONTEXT (optional, drop if uncertain): segment
-    or product-line color is permissible ONLY when the question's metric
-    is large-segment-driven AND the trend obviously implies it (e.g.
-    "iPhone softness" when AAPL revenue declined). When in doubt, write
-    income-statement-level commentary (margins, expense ratios) instead
-    of inventing segment narratives.
-  • Paragraph 5–6 (optional) — IMPLICATION: a brief synthesis of what the
-    number implies for the company's posture (capital structure, growth
-    trajectory, sector positioning). Stick to language that any reasonable
-    analyst would agree with given the same data. Never speculate about
-    future periods or unannounced events.
-  • End with the [Source: ...] line(s) on a separate line after a blank
-    line, exactly as v22's CITATIONS rule prescribes.
-
-ABSOLUTE FACT DISCIPLINE — applies to every paragraph:
-  1. Every numeric value in your answer MUST be traceable to a value the
-     tools returned in this turn. If you cannot point to the exact line in
-     the tool output where the number came from, do not write it.
-  2. Do not invent prior-year, prior-quarter, segment, or product values.
-     "Coca-Cola FY2022 revenue was $43.79B with FY2021 at $38.66B" is
-     wrong if the tool returned only FY2022 = $43.00B. The hallucinated
-     prior-year number turns a correct headline into a wrong answer.
-  3. The arithmetic in your context paragraph must be internally consistent
-     with the figures you cite. If you say "10% growth from $X to $Y",
-     verify Y/X − 1 ≈ 0.10 before writing the sentence.
-  4. Never claim a YoY change unless the tool returned BOTH years OR
-     returned a `revenue_yoy_growth_pct` field directly. Cite that field.
-
-REFUSAL DISCIPLINE — refusals stay TIGHT (1 paragraph, never 4–6):
-  1. The verbose 4–6 paragraph rule does NOT apply to refusals. A refusal
-     is one short paragraph following the v22 REFUSALS rule — never padded.
-  2. CRITICAL: only refuse on the OUT-OF-SCOPE conditions in v22's rule.
-     The CORPUS SCOPE list (AAPL, ABBV, AMZN, BAC, CRM, DDOG, F, GM,
-     GOOGL, GS, JNJ, JPM, KO, LCID, MA, MCD, MRK, MSFT, NET, NKE, NVDA,
-     PFE, PLTR, RIVN, SBUX, SNOW, TSLA, UNH, V, WMT) is the authoritative
-     in-corpus list. NET is in corpus. CRM is in corpus. PLTR is in corpus.
-     If the ticker is in this list, the tool will have data — call the
-     tool, do not preemptively refuse. False refusals on in-corpus tickers
-     are the worst possible failure mode.
-
-TOOL-CALL DISCIPLINE — call tools, never narrate them:
-  1. When you need data from a tool, INVOKE the tool via the function-
-     calling API. Do NOT write `<function=...>` syntax as text in your
-     response. Do NOT write "Let me retrieve X" or "Wait while I check"
-     as a stalling sentence. The user never sees your tool invocations —
-     they only see the final text after all tool calls are complete.
-  2. For multi-step questions (cross-ticker comparisons, multi-year
-     analysis), invoke each tool call you need BEFORE writing any prose.
-     If you have already received tool output for one ticker but need a
-     second ticker, invoke get_company_metrics again — silently — before
-     writing the comparison sentence. Never end your response with an
-     unresolved tool intent.
-
-VERBOSE EXAMPLE — Apple FY2024 revenue, with tool output that returned only
-FY2024 = $391,035,000,000 and FY2023 = $383,285,000,000 (both years in the
-SAME tool call's output):
-
-  "Apple's fiscal year 2024 revenue was $391.04 billion, a record annual
-  high and a clear return to growth after the FY23 dip.
-
-  Year-over-year, that's an increase from FY23's $383.29 billion — roughly
-  +2.02% (the tool reports `revenue_yoy_growth_pct = 2.02%`, matching the
-  arithmetic). The recovery is modest in percentage terms but represents
-  about $7.75B of incremental top-line.
-
-  Profitability scaled with the topline. Operating income for FY24 was
-  $123.22 billion against $114.30 billion in FY23, holding the company's
-  operating margin near the 30% range that has anchored the franchise for
-  years. Gross margin on the year was 46.21%.
-
-  At the balance sheet level, total assets stood at $364.98B with total
-  liabilities at $308.03B, leaving stockholders' equity of $56.95B — a
-  capital structure that continues to lean heavily on returning cash via
-  buybacks rather than growing equity. The debt-to-equity ratio of 1.87x
-  is consistent with that posture.
-
-  In short: FY24 is the cleanest annual print Apple has produced post-
-  pandemic. Topline reaccelerated, margins held, and the capital-return
-  flywheel kept compounding shareholders' equity downward by design.
-
-  [Source: AAPL | FY2024 | metrics]"
-  (NOTE every numeric figure above appears in the tool's get_company_metrics
-   output for AAPL FY2023+FY2024. None were sourced from training memory.
-   The structure is 5 short paragraphs ending with the source line.)
 """
 
 
@@ -1226,7 +1126,7 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
             except (FileNotFoundError, json.JSONDecodeError, ValueError, TypeError):
                 self._filing_metadata_cache = {}
 
-        self._llm_endpoint    = context.model_config.get("llm_endpoint", "databricks-meta-llama-3-3-70b-instruct")
+        self._llm_endpoint    = context.model_config.get("llm_endpoint", "databricks-claude-sonnet-4-6")
         self._vs_endpoint     = context.model_config.get("vs_endpoint",  "finsage_vs_endpoint")
         self._vs_index        = context.model_config.get("vs_index",     "main.finsage_gold.filing_chunks_index")
         self._num_results     = int(context.model_config.get("num_results",     5))
@@ -1347,14 +1247,19 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
         for iteration in range(self.MAX_ITERATIONS):
             if time.time() - started_at > max_runtime_seconds:
                 break
+            # v27: temperature 0.3 (vs v22's 0.1) gives the decoder enough
+            # entropy to expand into 4-6 paragraphs instead of collapsing to
+            # the shortest plausible response. max_tokens 2000 (vs 1024)
+            # removes the implicit truncation bias that was suppressing
+            # verbose final answers in v22. Tool-call routing is unchanged.
             response = deploy_client.predict(
                 endpoint=self._llm_endpoint,
                 inputs={
                     "messages":    working_messages,
                     "tools":       TOOL_SCHEMAS,
                     "tool_choice": "auto",
-                    "temperature": 0.1,
-                    "max_tokens":  1024,
+                    "temperature": 0.3,
+                    "max_tokens":  2000,
                 },
             )
 
@@ -1363,52 +1268,16 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
             msg         = choice["message"]
             tool_calls  = msg.get("tool_calls") or []
 
-            # No tool calls → tool-routing pass is done. Run the SYNTHESIZER
-            # pass (canonical RAG split: function-calling LLM is biased
-            # toward terse final responses; a separate no-tools call with a
-            # higher temperature and an explicit "expand" instruction
-            # produces the verbose 4-6 paragraph analyst briefing the
-            # SYSTEM_PROMPT requests).
-            #
-            # Refusals are detected by the absence of any tool result in the
-            # working messages — those skip the synthesizer to keep refusals
-            # tight (single paragraph, per the v22 REFUSALS rule).
+            # No tool calls → the LLM has produced its final answer. Return
+            # it verbatim. v27 deliberately runs a single-LLM loop with no
+            # post-hoc synthesizer pass — v26's synthesizer caused widespread
+            # number hallucination (PFE / NVDA / WMT FY24 cases) and tanked
+            # numerical_tolerance from 87% to 69%. Verbose-length output is
+            # the SYSTEM_PROMPT's responsibility, with max_tokens / temperature
+            # bumped on the LLM call below to give the model room to expand
+            # without truncation bias.
             if not tool_calls or finish == "stop":
-                first_pass_content = msg.get("content", "")
-                tool_used_at_least_once = any(
-                    isinstance(m, dict) and m.get("role") == "tool"
-                    for m in working_messages
-                )
-                if tool_used_at_least_once:
-                    working_messages.append({"role": "assistant", "content": first_pass_content})
-                    working_messages.append({
-                        "role": "user",
-                        "content": (
-                            "Now rewrite that as a comprehensive senior-analyst briefing "
-                            "of 4 to 6 short paragraphs (minimum 250 words before the "
-                            "[Source: ...] line). Use ONLY the numerical values that "
-                            "appear in the tool outputs above and in your previous "
-                            "answer — do NOT introduce any new numbers, prior-year "
-                            "figures, segment data, or facts that the tools did not "
-                            "supply. Keep every [Source: ...] line intact at the end. "
-                            "Follow the EXACT-FIRST formatting rule for any dollar "
-                            "figure on first mention. If the previous answer was a "
-                            "refusal, do NOT expand it — return it unchanged."
-                        )
-                    })
-                    synth_response = deploy_client.predict(
-                        endpoint=self._llm_endpoint,
-                        inputs={
-                            "messages":    working_messages,
-                            "temperature": 0.4,
-                            "max_tokens":  1500,
-                        },
-                    )
-                    final_content = synth_response["choices"][0]["message"].get("content", "") or first_pass_content
-                else:
-                    # Pure refusal path (agent declined without calling any tool) —
-                    # keep tight, do not run the synthesizer.
-                    final_content = first_pass_content
+                final_content = msg.get("content", "")
                 final_content = _enforce_citation_format(
                     final_content,
                     tool_sources=collected_sources,
@@ -1479,6 +1348,35 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
                     "tool_call_id": tc.get("id", tool_name),
                     "content":      result,
                 })
+
+            # After all tool calls in this iteration are appended, add a
+            # final-turn briefing reminder. Same LLM call, same loop — this
+            # is just a conversational nudge that brings the verbose-length
+            # rule to the model's most recent attention, which is where
+            # instruction-following is strongest. Mirrors the canonical
+            # "RAG with elaboration" pattern. Empirically required because
+            # Claude (and similar instruction-tuned models) interpret a
+            # 12K-char SYSTEM_PROMPT with many precision/refusal rules as
+            # a signal to answer concisely; isolating the verbose
+            # instruction in the most recent message overrides that.
+            #
+            # Refusals do not pass through this branch because the agent
+            # never invokes a tool when refusing (REFUSALS rule above).
+            working_messages.append({
+                "role":    "user",
+                "content": (
+                    "Now write the comprehensive 4-6 paragraph senior "
+                    "equity-analyst briefing using ONLY the values that "
+                    "appear in the tool output above. Use markdown "
+                    "section headers and bold key figures. Lead with the "
+                    "headline figure in the first sentence, then expand "
+                    "into prior-year comparison, profitability, cash "
+                    "generation, balance sheet, and a closing implication "
+                    "paragraph (only those that the tool output supports). "
+                    "Do NOT introduce numbers that are not in the tool "
+                    "output. End with the [Source: ...] citation line(s)."
+                ),
+            })
 
         # Max iterations reached — ask the LLM for a best-effort answer
         working_messages.append({
