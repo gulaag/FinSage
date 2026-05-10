@@ -24,7 +24,14 @@ from typing import Any, Optional
 import streamlit as st
 
 from backend import AgentResponse, Citation, fetch_section_text, query_agent
-from theme import APP_NAME, APP_TAGLINE, CUSTOM_CSS, EXAMPLE_QUESTIONS
+from theme import (
+    APP_NAME,
+    APP_SUBLINE,
+    APP_TAGLINE,
+    CUSTOM_CSS,
+    EXAMPLE_QUESTIONS,
+    brand_mark,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s - %(message)s")
 log = logging.getLogger("finsage-app")
@@ -146,15 +153,18 @@ def latest_citation_count() -> int:
 with st.sidebar:
     st.markdown(
         f'<div class="finsage-brand">'
-        f'  <span style="font-size: 1.6rem;">📈</span>'
-        f'  <span class="finsage-brand-name">{APP_NAME}</span>'
+        f'  <div class="finsage-brand-mark">{brand_mark(size=42, glow=False)}</div>'
+        f'  <div class="finsage-brand-text">'
+        f'    <div class="finsage-brand-name">{APP_NAME}</div>'
+        f'    <div class="finsage-brand-eyebrow">SEC filing intelligence</div>'
+        f'  </div>'
         f'</div>'
         f'<div class="finsage-tagline">{APP_TAGLINE}</div>',
         unsafe_allow_html=True,
     )
     st.markdown('<hr class="finsage-divider" />', unsafe_allow_html=True)
 
-    if st.button("New chat", use_container_width=True, type="secondary"):
+    if st.button("✨  New chat", use_container_width=True, type="secondary"):
         st.session_state.messages = []
         st.session_state.modal_citation_idx = None
         st.session_state.staged_question = None
@@ -164,21 +174,27 @@ with st.sidebar:
 
     with st.expander("About FinSage", expanded=False):
         st.markdown(
-            "Grounded financial Q&A over 30 publicly traded companies, "
-            "fiscal years 2020–2026.\n\n"
-            "Every numerical answer comes from the SEC EDGAR XBRL "
-            "CompanyFacts API, persisted in a Lakehouse Gold layer. "
-            "Every qualitative answer is retrieved from 10-K and 10-Q "
-            "section text via Databricks Vector Search.\n\n"
-            "Click a citation in the **Sources** tab to drill into the "
-            "original filing passage."
+            "**FinSage** is a grounded financial Q&A assistant for SEC "
+            "filings — built for analysts who need answers they can verify "
+            "in seconds.\n\n"
+            "**Coverage**\n"
+            "- 30 publicly traded U.S. companies\n"
+            "- Fiscal years 2020–2026\n"
+            "- 10-K (annual) and 10-Q (quarterly)\n\n"
+            "**How it answers**\n"
+            "- *Numerical questions* resolve from the SEC EDGAR XBRL "
+            "CompanyFacts API, persisted in a Lakehouse Gold layer.\n"
+            "- *Qualitative questions* retrieve the relevant 10-K / 10-Q "
+            "section via Databricks Vector Search and quote it verbatim.\n"
+            "- Every answer ends with a citation footer. Open the "
+            "**Sources** tab and click any card to read the exact filing "
+            "passage with the retrieved chunk highlighted in context."
         )
 
     st.markdown(
-        '<div style="position: absolute; bottom: 16px; left: 16px; right: 16px; '
-        'color: var(--finsage-muted); font-size: 0.74rem; '
-        'border-top: 1px solid var(--finsage-divider); padding-top: 12px;">'
-        'Agent v24 · Llama 3.3 70B · Databricks'
+        '<div class="finsage-sidebar-footer">'
+        '  <span><span class="finsage-status-dot"></span>Agent <b>v28</b></span>'
+        '  <span>Powered by Databricks</span>'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -272,22 +288,30 @@ def _maybe_open_modal() -> None:
 
 def _render_empty_chat() -> None:
     st.markdown(
-        f'<div class="finsage-hero">'
-        f'  <div style="font-size: 3rem;">📈</div>'
-        f'  <div class="finsage-hero-title">Ask {APP_NAME} about any of 30 covered companies.</div>'
-        f'  <div class="finsage-hero-subtitle">'
-        f'    Annual + quarterly metrics, plus the underlying 10-K and 10-Q '
-        f'    narrative. Every answer is grounded in SEC filings — open the '
-        f'    <b>Sources</b> tab to see the exact passage.'
+        f'<div class="finsage-landing">'
+        f'  <div class="finsage-landing-logo">{brand_mark(size=120, glow=True)}</div>'
+        f'  <div class="finsage-landing-wordmark">{APP_NAME}</div>'
+        f'  <div class="finsage-landing-tag">{APP_TAGLINE}</div>'
+        f'  <div class="finsage-landing-sub">{APP_SUBLINE}</div>'
+        f'  <div class="finsage-trust">'
+        f'    <span class="finsage-trust-pill">📊 30 companies</span>'
+        f'    <span class="finsage-trust-pill">🗓 FY2020–2026</span>'
+        f'    <span class="finsage-trust-pill">📑 SEC EDGAR grounded</span>'
         f'  </div>'
+        f'  <div class="finsage-section-label">Try asking</div>'
         f'</div>',
         unsafe_allow_html=True,
     )
 
-    cols = st.columns(2)
-    for i, q in enumerate(EXAMPLE_QUESTIONS):
-        with cols[i % 2]:
-            if st.button(q, key=f"example-{i}", use_container_width=True):
+    chip_cols = st.columns([1, 4, 4, 1])
+    for i, (icon, q) in enumerate(EXAMPLE_QUESTIONS):
+        target = chip_cols[1] if i % 2 == 0 else chip_cols[2]
+        with target:
+            if st.button(
+                f"{icon}  {q}",
+                key=f"example-{i}",
+                use_container_width=True,
+            ):
                 st.session_state.staged_question = q
                 st.rerun()
 
