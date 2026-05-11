@@ -88,6 +88,21 @@ print(f"[CONFIG restored] catalog={CATALOG} | llm={LLM_ENDPOINT} | metrics={METR
 # ── 3. Pre-load Gold metrics into memory ──────────────────────────────────────
 # company_metrics has only 180 rows — load once as a nested dict for zero-latency
 # lookup inside the pyfunc serving container (no SQL warehouse needed at runtime).
+#
+# Defensive re-init: users often run this cell directly after `%pip ...; restartPython()`,
+# which wipes Python globals. Rehydrate widget-derived constants here so this cell is
+# runnable in isolation and does not depend on prior cell execution order.
+if "METRICS_TABLE" not in globals() or "METRICS_QUARTERLY_TABLE" not in globals():
+    CATALOG = dbutils.widgets.get("catalog")
+    METRICS_TABLE = f"{CATALOG}.finsage_gold.company_metrics"
+    METRICS_QUARTERLY_TABLE = f"{CATALOG}.finsage_gold.company_metrics_quarterly"
+    SILVER_FINANCIALS_TABLE = f"{CATALOG}.finsage_silver.financial_statements"
+    log.info(
+        "Cell 3 rehydrated constants: metrics=%s quarterly=%s silver=%s",
+        METRICS_TABLE,
+        METRICS_QUARTERLY_TABLE,
+        SILVER_FINANCIALS_TABLE,
+    )
 
 def _load_metrics_cache(table: str) -> dict:
     df = spark.table(table).select(
