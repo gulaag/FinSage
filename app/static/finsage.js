@@ -306,6 +306,25 @@ function getLatestExchange() {
   return { userMsg, asstMsg };
 }
 
+function getThreadExchanges() {
+  const messages = getThreadMessages();
+  const out = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (!m || m.role !== "user") continue;
+    let asstMsg = null;
+    for (let j = i + 1; j < messages.length; j++) {
+      if (messages[j].role === "assistant") {
+        asstMsg = messages[j];
+        i = j;
+        break;
+      }
+    }
+    out.push({ userMsg: m, asstMsg });
+  }
+  return out;
+}
+
 // ────── Render: agent timeline ──────
 function renderTimeline(rawMessages) {
   if (!rawMessages || !rawMessages.length) return "";
@@ -449,7 +468,7 @@ function dedupeCitations(citations) {
   return out;
 }
 
-function renderSources(citations) {
+function renderSources(citations, exid) {
   const cards = dedupeCitations(citations);
   if (!cards.length) return "";
   const items = cards.map((c, i) => {
@@ -459,7 +478,7 @@ function renderSources(citations) {
     const titleStr = escapeHtml(c.section_name || "Section");
     const scoreStr = c.score ? `${(c.score * 100).toFixed(0)}% match` : "";
     return `
-      <div class="fs-src-card" data-src-idx="${i}">
+      <div class="fs-src-card" data-exid="${escapeHtml(exid)}" data-src-idx="${i}">
         <span class="badge">${badge}</span>
         <span class="ticker">${tickerStr}${fyStr ? " · " + fyStr : ""}</span>
         <span class="ttl">${titleStr}</span>
@@ -491,7 +510,16 @@ function renderThread() {
     return;
   }
 
-  const { userMsg, asstMsg } = getLatestExchange();
+  const exchanges = getThreadExchanges();
+  if (!exchanges.length) {
+    hero.style.display = "";
+    thread.style.display = "none";
+    thread.innerHTML = "";
+    return;
+  }
+  const latest = exchanges[exchanges.length - 1];
+  const userMsg = latest.userMsg;
+  const asstMsg = latest.asstMsg;
 
   hero.style.display = "none";
   thread.style.display = "";
@@ -501,43 +529,50 @@ function renderThread() {
     hour: "2-digit", minute: "2-digit", hour12: false,
   });
 
-  let questionHtml = "";
-  if (userMsg) {
-    questionHtml = `
+  cur._cardsByExid = {};
+  cur._inlineCitesByExid = {};
+  cur._metricsEvidenceByExid = {};
+  cur._metadataEvidenceByExid = {};
+
+  const htmlBlocks = exchanges.map((ex, i) => {
+    const exid = `ex-${i}`;
+    const qHtml = `
       <div class="fs-user-q">
         <div class="fs-eyebrow">Question · ${now}</div>
-        <div class="fs-q-text">${italicizeEntity(userMsg.content)}</div>
+        <div class="fs-q-text">${italicizeEntity(ex.userMsg.content)}</div>
       </div>
     `;
-  }
 
-  let answerHtml = "";
-  // Critical: show LOADING when inflight AND no assistant for this user
-  if (userMsg && !asstMsg && cur.inflight) {
-    answerHtml = `
-      <div class="fs-loading">
-        <span class="dots"><span></span><span></span><span></span></span>
-        FinSage is consulting the filings…
-      </div>
-    `;
-  } else if (asstMsg && asstMsg.error) {
-    answerHtml = `<div class="fs-error">${escapeHtml(asstMsg.error)}</div>`;
-  } else if (asstMsg) {
-    const cleaned = stripInlineTags(asstMsg.content);
-    const { html: transformed, cites } = transformCitations(cleaned, asstMsg.citations || []);
-    const timelineHtml = renderTimeline(asstMsg.raw_messages || []);
-    const tldrProseHtml = renderTldrAndProse(transformed);
-    const sourcesHtml = renderSources(asstMsg.citations || []);
-    answerHtml = `${timelineHtml}${tldrProseHtml}${sourcesHtml}`;
-    // Stash deduped cards on the thread so the source-card click handlers
-    // can look up by idx without re-deduping
-    cur._cards = dedupeCitations(asstMsg.citations || []);
-    cur._inlineCites = cites || {};
-    cur._metricsEvidence = extractMetricsEvidence(asstMsg.raw_messages || []);
-    cur._metadataEvidence = extractMetadataEvidence(asstMsg.raw_messages || []);
-  }
+    let aHtml = "";
+    const isLatest = i === exchanges.length - 1;
+    if (!ex.asstMsg && cur.inflight && isLatest) {
+      aHtml = `
+        <div class="fs-loading">
+          <span class="dots"><span></span><span></span><span></span></span>
+          FinSage is consulting the filings…
+        </div>
+      `;
+    } else if (ex.asstMsg && ex.asstMsg.error) {
+      aHtml = `<div class="fs-error">${escapeHtml(ex.asstMsg.error)}</div>`;
+    } else if (ex.asstMsg) {
+      const cleaned = stripInlineTags(ex.asstMsg.content);
+      const { html: transformed, cites } = transformCitations(cleaned, ex.asstMsg.citations || []);
+      const timelineHtml = renderTimeline(ex.asstMsg.raw_messages || []);
+      const tldrProseHtml = renderTldrAndProse(transformed);
+      const sourcesHtml = renderSources(ex.asstMsg.citations || [], exid);
+      aHtml = `${timelineHtml}${tldrProseHtml}${sourcesHtml}`;
 
-  thread.innerHTML = questionHtml + answerHtml;
+      const exCites = cites || {};
+      Object.values(exCites).forEach(c => { c._exid = exid; });
+      cur._cardsByExid[exid] = dedupeCitations(ex.asstMsg.citations || []);
+      cur._inlineCitesByExid[exid] = exCites;
+      cur._metricsEvidenceByExid[exid] = extractMetricsEvidence(ex.asstMsg.raw_messages || []);
+      cur._metadataEvidenceByExid[exid] = extractMetadataEvidence(ex.asstMsg.raw_messages || []);
+    }
+    return `<div class="fs-exchange" data-exid="${escapeHtml(exid)}">${qHtml}${aHtml}</div>`;
+  });
+
+  thread.innerHTML = htmlBlocks.join("");
 
   // Topbar updates from current thread state
   if (userMsg) {
@@ -566,7 +601,8 @@ function renderThread() {
   thread.querySelectorAll(".fs-src-card").forEach(card => {
     card.addEventListener("click", () => {
       const idx = parseInt(card.dataset.srcIdx, 10);
-      const c = (cur._cards || [])[idx];
+      const exid = card.dataset.exid;
+      const c = ((cur._cardsByExid || {})[exid] || [])[idx];
       if (c) openSourceModal(c);
     });
   });
@@ -576,7 +612,9 @@ function renderThread() {
   thread.querySelectorAll(".fs-cite[data-cite]").forEach(el => {
     el.addEventListener("click", () => {
       const idx = parseInt(el.dataset.cite, 10);
-      const c = (cur._inlineCites || {})[idx];
+      const exWrap = el.closest(".fs-exchange");
+      const exid = exWrap ? exWrap.dataset.exid : null;
+      const c = exid ? ((cur._inlineCitesByExid || {})[exid] || {})[idx] : null;
       if (!c) return;
       if (c.source_kind === "section") openSourceModal(c);
       else if (c.source_kind === "metrics") openMetricsModal(c);
@@ -591,7 +629,7 @@ function renderThread() {
     });
   });
 
-  canvasScroll.scrollTop = 0;
+  canvasScroll.scrollTop = canvasScroll.scrollHeight;
 }
 
 // ────── Render: sidebar thread list ──────
@@ -759,7 +797,11 @@ async function openMetricsModal(c) {
       // Fall back to tool-output evidence if SQL warehouse isn't configured
       // locally (common for localhost runs).
       const cur = getCurrentThread();
-      const evidences = (cur && cur._metricsEvidence) || [];
+      const exid = c._exid || "";
+      const evidences =
+        (cur && cur._metricsEvidenceByExid && cur._metricsEvidenceByExid[exid]) ||
+        (cur && cur._metricsEvidence) ||
+        [];
       const fyNeedle = c.fiscal_quarter
         ? `FY${parseInt(c.fiscal_year, 10)} Q${parseInt(c.fiscal_quarter, 10)}`
         : `FY${parseInt(c.fiscal_year, 10)}`;
@@ -827,7 +869,11 @@ function openMetadataModal(c) {
   `;
   modalBackdrop.classList.add("open");
   const cur = getCurrentThread();
-  const evidences = (cur && cur._metadataEvidence) || [];
+  const exid = c._exid || "";
+  const evidences =
+    (cur && cur._metadataEvidenceByExid && cur._metadataEvidenceByExid[exid]) ||
+    (cur && cur._metadataEvidence) ||
+    [];
   const fyNeedle = fyStr || "";
   const tickerNeedle = String(c.ticker || "").toUpperCase();
   const best = evidences.find(e => {
