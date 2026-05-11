@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FinSage — Research</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23131318'/%3E%3Ctext x='16' y='22' font-family='Georgia,serif' font-style='italic' font-size='20' fill='%23d9b478' text-anchor='middle'%3ES%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/finsage.css">
+</head>
+<body>
+
+<div class="app" id="app">
+
+  <!-- ────── Sidebar ────── -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-scroll">
+
+      <div class="fs-brand">
+        <div class="fs-brand-mark">S</div>
+        <div class="fs-brand-name">Fin<em>Sage</em></div>
+        <span class="fs-beta">Beta</span>
+        <button class="sidebar-collapse-btn" id="sidebarCollapse" title="Collapse sidebar">‹</button>
+      </div>
+
+      <button class="fs-new" id="newResearchBtn" type="button">
+        <span>＋ New research</span>
+        <span class="k">⌘N</span>
+      </button>
+
+      <div class="fs-search">
+        <span>🔎</span>
+        <input type="text" placeholder="Search filings, threads…" />
+      </div>
+
+      <div id="threadList">
+        <!-- finsage.js renders the thread list from state on load -->
+      </div>
+
+    </div>
+
+    <div class="fs-foot">
+      <div class="fs-avatar">A</div>
+      <div style="flex:1">
+        <div class="name">Analyst</div>
+        <div class="plan">FinSage · v28</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Floating re-expand button — visible only when sidebar collapsed -->
+  <button class="sidebar-toggle-floating" id="sidebarReopen" title="Show sidebar">S</button>
+
+  <!-- ────── Main ────── -->
+  <main class="main">
+
+    <!-- Topbar -->
+    <div class="fs-topbar">
+      <div class="fs-crumbs">
+        <span>Threads</span>
+        <span class="sep">/</span>
+        <span class="cur" id="crumbCurrent">New research</span>
+      </div>
+      <span class="fs-chip gold" id="topbarTicker" style="display:none">
+        <span class="ticker"></span>
+      </span>
+      <span class="fs-chip" id="topbarStatus" style="display:none">
+        <span class="dot"></span>
+        <span class="text"></span>
+      </span>
+    </div>
+
+    <!-- Canvas -->
+    <div class="canvas-scroll">
+      <div class="fs-canvas" id="canvas">
+
+        <!-- Empty state hero — JS swaps this out once a question is asked -->
+        <div class="fs-hero" id="hero">
+          <div class="eyebrow">SEC research, sourced</div>
+          <h1 class="title">Research financial filings <em>like a pro.</em></h1>
+          <p class="sub">Grounded SEC-filing intelligence over 30 publicly traded companies. Every number lands with a citation; every quote opens its filing.</p>
+          <div class="trust">
+            <span class="pill"><b>30</b>&nbsp;&nbsp;companies</span>
+            <span class="pill"><b>FY2020 – FY2026</b></span>
+            <span class="pill"><b>SEC EDGAR</b>&nbsp;&nbsp;grounded</span>
+          </div>
+          <div class="sl">try a starter question</div>
+          <div class="examples">
+            <button class="fs-example" type="button" data-question="What was Apple's revenue in fiscal year 2024?">
+              <span class="icon">$</span>
+              <span>What was Apple's revenue in fiscal year 2024?</span>
+            </button>
+            <button class="fs-example" type="button" data-question="Compare Microsoft and Alphabet's operating margins in 2023.">
+              <span class="icon">⇄</span>
+              <span>Compare Microsoft and Alphabet's operating margins in 2023.</span>
+            </button>
+            <button class="fs-example" type="button" data-question="Summarize NVIDIA's supply chain risks from their latest 10-K.">
+              <span class="icon">△</span>
+              <span>Summarize NVIDIA's supply chain risks from their latest 10-K.</span>
+            </button>
+            <button class="fs-example" type="button" data-question="What was Amazon's Q3 fiscal year 2024 net income?">
+              <span class="icon">Q</span>
+              <span>What was Amazon's Q3 fiscal year 2024 net income?</span>
+            </button>
+            <button class="fs-example" type="button" data-question="How did Tesla describe autonomous-driving risks in their latest 10-K?">
+              <span class="icon">◎</span>
+              <span>How did Tesla describe autonomous-driving risks in their latest 10-K?</span>
+            </button>
+            <button class="fs-example" type="button" data-question="What was JPMorgan's debt-to-equity ratio in fiscal year 2023?">
+              <span class="icon">%</span>
+              <span>What was JPMorgan's debt-to-equity ratio in fiscal year 2023?</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Active thread content — JS populates these slots -->
+        <div id="thread" style="display:none"></div>
+
+      </div>
+    </div>
+
+    <!-- Composer (fixed at bottom of main) -->
+    <div class="fs-composer-wrap">
+      <form class="fs-composer" id="composer" autocomplete="off">
+        <div class="ctx-row" id="composerCtx" style="display:none"></div>
+        <div class="input-row">
+          <textarea id="composerInput"
+                    placeholder="Ask anything across SEC filings — pull tables, compare periods, surface risks…"
+                    rows="1"></textarea>
+          <button type="submit" class="fs-send" id="composerSend" title="Send (↵)">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 11.5L21 3l-7.5 18-2.5-7.5L3 11.5z"/>
+            </svg>
+          </button>
+        </div>
+        <div class="footer-row">
+          <span>FinSage · v28</span>
+          <span class="mode"><span class="dot"></span>Deep Research</span>
+          <span class="kbd">
+            <span>↵ to send</span>
+            <span>⇧↵ newline</span>
+          </span>
+        </div>
+      </form>
+    </div>
+
+  </main>
+</div>
+
+<!-- ────── Source modal (hidden by default) ────── -->
+<div class="fs-modal-backdrop" id="modalBackdrop">
+  <div class="fs-modal" role="dialog" aria-modal="true">
+    <div class="fs-modal-head">
+      <div class="badges" id="modalBadges"></div>
+      <button class="fs-modal-close" id="modalClose" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="fs-modal-body" id="modalBody">
+      <div class="fs-modal-loading">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/finsage.js" defer></script>
+</body>
+</html>

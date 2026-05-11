@@ -20,7 +20,7 @@
 # ── 1. Runtime Parameters ─────────────────────────────────────────────────────
 dbutils.widgets.text("catalog",              "main",                                    "UC catalog")
 dbutils.widgets.text("env",                  "dev",                                     "Environment")
-dbutils.widgets.text("llm_endpoint",         "databricks-claude-sonnet-4-6",            "LLM serving endpoint")
+dbutils.widgets.text("llm_endpoint",         "databricks-meta-llama-3-3-70b-instruct",  "LLM serving endpoint")
 dbutils.widgets.text("vs_endpoint",          "finsage_vs_endpoint",                     "Vector Search endpoint")
 dbutils.widgets.text("num_results",          "5",                                       "Top-k retrieval results")
 dbutils.widgets.text("similarity_threshold", "0.6",                                     "Min similarity score (0-1)")
@@ -88,18 +88,6 @@ print(f"[CONFIG restored] catalog={CATALOG} | llm={LLM_ENDPOINT} | metrics={METR
 # ── 3. Pre-load Gold metrics into memory ──────────────────────────────────────
 # company_metrics has only 180 rows — load once as a nested dict for zero-latency
 # lookup inside the pyfunc serving container (no SQL warehouse needed at runtime).
-#
-# Defensive re-init — idempotent if cell 2 already ran in this kernel, required
-# if the user clicked "Run cell" on this cell directly after restartPython
-# wiped state. Same pattern repeated in every later cell that uses module-level
-# state.
-import json, logging, re, time
-import requests
-log = logging.getLogger("finsage-agent")
-CATALOG                 = dbutils.widgets.get("catalog")
-METRICS_TABLE           = f"{CATALOG}.finsage_gold.company_metrics"
-METRICS_QUARTERLY_TABLE = f"{CATALOG}.finsage_gold.company_metrics_quarterly"
-SILVER_FINANCIALS_TABLE = f"{CATALOG}.finsage_silver.financial_statements"
 
 def _load_metrics_cache(table: str) -> dict:
     df = spark.table(table).select(
@@ -287,18 +275,6 @@ if len(FILING_METADATA_CACHE) < 25:
 
 # ── 4. Tool: search_filings ───────────────────────────────────────────────────
 
-# Defensive re-init — idempotent if cell 2 already ran. Required when this
-# cell is run standalone after restartPython() (cell 2) wiped Python globals.
-import json, logging, re
-import mlflow
-from databricks.vector_search.client import VectorSearchClient
-log = logging.getLogger("finsage-agent")
-CATALOG              = dbutils.widgets.get("catalog")
-VS_ENDPOINT          = dbutils.widgets.get("vs_endpoint")
-VS_INDEX_NAME        = f"{CATALOG}.finsage_gold.filing_chunks_index"
-NUM_RESULTS          = int(dbutils.widgets.get("num_results"))
-SIMILARITY_THRESHOLD = float(dbutils.widgets.get("similarity_threshold"))
-
 # Section names valid across both filing types. Business and Risk Factors are
 # 10-K-only; MD&A appears in both 10-K and 10-Q; Risk Factors Updates is 10-Q
 # Part II Item 1A (only present when the filer actually updates risks mid-year).
@@ -339,7 +315,7 @@ log.info("VS index columns present: %s (filing_type supported=%s)",
 
 
 @mlflow.trace(name="search_filings", span_type="RETRIEVER")
-def _search_filings_structured(
+def search_filings(
     query: str,
     ticker: str = None,
     section_name: str = None,
@@ -347,20 +323,15 @@ def _search_filings_structured(
     filing_type: str = None,
     num_results: int = NUM_RESULTS,
     similarity_threshold: float = SIMILARITY_THRESHOLD,
-) -> dict:
-    """Internal: returns BOTH the LLM-facing text and structured per-chunk
-    metadata. Used by FinSageAgent.predict() to populate the citations[]
-    response field so the chat UI can drill from a citation chip down to
-    the source filing section.
+) -> str:
+    """
+    Semantic search over SEC 10-K and 10-Q filing sections.
+    Returns relevant passages with source metadata.
 
-    The MLflow trace `name` is kept as 'search_filings' so the eval suite's
-    retrieval_grounded_when_used scorer can find the RETRIEVER span by its
-    public name regardless of which Python symbol invokes it.
-
-    Returns:
-      {"text":   <LLM-facing passages joined with [Source:] tags>,
-       "chunks": [{"ticker", "fiscal_year", "filing_type", "section_name",
-                   "chunk_text", "score"}, ...]}
+    10-K sections: Business, Risk Factors, MD&A.
+    10-Q sections: MD&A, Risk Factors Updates (when the filer includes them).
+    Pass filing_type='10-K' or '10-Q' to scope results to annual vs interim
+    (only applied if the live VS index has indexed the `filing_type` column).
     """
     vsc = VectorSearchClient(disable_notice=True)
     index = vsc.get_index(endpoint_name=VS_ENDPOINT, index_name=VS_INDEX_NAME)
@@ -394,17 +365,16 @@ def _search_filings_structured(
         )
     except Exception as e:
         log.warning("Vector search failed: %s", e)
-        return {"text": f"Search failed: {str(e)}", "chunks": []}
+        return f"Search failed: {str(e)}"
 
     data = results.get("result", {}).get("data_array", [])
     if not data:
-        return {"text": "No relevant passages found for this query.", "chunks": []}
+        return "No relevant passages found for this query."
 
     # Map column name → positional index so we read each row robustly whether
     # `filing_type` is present or not.
     col_pos = {c: i for i, c in enumerate(columns_to_fetch)}
-    passages_text: list[str] = []
-    chunks: list[dict] = []
+    passages = []
     for row in data:
         score = row[len(columns_to_fetch)] if len(row) > len(columns_to_fetch) else None
         if score is not None and score < similarity_threshold:
@@ -412,47 +382,18 @@ def _search_filings_structured(
         ticker_val = row[col_pos["ticker"]]
         fy         = row[col_pos["fiscal_year"]]
         section    = row[col_pos["section_name"]]
-        text       = row[col_pos["chunk_text"]] or ""
+        text       = row[col_pos["chunk_text"]]
         f_type     = row[col_pos["filing_type"]] if "filing_type" in col_pos else None
         src_parts  = [ticker_val, f"FY{int(fy)}"]
         if f_type:
             src_parts.append(f_type)
         src_parts.append(section)
-        passages_text.append(f"[Source: {' | '.join(src_parts)}]\n{text[:1200]}")
-        chunks.append({
-            "ticker":       str(ticker_val).upper() if ticker_val else None,
-            "fiscal_year":  int(fy) if fy is not None else None,
-            "filing_type":  f_type,
-            "section_name": section,
-            "chunk_text":   text,  # FULL text — required for tier-2 highlight in app
-            "score":        float(score) if score is not None else None,
-        })
+        passages.append(f"[Source: {' | '.join(src_parts)}]\n{text[:1200]}")
 
-    if not passages_text:
-        return {"text": "No passages met the similarity threshold. Try a broader query.", "chunks": []}
+    if not passages:
+        return "No passages met the similarity threshold. Try a broader query."
 
-    return {"text": "\n\n---\n\n".join(passages_text), "chunks": chunks}
-
-
-def search_filings(
-    query: str,
-    ticker: str = None,
-    section_name: str = None,
-    fiscal_year: int = None,
-    filing_type: str = None,
-    num_results: int = NUM_RESULTS,
-    similarity_threshold: float = SIMILARITY_THRESHOLD,
-) -> str:
-    """Public string-returning wrapper around _search_filings_structured.
-    Preserves the historical signature so notebook smoke tests, the eval
-    suite's tool-routing scorer, and any pickled callers see the same
-    text-only contract they had in v22 and earlier.
-    """
-    return _search_filings_structured(
-        query=query, ticker=ticker, section_name=section_name,
-        fiscal_year=fiscal_year, filing_type=filing_type,
-        num_results=num_results, similarity_threshold=similarity_threshold,
-    )["text"]
+    return "\n\n---\n\n".join(passages)
 
 
 # Quick smoke test
@@ -462,9 +403,6 @@ print("[search_filings test]", _test[:300])
 # COMMAND ----------
 
 # ── 5. Tool: get_company_metrics ──────────────────────────────────────────────
-
-# Defensive re-init for the @mlflow.trace decorator below.
-import mlflow
 
 @mlflow.trace(name="get_company_metrics", span_type="TOOL")
 def get_company_metrics(
@@ -539,9 +477,6 @@ print("[get_company_metrics test]\n", _test2)
 # Parallel to get_company_metrics but backed by the 10-Q-driven quarterly table.
 # Use for interim-period questions; annual questions should still route to
 # get_company_metrics since 10-K numbers are audited.
-
-# Defensive re-init for the @mlflow.trace decorator below.
-import mlflow
 
 @mlflow.trace(name="get_quarterly_metrics", span_type="TOOL")
 def get_quarterly_metrics(
@@ -637,9 +572,6 @@ print("[get_quarterly_metrics test]\n", _test3[:500])
 # COMMAND ----------
 
 # ── 5c. Tool: get_filing_metadata ─────────────────────────────────────────────
-
-# Defensive re-init for the @mlflow.trace decorator below.
-import mlflow
 
 @mlflow.trace(name="get_filing_metadata", span_type="TOOL")
 def get_filing_metadata(
@@ -836,12 +768,6 @@ print(f"[TOOLS] Registered: {list(TOOL_DISPATCH.keys())}")
 
 # ── 7. FinSageAgent — pyfunc model class ──────────────────────────────────────
 
-# Defensive re-init — class definition AND predict() at runtime both reference
-# these names. Even when this cell runs after restartPython() wiped state,
-# the class body and predict() resolve cleanly.
-import mlflow, re, json, time
-MAX_ITERATIONS = 5  # also exposed as class attribute below — see FinSageAgent
-
 SYSTEM_PROMPT = """\
 You are FinSage — an expert financial analyst AI deployed inside a chat
 interface for analysts, portfolio managers, and finance researchers. Every
@@ -937,6 +863,7 @@ CHAT TONE
   explain basics, but don't be terse either.
 - Lead with the answer. First sentence carries the headline number/fact.
   Subsequent sentences add context, comparison, or formula.
+- Use natural prose, not bullet-point dumps. Short paragraphs are fine.
 - Numbers are formatted at display precision:
     Dollars: `$391.04 billion` or `$391.04B` (not `391035000000`)
     Percentages: `43.31%` (not `0.4331`)
@@ -966,68 +893,14 @@ PRECISION GUARDRAILS
 - Never round in a way that crosses a rounding boundary (e.g. don't report
   $391.04B as "approximately $400 billion" — that's misleading).
 
-RESPONSE LENGTH (non-refusal answers)
-For every non-refusal answer, write a comprehensive 4 to 6 paragraph
-senior equity-analyst briefing. Lead with the headline figure in the first
-sentence, then expand with prior-year comparisons, key ratios, business
-context, and a closing implication paragraph. Use markdown for readability
-(short section headers, bold for key figures). Use only values that appear
-in the tool output for this turn — never introduce numbers from training
-memory or invented prior-year figures. Refusals stay tight (one short
-paragraph, never expanded).
-
 EXAMPLES — gold-standard answer shapes
-(Numerical-lookup answers follow the verbose 4-6 paragraph shape shown
-below. Refusal examples are intentionally one paragraph — refusals stay
-tight, never expanded.)
 
-User: "What was Apple's revenue in fiscal year 2024?"
-      (the get_company_metrics tool returned both FY2023 and FY2024 in
-       the same call; the verbose answer uses ONLY values from that output)
-You:  "## Apple Inc. (AAPL) — FY2024 Revenue Briefing
+User: "What was Apple's revenue in fiscal year 2023?"
+You:  "Apple's total net sales in fiscal year 2023 were $383.29 billion, a
+      ~3% decline from FY2022's $394.33 billion driven primarily by softer
+      iPhone and Mac demand.
 
-      **Top-Line Performance**
-      Apple reported total revenue of **$391.04 billion** in fiscal year
-      2024, a **2.02% year-over-year increase** from FY2023's $383.29
-      billion. Modest in percentage terms, but a clear return to growth
-      after the FY23 contraction — and a record annual print for the
-      company.
-
-      **Profitability and Margins**
-      Gross profit came in at $180.68 billion on a gross margin of
-      46.21%, signalling that Apple's premium-pricing power and growing
-      Services mix continued to support unit economics. Operating income
-      of $123.22 billion converted that into a roughly 31.5% operating
-      margin, with net income of $93.74 billion landing close to a 24%
-      net margin.
-
-      **Cash Generation**
-      Operating cash flow reached $118.25 billion. That is the
-      structurally important number for Apple — it funds the buyback
-      program, the dividend, and the R&D pipeline simultaneously, and
-      scaled almost 1-for-1 with net income, indicating high earnings
-      quality.
-
-      **Balance Sheet**
-      Total assets stood at $364.98B against total liabilities of
-      $308.03B, leaving stockholders' equity of $56.95B and a
-      debt-to-equity ratio of 1.87x. The capital structure is unusual
-      for a non-financial — but consistent with Apple's deliberate
-      strategy of returning cash via buybacks rather than letting equity
-      compound.
-
-      **Implication**
-      FY2024 reaffirms Apple's positioning as one of the most
-      cash-generative franchises in the index. The 2% revenue
-      reacceleration, combined with intact margins and a 1.87x leverage
-      ratio that the cash-flow base easily services, is the cleanest
-      annual print since the post-pandemic digestion cycle began.
-
-      [Source: AAPL | FY2024 | metrics]"
-      (NOTE the structure: 5 short paragraphs with markdown section
-       headers, every numeric figure traceable to the tool output.
-       This is the verbose shape every numerical-lookup answer must
-       follow. Refusals stay TIGHT — see the examples below.)
+      [Source: AAPL | FY2023 | metrics]"
 
 User: "What was AAPL's revenue in FY2030?"
 You:  "Apple's fiscal year 2030 hasn't occurred yet — it's a future period
@@ -1073,7 +946,7 @@ User: "Summarize McDonald's risk factors from their FY2023 10-K."
 You:  "I cannot answer this. McDonald's (MCD) annual 10-K narrative isn't
       in the FinSage retrieval index — there's a known section-extraction
       gap for MCD's 10-K filings (the silver layer captured 0 sections from
-       their 7 10-K documents, while their 10-Q narrative did extract
+      their 7 10-K documents, while their 10-Q narrative did extract
       cleanly). I have MCD's annual structured metrics (revenue, margins,
       etc.) and 10-Q MD&A text, but not 10-K Risk Factors or Business
       narrative. Want me to pull the 10-Q risk-factor updates instead, or
@@ -1084,10 +957,6 @@ You:  "I cannot answer this. McDonald's (MCD) annual 10-K narrative isn't
 
 
 class FinSageAgent(mlflow.pyfunc.PythonModel):
-
-    # Class attribute so predict() never depends on module-global MAX_ITERATIONS
-    # — survives any cell-execution order after restartPython.
-    MAX_ITERATIONS = 5
 
     def load_context(self, context):
         import json
@@ -1126,7 +995,7 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
             except (FileNotFoundError, json.JSONDecodeError, ValueError, TypeError):
                 self._filing_metadata_cache = {}
 
-        self._llm_endpoint    = context.model_config.get("llm_endpoint", "databricks-claude-sonnet-4-6")
+        self._llm_endpoint    = context.model_config.get("llm_endpoint", "databricks-meta-llama-3-3-70b-instruct")
         self._vs_endpoint     = context.model_config.get("vs_endpoint",  "finsage_vs_endpoint")
         self._vs_index        = context.model_config.get("vs_index",     "main.finsage_gold.filing_chunks_index")
         self._num_results     = int(context.model_config.get("num_results",     5))
@@ -1209,57 +1078,23 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
         # Build working message list with system prompt prepended
         working_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + list(messages)
         collected_sources = []
-        # Structured per-chunk metadata accumulated across every search_filings
-        # invocation in this turn. Returned to the caller as `citations` so the
-        # FinSage chat UI can populate its source-drill panel without having to
-        # re-issue the vector search.
-        collected_chunks: list[dict] = []
-        seen_chunk_keys: set = set()
         used_retrieval_tool = False
         max_runtime_seconds = 150
         started_at = time.time()
 
-        def _ingest_chunks(new_chunks: list) -> None:
-            """Dedup by (ticker, fy, filing_type, section, chunk_text)."""
-            for c in new_chunks or []:
-                key = (
-                    c.get("ticker"), c.get("fiscal_year"),
-                    c.get("filing_type"), c.get("section_name"),
-                    c.get("chunk_text"),
-                )
-                if key in seen_chunk_keys:
-                    continue
-                seen_chunk_keys.add(key)
-                collected_chunks.append(c)
-
-        def _sort_citations(chunks: list, top_n: int = 12) -> list:
-            """Rank by similarity score (desc) and cap to a reasonable max.
-            None scores sort last. The cap keeps the response payload bounded
-            even when the LLM probes the index multiple times in one turn."""
-            scored = sorted(
-                chunks,
-                key=lambda c: -(c.get("score") if c.get("score") is not None else -1.0),
-            )
-            return scored[:top_n]
-
         deploy_client = mlflow.deployments.get_deploy_client("databricks")
 
-        for iteration in range(self.MAX_ITERATIONS):
+        for iteration in range(MAX_ITERATIONS):
             if time.time() - started_at > max_runtime_seconds:
                 break
-            # v27: temperature 0.3 (vs v22's 0.1) gives the decoder enough
-            # entropy to expand into 4-6 paragraphs instead of collapsing to
-            # the shortest plausible response. max_tokens 2000 (vs 1024)
-            # removes the implicit truncation bias that was suppressing
-            # verbose final answers in v22. Tool-call routing is unchanged.
             response = deploy_client.predict(
                 endpoint=self._llm_endpoint,
                 inputs={
                     "messages":    working_messages,
                     "tools":       TOOL_SCHEMAS,
                     "tool_choice": "auto",
-                    "temperature": 0.3,
-                    "max_tokens":  2000,
+                    "temperature": 0.0,
+                    "max_tokens":  1024,
                 },
             )
 
@@ -1268,14 +1103,7 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
             msg         = choice["message"]
             tool_calls  = msg.get("tool_calls") or []
 
-            # No tool calls → the LLM has produced its final answer. Return
-            # it verbatim. v27 deliberately runs a single-LLM loop with no
-            # post-hoc synthesizer pass — v26's synthesizer caused widespread
-            # number hallucination (PFE / NVDA / WMT FY24 cases) and tanked
-            # numerical_tolerance from 87% to 69%. Verbose-length output is
-            # the SYSTEM_PROMPT's responsibility, with max_tokens / temperature
-            # bumped on the LLM call below to give the model room to expand
-            # without truncation bias.
+            # No tool calls → final answer
             if not tool_calls or finish == "stop":
                 final_content = msg.get("content", "")
                 final_content = _enforce_citation_format(
@@ -1284,11 +1112,7 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
                     used_retrieval=used_retrieval_tool,
                 )
                 working_messages.append({"role": "assistant", "content": final_content})
-                return {
-                    "content":   final_content,
-                    "messages":  working_messages[1:],  # strip system prompt
-                    "citations": _sort_citations(collected_chunks),
-                }
+                return {"content": final_content, "messages": working_messages[1:]}  # strip system prompt
 
             # Append assistant message with tool_calls to history
             working_messages.append(msg)
@@ -1304,7 +1128,7 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
 
                 if tool_name == "search_filings":
                     used_retrieval_tool = True
-                    _struct = _search_filings_structured(
+                    result = search_filings(
                         query=args.get("query", ""),
                         ticker=args.get("ticker"),
                         section_name=args.get("section_name"),
@@ -1313,8 +1137,6 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
                         num_results=args.get("num_results", self._num_results),
                         similarity_threshold=self._sim_threshold,
                     )
-                    result = _struct["text"]
-                    _ingest_chunks(_struct["chunks"])
                 elif tool_name == "get_company_metrics":
                     result = get_company_metrics(
                         ticker=args.get("ticker", ""),
@@ -1349,35 +1171,6 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
                     "content":      result,
                 })
 
-            # After all tool calls in this iteration are appended, add a
-            # final-turn briefing reminder. Same LLM call, same loop — this
-            # is just a conversational nudge that brings the verbose-length
-            # rule to the model's most recent attention, which is where
-            # instruction-following is strongest. Mirrors the canonical
-            # "RAG with elaboration" pattern. Empirically required because
-            # Claude (and similar instruction-tuned models) interpret a
-            # 12K-char SYSTEM_PROMPT with many precision/refusal rules as
-            # a signal to answer concisely; isolating the verbose
-            # instruction in the most recent message overrides that.
-            #
-            # Refusals do not pass through this branch because the agent
-            # never invokes a tool when refusing (REFUSALS rule above).
-            working_messages.append({
-                "role":    "user",
-                "content": (
-                    "Now write the comprehensive 4-6 paragraph senior "
-                    "equity-analyst briefing using ONLY the values that "
-                    "appear in the tool output above. Use markdown "
-                    "section headers and bold key figures. Lead with the "
-                    "headline figure in the first sentence, then expand "
-                    "into prior-year comparison, profitability, cash "
-                    "generation, balance sheet, and a closing implication "
-                    "paragraph (only those that the tool output supports). "
-                    "Do NOT introduce numbers that are not in the tool "
-                    "output. End with the [Source: ...] citation line(s)."
-                ),
-            })
-
         # Max iterations reached — ask the LLM for a best-effort answer
         working_messages.append({
             "role":    "user",
@@ -1385,7 +1178,7 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
         })
         final_response = deploy_client.predict(
             endpoint=self._llm_endpoint,
-            inputs={"messages": working_messages, "temperature": 0.1, "max_tokens": 768},
+            inputs={"messages": working_messages, "temperature": 0.0, "max_tokens": 768},
         )
         final_content = final_response["choices"][0]["message"].get("content", "")
         final_content = _enforce_citation_format(
@@ -1393,11 +1186,7 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
             tool_sources=collected_sources,
             used_retrieval=used_retrieval_tool,
         )
-        return {
-            "content":   final_content,
-            "messages":  working_messages[1:],
-            "citations": _sort_citations(collected_chunks),
-        }
+        return {"content": final_content, "messages": working_messages[1:]}
 
 
 print("[FinSageAgent] Class defined.")
@@ -1405,20 +1194,6 @@ print("[FinSageAgent] Class defined.")
 # COMMAND ----------
 
 # ── 8. Local smoke tests ──────────────────────────────────────────────────────
-
-# Defensive re-init for everything this cell + agent.predict() touch at
-# module level. Note that this cell still requires cells 4 (caches) and 7
-# (FinSageAgent class) to have run in this kernel — those produce non-widget
-# objects (METRICS_CACHE, QUARTERLY_METRICS_CACHE, FILING_METADATA_CACHE,
-# FinSageAgent, TOOL_SCHEMAS, search_filings + the metric tools).
-import json, time, re
-CATALOG              = dbutils.widgets.get("catalog")
-LLM_ENDPOINT         = dbutils.widgets.get("llm_endpoint")
-VS_ENDPOINT          = dbutils.widgets.get("vs_endpoint")
-VS_INDEX_NAME        = f"{CATALOG}.finsage_gold.filing_chunks_index"
-NUM_RESULTS          = int(dbutils.widgets.get("num_results"))
-SIMILARITY_THRESHOLD = float(dbutils.widgets.get("similarity_threshold"))
-MAX_ITERATIONS       = 5
 
 agent = FinSageAgent()
 
@@ -1495,22 +1270,10 @@ print("\n[SMOKE] all 3 questions produced expected signal — proceeding to log_
 
 # ── 9. MLflow logging & Unity Catalog registration ────────────────────────────
 
-# Defensive re-init — re-read all widget-derived constants this cell uses so
-# it survives "Run cell" in isolation after restartPython() wiped state.
 import mlflow
 from mlflow.models.signature import ModelSignature
 from mlflow.types.schema import Schema, ColSpec
 from mlflow.models.resources import DatabricksServingEndpoint, DatabricksVectorSearchIndex
-
-CATALOG              = dbutils.widgets.get("catalog")
-ENV                  = dbutils.widgets.get("env")
-LLM_ENDPOINT         = dbutils.widgets.get("llm_endpoint")
-VS_ENDPOINT          = dbutils.widgets.get("vs_endpoint")
-VS_INDEX_NAME        = f"{CATALOG}.finsage_gold.filing_chunks_index"
-NUM_RESULTS          = int(dbutils.widgets.get("num_results"))
-SIMILARITY_THRESHOLD = float(dbutils.widgets.get("similarity_threshold"))
-UC_MODEL_NAME        = f"{CATALOG}.finsage_gold.finsage_rag_agent"
-MAX_ITERATIONS       = 5
 
 input_schema  = Schema([ColSpec("string", "messages")])
 output_schema = Schema([ColSpec("string", "content")])
@@ -1593,15 +1356,9 @@ with mlflow.start_run(run_name=f"finsage_rag_agent_{ENV}") as run:
 
 # ── 10. Deploy to Databricks Model Serving ────────────────────────────────────
 
-# Defensive re-init — make this cell safe to "Run cell" in isolation.
-import mlflow
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.serving import EndpointCoreConfigInput, ServedEntityInput
 from databricks.sdk.errors import ResourceDoesNotExist
-
-CATALOG        = dbutils.widgets.get("catalog")
-UC_MODEL_NAME  = f"{CATALOG}.finsage_gold.finsage_rag_agent"
-AGENT_ENDPOINT = "finsage_agent_endpoint"
 
 w = WorkspaceClient()
 
@@ -1636,22 +1393,7 @@ print(f"[DEPLOY] Monitor at: https://dbc-f33010ed-00fc.cloud.databricks.com/ml/e
 
 # ── 11. Wait for endpoint + live test ─────────────────────────────────────────
 
-# Defensive re-init — survives standalone "Run cell" after restartPython().
 import time
-from databricks.sdk import WorkspaceClient
-
-w              = WorkspaceClient()
-AGENT_ENDPOINT = "finsage_agent_endpoint"
-# model_version is set by cell 10 when run sequentially. If this cell is run
-# standalone, recover the latest UC version.
-try:
-    model_version  # noqa: F821
-except NameError:
-    import mlflow
-    _client = mlflow.tracking.MlflowClient()
-    CATALOG = dbutils.widgets.get("catalog")
-    _all = _client.search_model_versions(f"name='{CATALOG}.finsage_gold.finsage_rag_agent'")
-    model_version = max(_all, key=lambda v: int(v.version)).version
 
 print(f"Waiting for endpoint '{AGENT_ENDPOINT}' to serve v{model_version}...")
 timeout, poll = 20 * 60, 20
