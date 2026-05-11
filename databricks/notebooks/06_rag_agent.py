@@ -44,8 +44,43 @@ print(f"[CONFIG] catalog={CATALOG} | env={ENV} | llm={LLM_ENDPOINT} | vs_index={
 
 # COMMAND ----------
 
-# MAGIC %pip install databricks-vectorsearch mlflow databricks-sdk
-# MAGIC dbutils.library.restartPython()
+# ── 1b. Dependency bootstrap (safe + idempotent) ─────────────────────────────
+# Avoid unconditional `%pip install ...` on every run — that can upgrade core
+# deps (notably NumPy) and crash the Python kernel on DBR due to ABI mismatch.
+# We install ONLY when needed, pin NumPy to <2, and restart only if changes occur.
+import importlib.util
+import re
+import subprocess
+import sys
+
+_install_specs = []
+
+if importlib.util.find_spec("databricks.vector_search") is None:
+    _install_specs.append("databricks-vectorsearch>=0.40,<1.0")
+if importlib.util.find_spec("databricks.sdk") is None:
+    _install_specs.append("databricks-sdk>=0.30,<1.0")
+
+_numpy_major = None
+try:
+    import numpy as _np  # type: ignore
+    _m = re.match(r"^(\d+)", getattr(_np, "__version__", ""))
+    _numpy_major = int(_m.group(1)) if _m else None
+except Exception:
+    # If numpy import itself is broken/missing, force a safe pin install.
+    _numpy_major = 99
+
+if _numpy_major is None or _numpy_major >= 2:
+    _install_specs.append("numpy<2")
+
+if _install_specs:
+    print(f"[DEPS] Installing: {_install_specs}")
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", *_install_specs]
+    )
+    print("[DEPS] Installed. Restarting Python...")
+    dbutils.library.restartPython()
+else:
+    print("[DEPS] Already satisfied. No restart required.")
 
 # COMMAND ----------
 
