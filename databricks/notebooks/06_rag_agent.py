@@ -23,7 +23,7 @@ dbutils.widgets.text("env",                  "dev",                             
 dbutils.widgets.text("llm_endpoint",         "databricks-meta-llama-3-3-70b-instruct",  "LLM serving endpoint")
 dbutils.widgets.text("vs_endpoint",          "finsage_vs_endpoint",                     "Vector Search endpoint")
 dbutils.widgets.text("num_results",          "5",                                       "Top-k retrieval results")
-dbutils.widgets.text("similarity_threshold", "0.6",                                     "Min similarity score (0-1)")
+dbutils.widgets.text("similarity_threshold", "0.4",                                     "Min similarity score (0-1)")
 
 CATALOG              = dbutils.widgets.get("catalog")
 ENV                  = dbutils.widgets.get("env")
@@ -443,6 +443,19 @@ def search_filings(
             src_parts.append(f_type)
         src_parts.append(section)
         passages.append(f"[Source: {' | '.join(src_parts)}]\n{text[:1200]}")
+
+    if not passages and similarity_threshold > 0.0:
+        # Industry-grade fallback: if strict filtering dropped all passages,
+        # retry one time at a permissive threshold to avoid false negatives.
+        return search_filings(
+            query=query,
+            ticker=ticker,
+            section_name=section_name,
+            fiscal_year=fiscal_year,
+            filing_type=filing_type,
+            num_results=num_results,
+            similarity_threshold=0.0,
+        )
 
     if not passages:
         return "No passages met the similarity threshold. Try a broader query."
@@ -1053,7 +1066,7 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
         self._vs_endpoint     = context.model_config.get("vs_endpoint",  "finsage_vs_endpoint")
         self._vs_index        = context.model_config.get("vs_index",     "main.finsage_gold.filing_chunks_index")
         self._num_results     = int(context.model_config.get("num_results",     5))
-        self._sim_threshold   = float(context.model_config.get("similarity_threshold", 0.6))
+        self._sim_threshold   = float(context.model_config.get("similarity_threshold", 0.4))
 
     def predict(self, context, model_input, params=None):
         import mlflow.deployments, json
@@ -1148,7 +1161,7 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
                     "tools":       TOOL_SCHEMAS,
                     "tool_choice": "auto",
                     "temperature": 0.0,
-                    "max_tokens":  1024,
+                    "max_tokens":  2000,
                 },
             )
 
@@ -1225,6 +1238,27 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
                     "content":      result,
                 })
 
+            # After tool execution, steer the next assistant turn toward a
+            # complete, analyst-grade response (without changing tool routing).
+            tool_names = {tc["function"]["name"] for tc in tool_calls if tc.get("function")}
+            if tool_names == {"get_filing_metadata"}:
+                working_messages.append({
+                    "role": "user",
+                    "content": (
+                        "Answer directly using the metadata fields returned. "
+                        "Be concise and factual, and include the exact source label(s)."
+                    ),
+                })
+            else:
+                working_messages.append({
+                    "role": "user",
+                    "content": (
+                        "Now write a comprehensive 3-5 paragraph senior equity-analyst answer "
+                        "using ONLY the tool outputs above. Keep numbers exact, explain the "
+                        "business context, and include source labels for each claim."
+                    ),
+                })
+
         # Max iterations reached — ask the LLM for a best-effort answer
         working_messages.append({
             "role":    "user",
@@ -1232,7 +1266,7 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
         })
         final_response = deploy_client.predict(
             endpoint=self._llm_endpoint,
-            inputs={"messages": working_messages, "temperature": 0.0, "max_tokens": 768},
+            inputs={"messages": working_messages, "temperature": 0.0, "max_tokens": 1200},
         )
         final_content = final_response["choices"][0]["message"].get("content", "")
         final_content = _enforce_citation_format(
