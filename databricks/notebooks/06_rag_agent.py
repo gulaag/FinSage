@@ -92,6 +92,10 @@ print(f"[CONFIG restored] catalog={CATALOG} | llm={LLM_ENDPOINT} | metrics={METR
 # Defensive re-init: users often run this cell directly after `%pip ...; restartPython()`,
 # which wipes Python globals. Rehydrate widget-derived constants here so this cell is
 # runnable in isolation and does not depend on prior cell execution order.
+if "log" not in globals():
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s - %(message)s")
+    log = logging.getLogger("finsage-agent")
 if "METRICS_TABLE" not in globals() or "METRICS_QUARTERLY_TABLE" not in globals():
     CATALOG = dbutils.widgets.get("catalog")
     METRICS_TABLE = f"{CATALOG}.finsage_gold.company_metrics"
