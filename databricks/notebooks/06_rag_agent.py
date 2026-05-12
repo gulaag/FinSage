@@ -11,7 +11,7 @@
 #   - Registered as a Unity Catalog model (main.finsage_gold.finsage_rag_agent)
 #   - Deployed to Databricks Model Serving (finsage_agent_endpoint)
 #
-# LLM: databricks-meta-llama-3-3-70b-instruct (function-calling capable, READY)
+# LLM: databricks-claude-sonnet-4-6 (function-calling capable, READY)
 # Framework: mlflow.pyfunc — no LangChain dependency
 # ==============================================================================
 
@@ -20,7 +20,7 @@
 # ── 1. Runtime Parameters ─────────────────────────────────────────────────────
 dbutils.widgets.text("catalog",              "main",                                    "UC catalog")
 dbutils.widgets.text("env",                  "dev",                                     "Environment")
-dbutils.widgets.text("llm_endpoint",         "databricks-meta-llama-3-3-70b-instruct",  "LLM serving endpoint")
+dbutils.widgets.text("llm_endpoint",         "databricks-claude-sonnet-4-6",             "LLM serving endpoint")
 dbutils.widgets.text("vs_endpoint",          "finsage_vs_endpoint",                     "Vector Search endpoint")
 dbutils.widgets.text("num_results",          "5",                                       "Top-k retrieval results")
 dbutils.widgets.text("similarity_threshold", "0.4",                                     "Min similarity score (0-1)")
@@ -899,7 +899,9 @@ You must decline (politely, with the specific reason) when:
 - A retrieval-only question targets a ticker whose filing text isn't indexed
   (currently MCD's 10-K narrative — the agent has annual metrics but no
    indexed 10-K text for McDonald's)
-- A tool returns "No data found" — treat that as authoritative
+- A tool returns "No data found" — if the user asked for filing-backed data, say
+  filing-backed data is unavailable; then you MAY provide a best-effort general
+  knowledge fallback only if clearly marked as non-filing.
 - A tool returns a value of "N/A" or null for the SPECIFIC metric the user
   asked about (e.g. user asks "net income for Q1 FY24" and the tool returns
   net_income=N/A) — refuse cleanly for that specific metric
@@ -916,14 +918,15 @@ Instead:
   • Never present an alternative metric as if it answered the original
     question.
 
-REFUSALS must:
+REFUSALS / FALLBACKS must:
 - Acknowledge the question briefly
 - Name the specific reason (future period / not in corpus / Q4 not stored /
   metric N/A in the underlying filing)
 - Offer a concrete alternative when one exists ("I can answer for FY2024" or
   "Try GOOGL instead of GOOG" or "I have the annual figure if that helps") —
   but format it as a follow-up, NOT as if it were the answer.
-Never invent data. Never cite a source for data you didn't retrieve.
+For non-filing fallback content, prefix with `[NON-FILING-FALLBACK]` and lead
+with a caution sentence. Never represent fallback claims as filing-grounded.
 
 CHAT TONE
 - Conversational and professional. The user is sophisticated; don't over-
@@ -950,6 +953,8 @@ CITATIONS — every factual claim
 - Multi-source answers: include one [Source:] line per distinct source.
 - Filing-metadata answers: `[Source: TICKER | FY#### | 10-K Cover Page]`.
 - Refusals: no source citation needed — there's nothing to cite.
+- Non-filing fallback answers must include:
+  `[Source: NON-FILING | FinSage filings do not cover this requested period | Due diligence required]`
 
 PRECISION GUARDRAILS
 - If a tool returns a value in raw dollars, you display the human-friendly
@@ -974,6 +979,14 @@ You:  "Apple's fiscal year 2030 hasn't occurred yet — it's a future period
       with no SEC filing in existence. The most recent fiscal year I can
       answer for Apple is FY2024 (ended September 28, 2024). Want that
       figure instead?"
+
+User: "What was AAPL's revenue in FY2015?"
+You:  "[NON-FILING-FALLBACK] Caution: FinSage's filing-backed corpus for this
+      demo covers FY2020-FY2026, so FY2015 is outside direct filing coverage
+      here. Apple reported about $233.7B of revenue in FY2015 as general
+      historical context.
+
+      [Source: NON-FILING | FinSage filings do not cover this requested period | Due diligence required]"
 
 User: "Compare FB's revenue to GOOG in FY2023."
 You:  "FB was Meta Platforms' former ticker (renamed META in 2022), and GOOG
@@ -1062,7 +1075,7 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
             except (FileNotFoundError, json.JSONDecodeError, ValueError, TypeError):
                 self._filing_metadata_cache = {}
 
-        self._llm_endpoint    = context.model_config.get("llm_endpoint", "databricks-meta-llama-3-3-70b-instruct")
+        self._llm_endpoint    = context.model_config.get("llm_endpoint", "databricks-claude-sonnet-4-6")
         self._vs_endpoint     = context.model_config.get("vs_endpoint",  "finsage_vs_endpoint")
         self._vs_index        = context.model_config.get("vs_index",     "main.finsage_gold.filing_chunks_index")
         self._num_results     = int(context.model_config.get("num_results",     5))
@@ -1075,6 +1088,20 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
 
         def _extract_sources(text: str) -> list[str]:
             return source_pattern.findall(text or "")
+
+        def _looks_missing_data(text: str) -> bool:
+            if not text:
+                return True
+            missing_patterns = (
+                r"No relevant passages found",
+                r"No passages met the similarity threshold",
+                r"No data for .*requested fiscal year range",
+                r"No quarterly data for .*matching the requested filters",
+                r"No metrics found for ticker",
+                r"No filing metadata for",
+                r"is unavailable",
+            )
+            return any(re.search(p, text, flags=re.IGNORECASE) for p in missing_patterns)
 
         def _enforce_citation_format(content: str, tool_sources: list[str], used_retrieval: bool) -> str:
             """Final-stage safety net: if the LLM forgot to mark a retrieval-grounded
@@ -1185,6 +1212,7 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
             working_messages.append(msg)
 
             # Execute each tool call
+            tool_results = []
             for tc in tool_calls:
                 tool_name = tc["function"]["name"]
                 raw_args  = tc["function"].get("arguments", "{}")
@@ -1237,11 +1265,23 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
                     "tool_call_id": tc.get("id", tool_name),
                     "content":      result,
                 })
+                tool_results.append(str(result or ""))
 
             # After tool execution, steer the next assistant turn toward a
             # complete, analyst-grade response (without changing tool routing).
             tool_names = {tc["function"]["name"] for tc in tool_calls if tc.get("function")}
-            if tool_names == {"get_filing_metadata"}:
+            all_missing = bool(tool_results) and all(_looks_missing_data(t) for t in tool_results)
+            if all_missing:
+                working_messages.append({
+                    "role": "user",
+                    "content": (
+                        "Tool outputs indicate filing-backed data is unavailable for this request. "
+                        "Provide a best-effort answer from general model knowledge ONLY as non-filing context. "
+                        "Prefix your answer with [NON-FILING-FALLBACK], start with a caution sentence, and append "
+                        "[Source: NON-FILING | FinSage filings do not cover this requested period | Due diligence required]."
+                    ),
+                })
+            elif tool_names == {"get_filing_metadata"}:
                 working_messages.append({
                     "role": "user",
                     "content": (
@@ -1262,7 +1302,11 @@ class FinSageAgent(mlflow.pyfunc.PythonModel):
         # Max iterations reached — ask the LLM for a best-effort answer
         working_messages.append({
             "role":    "user",
-            "content": "Based on the tool results above, provide your best answer now."
+            "content": (
+                "Based on the tool results above, provide your best answer now. "
+                "If filing-backed data is unavailable, return [NON-FILING-FALLBACK] with a caution sentence and "
+                "[Source: NON-FILING | FinSage filings do not cover this requested period | Due diligence required]."
+            ),
         })
         final_response = deploy_client.predict(
             endpoint=self._llm_endpoint,
