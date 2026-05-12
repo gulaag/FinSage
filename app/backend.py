@@ -20,8 +20,6 @@ import json
 import logging
 import os
 import re
-from collections import OrderedDict
-from functools import lru_cache
 from typing import Any, Optional
 
 from databricks import sql as dbsql
@@ -37,6 +35,8 @@ CATALOG                 = os.getenv("FINSAGE_CATALOG", "main")
 SECTIONS_TABLE          = f"{CATALOG}.finsage_silver.filing_sections"
 ANNUAL_METRICS_TABLE    = f"{CATALOG}.finsage_gold.company_metrics"
 QUARTERLY_METRICS_TABLE = f"{CATALOG}.finsage_gold.company_metrics_quarterly"
+CORPUS_MIN_FY = 2020
+CORPUS_MAX_FY = 2026
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -82,8 +82,6 @@ class AgentResponse(BaseModel):
 # ─────────────────────────────────────────────────────────────────────────────
 
 _workspace_client: Optional[WorkspaceClient] = None
-_response_cache: "OrderedDict[str, AgentResponse]" = OrderedDict()
-_response_cache_max = 256
 
 
 def _get_workspace_client() -> WorkspaceClient:
@@ -232,6 +230,225 @@ def _render_metadata_answer_from_tool(content: str, user_text: str) -> Optional[
     return f"{headline}{body}\n\n[Source: {ticker} | FY{fy} | 10-K Cover Page]"
 
 
+def _normalize_source_labels_in_content(content: str) -> str:
+    if not content:
+        return content
+    re_src = re.compile(r"\[Source:\s*([^\]]+?)\s*\]", flags=re.IGNORECASE)
+
+    def _fix(match: re.Match[str]) -> str:
+        raw = (match.group(1) or "").strip()
+        parts = [p.strip() for p in raw.split("|") if p and p.strip()]
+        if not parts:
+            return match.group(0)
+        ticker = (parts[0] or "").upper()
+        fy = ""
+        filing_type = ""
+        metric_kind = False
+        section_name = ""
+        for p in parts[1:]:
+            if re.fullmatch(r"FY\d{4}(?:\s*Q[1-4])?", p, flags=re.IGNORECASE):
+                fy = p.upper().replace("  ", " ")
+            elif re.fullmatch(r"10-[KQ]", p, flags=re.IGNORECASE):
+                filing_type = p.upper()
+            elif p.lower() == "metrics":
+                metric_kind = True
+            elif p.lower() == "10-k cover page":
+                filing_type = filing_type or "10-K"
+                section_name = "Cover Page"
+            elif p in {"Business", "Risk Factors", "MD&A", "Risk Factors Updates"}:
+                section_name = p
+        if metric_kind and not filing_type:
+            filing_type = "10-Q" if "Q" in fy else "10-K"
+        out = [ticker]
+        if fy:
+            out.append(fy)
+        if filing_type:
+            out.append(filing_type)
+        if metric_kind:
+            out.append("metrics")
+        elif section_name == "Cover Page":
+            out.append("Cover Page")
+        elif section_name:
+            out.append(section_name)
+        if len(out) < 2:
+            return match.group(0)
+        return f"[Source: {' | '.join(out)}]"
+
+    return re_src.sub(_fix, content)
+
+
+def _render_metrics_answer_from_tool(content: str, user_text: str, tool_name: str) -> Optional[str]:
+    if not content:
+        return None
+    if tool_name not in {"get_company_metrics", "get_quarterly_metrics"}:
+        return None
+    ticker_match = re.search(r"for\s+([A-Z]{1,8})\s*\(", content)
+    ticker = (ticker_match.group(1) if ticker_match else "").upper()
+    if not ticker:
+        return None
+
+    asks = user_text.lower()
+    wants_revenue = "revenue" in asks
+    wants_net_income = "net income" in asks
+    wants_margin = "margin" in asks
+    wants_debt = "debt" in asks or "equity" in asks or "ratio" in asks
+    wants_growth = "growth" in asks or "yoy" in asks
+
+    if tool_name == "get_quarterly_metrics":
+        block_re = re.compile(r"FY(\d{4})\s+Q([1-4])\s+\(period ending ([^)]+)\):([\s\S]*?)(?=\nFY\d{4}\s+Q[1-4]\s+\(|\Z)")
+        blocks = list(block_re.finditer(content))
+        if not blocks:
+            return None
+        fyq_need = re.search(r"FY(\d{4})\s*Q([1-4])", asks.upper())
+        chosen = None
+        if fyq_need:
+            fy_need = int(fyq_need.group(1))
+            q_need = int(fyq_need.group(2))
+            for b in blocks:
+                if int(b.group(1)) == fy_need and int(b.group(2)) == q_need:
+                    chosen = b
+                    break
+        if chosen is None:
+            chosen = blocks[-1]
+        fy = int(chosen.group(1))
+        fq = int(chosen.group(2))
+        period_end = chosen.group(3).strip()
+        payload = chosen.group(4)
+        fields = {}
+        for ln in payload.splitlines():
+            if ":" not in ln:
+                continue
+            k, v = ln.split(":", 1)
+            fields[k.strip().lower()] = v.strip()
+        rev = fields.get("revenue", "N/A")
+        ni = fields.get("net income", "N/A")
+        op = fields.get("operating income", "N/A")
+        margin = fields.get("gross margin", "N/A")
+        yoy = fields.get("revenue yoy (same q)", "N/A")
+        de = fields.get("debt/equity", "N/A")
+        lead = f"{ticker} reported {rev} of revenue in FY{fy} Q{fq} (period ending {period_end})."
+        context_bits = []
+        if wants_net_income or (not wants_margin and not wants_debt and not wants_growth):
+            context_bits.append(f"Net income was {ni}, and operating income was {op}.")
+        if wants_margin or not wants_net_income:
+            context_bits.append(f"Gross margin was {margin}, with same-quarter YoY revenue growth at {yoy}.")
+        if wants_debt:
+            context_bits.append(f"Debt-to-equity was {de}.")
+        prose = " ".join(context_bits[:2]).strip()
+        source = f"[Source: {ticker} | FY{fy} Q{fq} | 10-Q | metrics]"
+        return f"{lead}\n\n{prose}\n\n{source}" if prose else f"{lead}\n\n{source}"
+
+    block_re = re.compile(r"FY(\d{4}):([\s\S]*?)(?=\nFY\d{4}:|\Z)")
+    blocks = list(block_re.finditer(content))
+    if not blocks:
+        return None
+    fy_need = re.search(r"FY\s*(\d{4})|\b(20\d{2})\b", asks.upper())
+    chosen = None
+    if fy_need:
+        fy_target = int(next(g for g in fy_need.groups() if g))
+        for b in blocks:
+            if int(b.group(1)) == fy_target:
+                chosen = b
+                break
+    if chosen is None:
+        chosen = blocks[-1]
+    fy = int(chosen.group(1))
+    payload = chosen.group(2)
+    fields = {}
+    for ln in payload.splitlines():
+        if ":" not in ln:
+            continue
+        k, v = ln.split(":", 1)
+        fields[k.strip().lower()] = v.strip()
+    rev = fields.get("revenue", "N/A")
+    ni = fields.get("net income", "N/A")
+    op = fields.get("operating income", "N/A")
+    margin = fields.get("gross margin", "N/A")
+    yoy = fields.get("revenue yoy growth", "N/A")
+    de = fields.get("debt/equity", "N/A")
+
+    if wants_net_income and not wants_revenue:
+        lead = f"{ticker}'s net income in FY{fy} was {ni}."
+    elif wants_margin and not wants_revenue and not wants_net_income:
+        lead = f"{ticker}'s gross margin in FY{fy} was {margin}."
+    elif wants_debt and not wants_revenue and not wants_net_income:
+        lead = f"{ticker}'s debt-to-equity ratio in FY{fy} was {de}."
+    else:
+        lead = f"{ticker}'s total revenue in FY{fy} was {rev}."
+
+    context = []
+    context.append(f"Net income was {ni}, and operating income was {op}.")
+    if wants_growth or wants_revenue:
+        context.append(f"Gross margin was {margin}, and revenue YoY growth was {yoy}.")
+    if wants_debt:
+        context.append(f"Debt-to-equity was {de}.")
+    source = f"[Source: {ticker} | FY{fy} | 10-K | metrics]"
+    return f"{lead}\n\n{' '.join(context[:2])}\n\n{source}"
+
+
+def _render_metrics_no_data_answer(content: str, user_text: str) -> Optional[str]:
+    if not content:
+        return None
+
+    m = re.search(r"No data for\s+([A-Z]{1,8})\s+in the requested fiscal year range\.", content, flags=re.IGNORECASE)
+    if m:
+        ticker = m.group(1).upper()
+        year_m = re.search(r"\b(20\d{2})\b", user_text)
+        if year_m:
+            fy = year_m.group(1)
+            return (
+                f"[NON-FILING-FALLBACK] Caution: FinSage filing-backed coverage does not include {ticker} FY{fy} "
+                f"(current corpus window is FY2020-FY2026). "
+                f"If useful, I can provide best-effort general historical context as non-filing information.\n\n"
+                "[Source: NON-FILING | FinSage filings do not cover this requested period | Due diligence required]"
+            )
+        return (
+            f"[NON-FILING-FALLBACK] Caution: I don't have filing-backed {ticker} data for that requested fiscal period "
+            "in this corpus (FY2020-FY2026).\n\n"
+            "[Source: NON-FILING | FinSage filings do not cover this requested period | Due diligence required]"
+        )
+
+    m = re.search(r"No quarterly data for\s+([A-Z]{1,8})\s+matching the requested filters\.", content, flags=re.IGNORECASE)
+    if m:
+        ticker = m.group(1).upper()
+        return (
+            f"[NON-FILING-FALLBACK] Caution: I don't have a filing-backed quarterly row for {ticker} with those filters. "
+            f"Try a different FY/Q combination within the available corpus period (FY2020+).\n\n"
+            "[Source: NON-FILING | FinSage filings do not cover this requested period | Due diligence required]"
+        )
+
+    m = re.search(r"No metrics found for ticker\s+'?([A-Z]{1,8})'?", content, flags=re.IGNORECASE)
+    if m:
+        ticker = m.group(1).upper()
+        return (
+            f"[NON-FILING-FALLBACK] Caution: {ticker} is not in the current FinSage filing-backed metrics coverage set.\n\n"
+            "[Source: NON-FILING | FinSage filings do not cover this requested period | Due diligence required]"
+        )
+
+    return None
+
+
+def _force_non_filing_fallback_if_outside_corpus(content: str, user_text: str) -> Optional[str]:
+    if not user_text:
+        return None
+    years = [int(y) for y in re.findall(r"\b(20\d{2})\b", user_text)]
+    if not years:
+        return None
+    outside = [y for y in years if y < CORPUS_MIN_FY or y > CORPUS_MAX_FY]
+    if not outside:
+        return None
+    target_fy = outside[0]
+    cleaned = re.sub(r"\[Source:\s*[^\]]+\]\s*", "", content or "", flags=re.IGNORECASE).strip()
+    if not cleaned:
+        cleaned = "I can provide only best-effort general context for this period."
+    return (
+        f"[NON-FILING-FALLBACK] Caution: FinSage filing-backed coverage is FY{CORPUS_MIN_FY}-FY{CORPUS_MAX_FY}, "
+        f"so FY{target_fy} is outside direct SEC-filing coverage in this demo.\n\n"
+        f"{cleaned}\n\n"
+        "[Source: NON-FILING | FinSage filings do not cover this requested period | Due diligence required]"
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Agent endpoint query
 # ─────────────────────────────────────────────────────────────────────────────
@@ -246,25 +463,6 @@ def query_agent(messages: list[dict]) -> AgentResponse:
     if not messages:
         return AgentResponse(content="", error="No messages to send.")
     wire_messages = _massage_messages_for_routing(messages)
-
-    # Stabilize UX for repeated identical prompts: if the same message history
-    # is sent again, return the same parsed response from process-local cache.
-    # This avoids visible response drift from decoder randomness between retries.
-    try:
-        cache_key = json.dumps(wire_messages, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    except Exception:
-        cache_key = ""
-    if cache_key:
-        cached = _response_cache.get(cache_key)
-        if cached is not None:
-            try:
-                _response_cache.move_to_end(cache_key)
-            except Exception:
-                pass
-            try:
-                return cached.model_copy(deep=True)
-            except AttributeError:
-                return AgentResponse(**cached.dict())
 
     latest_user_text = ""
     for m in reversed(wire_messages):
@@ -322,6 +520,12 @@ def query_agent(messages: list[dict]) -> AgentResponse:
 
     parsed = _parse_prediction(pred)
 
+    outputs = _tool_outputs_from_messages(parsed.messages)
+    if not outputs:
+        forced = _force_non_filing_fallback_if_outside_corpus(parsed.content or "", latest_user_text)
+        if forced:
+            parsed.content = forced
+
     # Qualitative guardrail: if the model ignored retrieval and answered with
     # metrics-only tools, force one retry with an explicit retrieval directive.
     if qualitative_prompt and not _used_search_filings(parsed.messages):
@@ -350,20 +554,22 @@ def query_agent(messages: list[dict]) -> AgentResponse:
     # Metadata guardrail: keep cover-page Q&A concise and deterministic from
     # tool output, avoiding occasional "briefing template" spillover.
     outputs = _tool_outputs_from_messages(parsed.messages)
+    is_non_filing_fallback = bool(re.search(r"\[NON-FILING-FALLBACK\]", parsed.content or "", flags=re.IGNORECASE))
+
     if outputs and all(name == "get_filing_metadata" for name, _ in outputs):
         rendered = _render_metadata_answer_from_tool(outputs[-1][1], latest_user_text)
-        if rendered:
+        if rendered and not is_non_filing_fallback:
             parsed.content = rendered
+    elif outputs and all(name in {"get_company_metrics", "get_quarterly_metrics"} for name, _ in outputs):
+        no_data = _render_metrics_no_data_answer(outputs[-1][1], latest_user_text)
+        if no_data and not is_non_filing_fallback:
+            parsed.content = no_data
+        else:
+            rendered = _render_metrics_answer_from_tool(outputs[-1][1], latest_user_text, outputs[-1][0])
+            if rendered and (len((parsed.content or "").strip()) < 320):
+                parsed.content = rendered
 
-    # Cache successful responses only (never cache endpoint errors).
-    if cache_key and not parsed.error:
-        _response_cache[cache_key] = parsed
-        try:
-            _response_cache.move_to_end(cache_key)
-            while len(_response_cache) > _response_cache_max:
-                _response_cache.popitem(last=False)
-        except Exception:
-            pass
+    parsed.content = _normalize_source_labels_in_content(parsed.content or "")
 
     return parsed
 
@@ -389,7 +595,6 @@ def _get_sql_connection():
     )
 
 
-@lru_cache(maxsize=512)
 def fetch_section_text(
     ticker: str,
     fiscal_year: int,
@@ -399,8 +604,7 @@ def fetch_section_text(
     """Return the full clean section text for one (ticker, fy, filing_type,
     section) combination. None if not found.
 
-    Cached — sections are immutable once landed in silver, so a process-
-    lifetime cache is correct."""
+    No in-process cache — always re-query to guarantee fresh behavior."""
     if not (ticker and section_name):
         return None
     try:
@@ -476,7 +680,6 @@ _METRIC_COLUMNS = [
 ]
 
 
-@lru_cache(maxsize=1024)
 def fetch_metrics_row(
     ticker: str,
     fiscal_year: int,
@@ -505,9 +708,7 @@ def fetch_metrics_row(
         "ticker": ticker,
         "fy": int(fiscal_year),
     }
-    if fiscal_quarter is None:
-        where.append("fiscal_quarter IS NULL")
-    else:
+    if fiscal_quarter is not None:
         where.append("fiscal_quarter = %(fq)s")
         params["fq"] = int(fiscal_quarter)
 
@@ -533,6 +734,27 @@ def fetch_metrics_row(
             conn.close()
         except Exception:
             pass
+
+    if not row and fiscal_quarter is None:
+        sql_fallback = (
+            f"SELECT {cols_sql} "
+            f"FROM {table} "
+            f"WHERE upper(ticker) = upper(%(ticker)s) AND fiscal_year = %(fy)s "
+            f"LIMIT 1"
+        )
+        conn2 = None
+        try:
+            conn2 = _get_sql_connection()
+            with conn2.cursor() as cur:
+                cur.execute(sql_fallback, {"ticker": ticker, "fy": int(fiscal_year)})
+                row = cur.fetchone()
+        except Exception:
+            row = None
+        finally:
+            try:
+                conn2.close()
+            except Exception:
+                pass
 
     if not row:
         return None

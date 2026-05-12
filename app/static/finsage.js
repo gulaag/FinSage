@@ -199,9 +199,14 @@ function parseSourceLabel(srcStr) {
     fiscal_year: null,
     fiscal_quarter: null,
     source_kind: "unknown", // "section" | "metrics" | "metadata" | "unknown"
+    filing_type: null,
     section_name: null,
   };
   out.ticker = (parts[0] || "").toUpperCase() || null;
+  if (out.ticker === "NON-FILING") {
+    out.source_kind = "non_filing";
+    return out;
+  }
   for (let i = 1; i < parts.length; i++) {
     const p = parts[i];
     const fyq = p.match(/^FY(\d{4})(?:\s*Q([1-4]))?$/i);
@@ -215,12 +220,20 @@ function parseSourceLabel(srcStr) {
       out.section_name = p;
       continue;
     }
+    if (/^10-[KQ]$/i.test(p)) {
+      out.filing_type = p.toUpperCase();
+      continue;
+    }
     if (p.toLowerCase() === "metrics") {
       out.source_kind = "metrics";
       continue;
     }
     if (p.toLowerCase() === "10-k cover page") {
       out.source_kind = "metadata";
+      continue;
+    }
+    if (/filings do not cover this requested period/i.test(p)) {
+      out.source_kind = "non_filing";
       continue;
     }
   }
@@ -246,7 +259,7 @@ function transformCitations(content, citations) {
         ticker:       (matched && matched.ticker) || parsed.ticker || null,
         fiscal_year:  (matched && matched.fiscal_year) || parsed.fiscal_year || null,
         fiscal_quarter: parsed.fiscal_quarter || null,
-        filing_type:  matched ? matched.filing_type : null,
+        filing_type:  (matched && matched.filing_type) || parsed.filing_type || null,
         section_name: (matched && matched.section_name) || parsed.section_name || null,
         chunk_text:   matched ? matched.chunk_text : "",
         source_kind:  sourceKind,
@@ -254,37 +267,58 @@ function transformCitations(content, citations) {
       n++;
     }
     const num = seen.get(src);
-    const c = cites[num];
-    const quote = c.quote
-      ? `<span class="quote">&ldquo;${escapeHtml(c.quote.slice(0, 280))}&rdquo;</span>`
-      : "";
-    const locText =
-      c.source_kind === "section"
-        ? (c.location || "Open filing section")
-        : c.source_kind === "metrics"
-          ? "Open structured metrics"
-          : c.source_kind === "metadata"
-            ? "Open filing metadata"
-          : "Reference";
-    const loc = escapeHtml(locText);
-    const canOpen =
-      c.source_kind === "section" ||
-      c.source_kind === "metrics" ||
-      c.source_kind === "metadata";
-    const popup =
-      `<span class="pop">` +
-        `<span class="src">${escapeHtml(c.label)}</span>` +
-        quote +
-        `<span class="loc"><span>${loc}</span><span>${canOpen ? "↗" : ""}</span></span>` +
-      `</span>`;
-    const clickableClass = canOpen ? " clickable" : "";
-    return `<span class="fs-cite${clickableClass}" data-cite="${num}">${num}${popup}</span>`;
+    // Keep source references out of paragraph body; they are rendered at the
+    // end of the answer in a dedicated Sources section.
+    return "";
   });
   return { html, cites };
 }
 
+function buildSourceLabel(c) {
+  if (c.source_kind === "non_filing") return c.label || "NON-FILING";
+  const bits = [];
+  if (c.ticker) bits.push(String(c.ticker).toUpperCase());
+  if (c.fiscal_year) {
+    const fy = `FY${parseInt(c.fiscal_year, 10)}`;
+    const fq = c.fiscal_quarter ? ` Q${parseInt(c.fiscal_quarter, 10)}` : "";
+    bits.push(`${fy}${fq}`);
+  }
+  if (c.filing_type) bits.push(String(c.filing_type).toUpperCase());
+  else if (c.source_kind === "metrics") bits.push(c.fiscal_quarter ? "10-Q" : "10-K");
+  if (c.source_kind === "metrics") bits.push("metrics");
+  if (c.source_kind === "metadata") bits.push("10-K Cover Page");
+  if (c.source_kind === "section" && c.section_name) bits.push(c.section_name);
+  return bits.length ? bits.join(" | ") : (c.label || "Source");
+}
+
+function renderSourceRefs(cites, exid) {
+  const entries = Object.keys(cites || {})
+    .map(k => ({ key: parseInt(k, 10), cite: cites[k] }))
+    .filter(x => x.cite)
+    .sort((a, b) => a.key - b.key);
+  const items = entries.map(e => e.cite);
+  if (!items.length) return "";
+  const refsHtml = entries.map(({ key, cite: c }) => {
+    const canOpen =
+      (c.source_kind === "section" && c.ticker && c.fiscal_year && c.section_name) ||
+      (c.source_kind === "metrics" && c.ticker && c.fiscal_year) ||
+      (c.source_kind === "metadata" && c.ticker && c.fiscal_year);
+    const cls = canOpen ? "fs-cite clickable" : "fs-cite";
+    const txt = buildSourceLabel(c);
+    return `<span class="${cls}" data-exid="${escapeHtml(exid)}" data-cite="${key}">${key}. ${escapeHtml(txt)}</span>`;
+  }).join("");
+  return `
+    <div class="fs-h">
+      <h3>Sources</h3>
+      <div class="rule"></div>
+      <span class="badge">${items.length} source${items.length !== 1 ? "s" : ""}</span>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">${refsHtml}</div>
+  `;
+}
+
 function stripInlineTags(s) {
-  return (s || "").replace(/\[(?:VERBATIM|SUMMARY)\]\s*/gi, "");
+  return (s || "").replace(/\[(?:VERBATIM|SUMMARY|NON-FILING-FALLBACK)\]\s*/gi, "");
 }
 
 // ────── Latest-exchange selector ──────
@@ -427,7 +461,7 @@ function extractMetadataEvidence(rawMessages) {
 }
 
 // ────── Render: TLDR + prose ──────
-function renderTldrAndProse(transformedHtml) {
+function renderTldrAndProse(transformedHtml, cites, exid, opts = {}) {
   const blocks = transformedHtml.split(/\n\s*\n+/).map(b => b.trim()).filter(Boolean);
   if (!blocks.length) return "";
   const firstHtml = mdToHtml(blocks[0]);
@@ -438,7 +472,16 @@ function renderTldrAndProse(transformedHtml) {
     proseHtml = mdToHtml(restMd);
     proseHtml = wrapInlineNumbers(proseHtml);
   }
+  const cautionHtml = opts.nonFilingFallback ? `
+    <div class="fs-tldr" style="border-color:#6b4a2a;background:linear-gradient(180deg,#231a14 0%,#191413 100%)">
+      <div class="l" style="color:#f0b36a">Caution</div>
+      <div class="body">
+        FinSage filings do not cover this requested period directly. This answer may include non-filing model context and should be independently verified.
+      </div>
+    </div>
+  ` : "";
   return `
+    ${cautionHtml}
     <div class="fs-tldr">
       <div class="l">Bottom line</div>
       <div class="body">${tldrInner}</div>
@@ -451,6 +494,7 @@ function renderTldrAndProse(transformedHtml) {
       </div>
       <div class="fs-prose">${proseHtml}</div>
     ` : ""}
+    ${renderSourceRefs(cites || {}, exid)}
   `;
 }
 
@@ -555,12 +599,13 @@ function renderThread() {
     } else if (ex.asstMsg && ex.asstMsg.error) {
       aHtml = `<div class="fs-error">${escapeHtml(ex.asstMsg.error)}</div>`;
     } else if (ex.asstMsg) {
-      const cleaned = stripInlineTags(ex.asstMsg.content);
+      const rawContent = ex.asstMsg.content || "";
+      const nonFilingFallback = /\[NON-FILING-FALLBACK\]/i.test(rawContent);
+      const cleaned = stripInlineTags(rawContent);
       const { html: transformed, cites } = transformCitations(cleaned, ex.asstMsg.citations || []);
       const timelineHtml = renderTimeline(ex.asstMsg.raw_messages || []);
-      const tldrProseHtml = renderTldrAndProse(transformed);
-      const sourcesHtml = renderSources(ex.asstMsg.citations || [], exid);
-      aHtml = `${timelineHtml}${tldrProseHtml}${sourcesHtml}`;
+      const tldrProseHtml = renderTldrAndProse(transformed, cites, exid, { nonFilingFallback });
+      aHtml = `${timelineHtml}${tldrProseHtml}`;
 
       const exCites = cites || {};
       Object.values(exCites).forEach(c => { c._exid = exid; });
@@ -733,10 +778,13 @@ async function openSourceModal(c) {
     if (!section) {
       modalBody.innerHTML = `
         <div class="fs-modal-error">
-          Full section text isn't materialized in silver for this row.
-          The agent still grounded its answer in this passage:
+          Full section text could not be loaded from the silver layer for this source label.
         </div>
-        <div style="margin-top:14px"><mark>${escapeHtml(chunk)}</mark></div>
+        <div style="margin-top:14px">${
+          chunk
+            ? `<mark>${escapeHtml(chunk)}</mark>`
+            : `<div style="color:#b8bcc7">No retriever snippet payload was attached for this label, so only the source metadata is available in the UI right now.</div>`
+        }</div>
       `;
       return;
     }
