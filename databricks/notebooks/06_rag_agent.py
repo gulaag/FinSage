@@ -438,6 +438,11 @@ def search_filings(
         section    = row[col_pos["section_name"]]
         text       = row[col_pos["chunk_text"]]
         f_type     = row[col_pos["filing_type"]] if "filing_type" in col_pos else None
+        if not f_type and filing_type in VALID_FILING_TYPES:
+            # If VS index schema hasn't materialized filing_type yet, keep the
+            # requested filing_type in source labels so downstream provenance
+            # remains explicit and UI drill-down contracts stay stable.
+            f_type = filing_type
         src_parts  = [ticker_val, f"FY{int(fy)}"]
         if f_type:
             src_parts.append(f_type)

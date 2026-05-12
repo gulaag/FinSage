@@ -151,6 +151,112 @@ def _tool_outputs_from_messages(msgs: list[dict]) -> list[tuple[str, str]]:
     return out
 
 
+def _citations_from_search_tool_outputs(msgs: list[dict]) -> list[Citation]:
+    """Derive structured citations from search_filings tool outputs.
+
+    This is the canonical fallback when the endpoint omits pred.citations.
+    It prevents UI drill-down from depending on model-authored [Source: ...] text.
+    """
+    citations: list[Citation] = []
+    src_re = re.compile(r"\[Source:\s*([^\]]+)\]\s*\n?([\s\S]*?)(?=(?:\n\s*---\s*\n)|(?:\n\[Source:\s*[^\]]+\])|$)", re.IGNORECASE)
+    latest_user_text = ""
+    for m in reversed(msgs):
+        if isinstance(m, dict) and m.get("role") == "user":
+            latest_user_text = str(m.get("content") or "")
+            break
+    user_ft: Optional[str] = None
+    if re.search(r"\b10-?k\b", latest_user_text, flags=re.IGNORECASE):
+        user_ft = "10-K"
+    elif re.search(r"\b10-?q\b", latest_user_text, flags=re.IGNORECASE):
+        user_ft = "10-Q"
+    pending: list[dict[str, Any]] = []
+    for m in msgs:
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") == "assistant":
+            for tc in m.get("tool_calls") or []:
+                fn = (tc or {}).get("function") or {}
+                args: dict[str, Any] = {}
+                raw_args = fn.get("arguments")
+                if isinstance(raw_args, str) and raw_args.strip():
+                    try:
+                        parsed = json.loads(raw_args)
+                        if isinstance(parsed, dict):
+                            args = parsed
+                    except Exception:
+                        args = {}
+                elif isinstance(raw_args, dict):
+                    args = raw_args
+                pending.append({
+                    "name": str(fn.get("name") or "tool"),
+                    "args": args,
+                })
+            continue
+        if m.get("role") != "tool" or not pending:
+            continue
+        rec = pending.pop(0)
+        name = rec.get("name") or "tool"
+        args = rec.get("args") or {}
+        content = str(m.get("content") or "")
+        if name != "search_filings":
+            continue
+        arg_filing_type = None
+        try:
+            ft = args.get("filing_type")
+            if isinstance(ft, str) and re.fullmatch(r"10-[KQ]", ft, flags=re.IGNORECASE):
+                arg_filing_type = ft.upper()
+        except Exception:
+            arg_filing_type = None
+        for m in src_re.finditer(content or ""):
+            label = (m.group(1) or "").strip()
+            chunk = (m.group(2) or "").strip()
+            parts = [p.strip() for p in label.split("|") if p and p.strip()]
+            if not parts:
+                continue
+            ticker: Optional[str] = None
+            fiscal_year: Optional[int] = None
+            filing_type: Optional[str] = None
+            section_name: Optional[str] = None
+            ticker = parts[0].upper()
+            for p in parts[1:]:
+                fy_m = re.fullmatch(r"FY(\d{4})", p, flags=re.IGNORECASE)
+                if fy_m:
+                    fiscal_year = int(fy_m.group(1))
+                    continue
+                if re.fullmatch(r"10-[KQ]", p, flags=re.IGNORECASE):
+                    filing_type = p.upper()
+                    continue
+                if p in {"Business", "Risk Factors", "MD&A", "Risk Factors Updates"}:
+                    section_name = p
+                    continue
+            if not filing_type:
+                filing_type = arg_filing_type
+            if not filing_type:
+                filing_type = user_ft
+            try:
+                citations.append(Citation(
+                    ticker=ticker,
+                    fiscal_year=fiscal_year,
+                    filing_type=filing_type,
+                    section_name=section_name,
+                    chunk_text=chunk,
+                    score=None,
+                ))
+            except Exception:
+                continue
+    return citations
+
+
+def _infer_filing_type_from_text(text: str) -> Optional[str]:
+    if not text:
+        return None
+    if re.search(r"\b10-?k\b", text, flags=re.IGNORECASE):
+        return "10-K"
+    if re.search(r"\b10-?q\b", text, flags=re.IGNORECASE):
+        return "10-Q"
+    return None
+
+
 def _render_metadata_answer_from_tool(content: str, user_text: str) -> Optional[str]:
     if not content:
         return None
@@ -488,6 +594,8 @@ def query_agent(messages: list[dict]) -> AgentResponse:
 
         raw_messages = pred_obj.get("messages") or []
         msgs: list[dict] = [m for m in raw_messages if isinstance(m, dict)]
+        if not citations and msgs:
+            citations = _citations_from_search_tool_outputs(msgs)
         return AgentResponse(content=content, citations=citations, messages=msgs)
 
     def _used_search_filings(msgs: list[dict]) -> bool:
@@ -519,6 +627,11 @@ def query_agent(messages: list[dict]) -> AgentResponse:
         pred = raw
 
     parsed = _parse_prediction(pred)
+    inferred_ft = _infer_filing_type_from_text(latest_user_text)
+    if inferred_ft and parsed.citations:
+        for c in parsed.citations:
+            if not c.filing_type:
+                c.filing_type = inferred_ft
 
     outputs = _tool_outputs_from_messages(parsed.messages)
     if not outputs:

@@ -251,7 +251,10 @@ function transformCitations(content, citations) {
       seen.set(src, n);
       const matched = matchCitation(src, citations);
       const parsed = parseSourceLabel(src);
-      const sourceKind = matched ? "section" : (parsed.source_kind || "unknown");
+      let sourceKind = parsed.source_kind || "unknown";
+      if (sourceKind === "unknown" && matched && matched.section_name) {
+        sourceKind = "section";
+      }
       cites[n] = {
         label:        src,
         quote:        (matched && matched.chunk_text) || "",
@@ -417,15 +420,23 @@ function extractMetricsEvidence(rawMessages) {
     if (m.role === "assistant" && Array.isArray(m.tool_calls)) {
       for (const tc of m.tool_calls) {
         const fn = (tc && tc.function) || {};
-        pending.push(fn.name || "tool");
+        let parsedArgs = {};
+        if (typeof fn.arguments === "string" && fn.arguments.trim()) {
+          try { parsedArgs = JSON.parse(fn.arguments); } catch (_e) { parsedArgs = {}; }
+        } else if (fn.arguments && typeof fn.arguments === "object") {
+          parsedArgs = fn.arguments;
+        }
+        pending.push({ name: fn.name || "tool", args: parsedArgs });
       }
       continue;
     }
     if (m.role === "tool" && pending.length) {
-      const toolName = pending.shift();
+      const call = pending.shift() || {};
+      const toolName = call.name || "tool";
       if (toolName === "get_company_metrics" || toolName === "get_quarterly_metrics") {
         out.push({
           tool_name: toolName,
+          args: call.args || {},
           content: String(m.content || ""),
         });
       }
@@ -456,6 +467,55 @@ function extractMetadataEvidence(rawMessages) {
         });
       }
     }
+  }
+  return out;
+}
+
+function extractSectionEvidence(rawMessages) {
+  if (!rawMessages || !rawMessages.length) return [];
+  const out = [];
+  const pending = [];
+  for (const m of rawMessages) {
+    if (!m || typeof m !== "object") continue;
+    if (m.role === "assistant" && Array.isArray(m.tool_calls)) {
+      for (const tc of m.tool_calls) {
+        const fn = (tc && tc.function) || {};
+        let parsedArgs = {};
+        if (typeof fn.arguments === "string" && fn.arguments.trim()) {
+          try { parsedArgs = JSON.parse(fn.arguments); } catch (_e) { parsedArgs = {}; }
+        } else if (fn.arguments && typeof fn.arguments === "object") {
+          parsedArgs = fn.arguments;
+        }
+        pending.push({ name: fn.name || "tool", args: parsedArgs });
+      }
+      continue;
+    }
+    if (m.role === "tool" && pending.length) {
+      const call = pending.shift() || {};
+      const toolName = call.name || "tool";
+      if (toolName === "search_filings") {
+        out.push({
+          tool_name: toolName,
+          args: call.args || {},
+          content: String(m.content || ""),
+        });
+      }
+    }
+  }
+  return out;
+}
+
+function parseSearchPassages(toolContent) {
+  const raw = String(toolContent || "");
+  if (!raw.trim()) return [];
+  const out = [];
+  const re = /\[Source:\s*([^\]]+)\]\s*\n?([\s\S]*?)(?=(?:\n\s*---\s*\n)|(?:\n\[Source:\s*[^\]]+\])|$)/gi;
+  let m;
+  while ((m = re.exec(raw)) !== null) {
+    const label = (m[1] || "").trim();
+    const text = (m[2] || "").trim();
+    if (!label) continue;
+    out.push({ label, text });
   }
   return out;
 }
@@ -577,6 +637,8 @@ function renderThread() {
   cur._inlineCitesByExid = {};
   cur._metricsEvidenceByExid = {};
   cur._metadataEvidenceByExid = {};
+  cur._sectionEvidenceByExid = {};
+  cur._rawMessagesByExid = {};
 
   const htmlBlocks = exchanges.map((ex, i) => {
     const exid = `ex-${i}`;
@@ -613,6 +675,8 @@ function renderThread() {
       cur._inlineCitesByExid[exid] = exCites;
       cur._metricsEvidenceByExid[exid] = extractMetricsEvidence(ex.asstMsg.raw_messages || []);
       cur._metadataEvidenceByExid[exid] = extractMetadataEvidence(ex.asstMsg.raw_messages || []);
+      cur._sectionEvidenceByExid[exid] = extractSectionEvidence(ex.asstMsg.raw_messages || []);
+      cur._rawMessagesByExid[exid] = ex.asstMsg.raw_messages || [];
     }
     return `<div class="fs-exchange" data-exid="${escapeHtml(exid)}">${qHtml}${aHtml}</div>`;
   });
@@ -747,6 +811,15 @@ function fmtMetricValue(key, val) {
 }
 
 async function openSourceModal(c) {
+  const cur = getCurrentThread();
+  const exid = c._exid || "";
+  let evidences =
+    (cur && cur._sectionEvidenceByExid && cur._sectionEvidenceByExid[exid]) || [];
+  if ((!evidences || !evidences.length) && cur && cur._rawMessagesByExid && cur._rawMessagesByExid[exid]) {
+    evidences = extractSectionEvidence(cur._rawMessagesByExid[exid]);
+  }
+  const fallbackPassages = evidences.flatMap(e => parseSearchPassages(e.content || ""));
+
   const reqSeq = ++modalRequestSeq;
   const fyStr = c.fiscal_year ? `FY${parseInt(c.fiscal_year, 10)}` : "";
   modalBadges.innerHTML = `
@@ -758,7 +831,17 @@ async function openSourceModal(c) {
   modalBackdrop.classList.add("open");
 
   if (!c.ticker || !c.fiscal_year || !c.section_name) {
-    modalBody.innerHTML = `<div class="fs-modal-error">Citation is missing identifying metadata.</div>`;
+    const best = fallbackPassages[0];
+    if (best && best.text) {
+      modalBody.innerHTML = `
+        <div style="margin-bottom:10px;color:#b8bcc7;font-size:13px">
+          Full section lookup needs ticker/year/section metadata; showing grounded retriever passage instead.
+        </div>
+        <pre style="white-space:pre-wrap;line-height:1.45;font-size:12.5px;color:#d8d9de;background:#14141d;border:1px solid #2a2a35;border-radius:8px;padding:12px">${escapeHtml(best.text)}</pre>
+      `;
+    } else {
+      modalBody.innerHTML = `<div class="fs-modal-error">Citation is missing identifying metadata.</div>`;
+    }
     return;
   }
 
@@ -776,6 +859,13 @@ async function openSourceModal(c) {
     const section = data.section_text || "";
     const chunk = c.chunk_text || "";
     if (!section) {
+      const best = fallbackPassages.find(p => {
+        const up = p.label.toUpperCase();
+        const tickerOk = (c.ticker || "") ? up.includes(String(c.ticker).toUpperCase()) : true;
+        const fyOk = c.fiscal_year ? up.includes(`FY${parseInt(c.fiscal_year, 10)}`) : true;
+        const secOk = c.section_name ? up.includes(String(c.section_name).toUpperCase()) : true;
+        return tickerOk && fyOk && secOk;
+      }) || fallbackPassages[0];
       modalBody.innerHTML = `
         <div class="fs-modal-error">
           Full section text could not be loaded from the silver layer for this source label.
@@ -783,7 +873,9 @@ async function openSourceModal(c) {
         <div style="margin-top:14px">${
           chunk
             ? `<mark>${escapeHtml(chunk)}</mark>`
-            : `<div style="color:#b8bcc7">No retriever snippet payload was attached for this label, so only the source metadata is available in the UI right now.</div>`
+            : (best && best.text)
+              ? `<pre style="white-space:pre-wrap;line-height:1.45;font-size:12.5px;color:#d8d9de;background:#14141d;border:1px solid #2a2a35;border-radius:8px;padding:12px">${escapeHtml(best.text)}</pre>`
+              : `<div style="color:#b8bcc7">No retriever snippet payload was attached for this label, so only the source metadata is available in the UI right now.</div>`
         }</div>
       `;
       return;
@@ -827,16 +919,63 @@ async function openMetricsModal(c) {
   modalBody.innerHTML = `<div class="fs-modal-loading">Loading structured metrics source…</div>`;
   modalBackdrop.classList.add("open");
 
-  if (!c.ticker || !c.fiscal_year) {
+  if (!c.ticker) {
+    modalBody.innerHTML = `<div class="fs-modal-error">Metrics citation is missing ticker metadata.</div>`;
+    return;
+  }
+  const cur = getCurrentThread();
+  const exid = c._exid || "";
+  const evidences =
+    (cur && cur._metricsEvidenceByExid && cur._metricsEvidenceByExid[exid]) ||
+    (cur && cur._metricsEvidence) ||
+    [];
+  if ((!evidences || !evidences.length) && cur && cur._rawMessagesByExid && cur._rawMessagesByExid[exid]) {
+    const derived = extractMetricsEvidence(cur._rawMessagesByExid[exid]);
+    if (derived && derived.length) {
+      // non-destructive local fallback
+      evidences.push(...derived);
+    }
+  }
+  let fy = c.fiscal_year ? parseInt(c.fiscal_year, 10) : null;
+  let fq = c.fiscal_quarter ? parseInt(c.fiscal_quarter, 10) : null;
+  if (!fy) {
+    const tickerNeedle = String(c.ticker || "").toUpperCase();
+    for (const e of evidences) {
+      const a = e.args || {};
+      if (a.ticker && String(a.ticker).toUpperCase() !== tickerNeedle) continue;
+      if (a.fiscal_year) { fy = parseInt(a.fiscal_year, 10); if (a.fiscal_quarter) fq = parseInt(a.fiscal_quarter, 10); break; }
+      if (a.fiscal_year_start && a.fiscal_year_end && Number(a.fiscal_year_start) === Number(a.fiscal_year_end)) {
+        fy = parseInt(a.fiscal_year_start, 10);
+        break;
+      }
+      const m = String(e.content || "").match(/FY(\d{4})(?:\s+Q([1-4]))?/i);
+      if (m) {
+        fy = parseInt(m[1], 10);
+        fq = m[2] ? parseInt(m[2], 10) : fq;
+        break;
+      }
+    }
+  }
+  if (!fy) {
+    const best = evidences[0];
+    if (best && best.content) {
+      modalBody.innerHTML = `
+        <div style="margin-bottom:10px;color:#b8bcc7;font-size:13px">
+          Metrics year is missing in citation label; showing grounded tool output instead.
+        </div>
+        <pre style="white-space:pre-wrap;line-height:1.45;font-size:12.5px;color:#d8d9de;background:#14141d;border:1px solid #2a2a35;border-radius:8px;padding:12px">${escapeHtml(best.content)}</pre>
+      `;
+      return;
+    }
     modalBody.innerHTML = `<div class="fs-modal-error">Metrics citation is missing ticker/year metadata.</div>`;
     return;
   }
   try {
     const params = new URLSearchParams({
       ticker: c.ticker,
-      fiscal_year: String(parseInt(c.fiscal_year, 10)),
+      fiscal_year: String(fy),
     });
-    if (c.fiscal_quarter) params.set("fiscal_quarter", String(parseInt(c.fiscal_quarter, 10)));
+    if (fq) params.set("fiscal_quarter", String(fq));
     const res = await fetch(`/api/metrics?${params.toString()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
@@ -844,15 +983,7 @@ async function openMetricsModal(c) {
     if (data.error) {
       // Fall back to tool-output evidence if SQL warehouse isn't configured
       // locally (common for localhost runs).
-      const cur = getCurrentThread();
-      const exid = c._exid || "";
-      const evidences =
-        (cur && cur._metricsEvidenceByExid && cur._metricsEvidenceByExid[exid]) ||
-        (cur && cur._metricsEvidence) ||
-        [];
-      const fyNeedle = c.fiscal_quarter
-        ? `FY${parseInt(c.fiscal_year, 10)} Q${parseInt(c.fiscal_quarter, 10)}`
-        : `FY${parseInt(c.fiscal_year, 10)}`;
+      const fyNeedle = fq ? `FY${fy} Q${fq}` : `FY${fy}`;
       const tickerNeedle = String(c.ticker || "").toUpperCase();
       const best = evidences.find(e => {
         const txt = (e.content || "").toUpperCase();
