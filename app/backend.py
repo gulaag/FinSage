@@ -124,13 +124,34 @@ def _massage_messages_for_routing(messages: list[dict]) -> list[dict]:
         and isinstance(last.get("content"), str)
         and _is_likely_qualitative_prompt(last.get("content") or "")
     ):
-        # Lightweight routing hint: keeps user intent intact but nudges the
-        # downstream tool loop toward narrative filing retrieval.
+        # Routing + analyst-narrative hint. Pushes the agent toward (a) multiple
+        # distinct search_filings queries and (b) a get_company_metrics call for
+        # multi-year financial context, yielding a 5-7 paragraph grounded
+        # response instead of a terse single-chunk paraphrase.
         if not re.search(r"search_filings", last["content"], flags=re.IGNORECASE):
             last["content"] = (
                 last["content"].rstrip()
-                + "\n\n[Routing hint: This is a qualitative filing-text question. "
-                  "Use search_filings over 10-K/10-Q narrative sections, not metrics-only output.]"
+                + "\n\n[Routing hint: Qualitative filing-text question. You MUST "
+                  "complete ALL of the following tool calls BEFORE writing your "
+                  "answer:\n"
+                  "1. Call search_filings AT LEAST 3 TIMES with distinct angled "
+                  "queries — e.g. one query for regulatory risk, one for technology "
+                  "development risk, one for market adoption / competitive risk. "
+                  "For phrasing like 'latest' or 'most recent', set fiscal_year=2026 "
+                  "(the latest fiscal year in the corpus). To compare across years, "
+                  "issue separate queries for FY2024, FY2025, FY2026.\n"
+                  "2. Call get_company_metrics for the ticker to retrieve multi-year "
+                  "financial context (revenue, R&D, net income trends).\n\n"
+                  "Then write the answer as a senior equity analyst in 5-7 paragraphs:\n"
+                  "- Paragraph 1: 'Bottom line' summary (1 paragraph).\n"
+                  "- Paragraphs 2-6: detailed analysis weaving evidence from EACH "
+                  "search_filings result and the metrics data.\n"
+                  "- Tag every substantive claim with [Source: TICKER | FY#### | "
+                  "10-K/10-Q | Section] or [Source: TICKER | FY#### | metrics].\n"
+                  "- Use [VERBATIM] before direct filing quotes; use [SUMMARY] "
+                  "before paraphrased filing content.\n"
+                  "- Never invent numeric values — only cite numbers that came "
+                  "directly from get_company_metrics output.]"
             )
     return wire
 
@@ -245,6 +266,85 @@ def _citations_from_search_tool_outputs(msgs: list[dict]) -> list[Citation]:
             except Exception:
                 continue
     return citations
+
+
+def _citations_from_metrics_tool_outputs(msgs: list[dict]) -> list[Citation]:
+    """Derive one Citation per fiscal-year row from get_company_metrics and
+    get_quarterly_metrics tool outputs.
+
+    The metrics tool returns plain text grouped by `FY####:` headers. Each
+    such block becomes a Citation (section_name='metrics') so the Sources
+    strip shows one card per fiscal year — mirroring the original
+    yesterday-perfect behavior where a single metrics call yielded 5-6
+    distinct per-year source cards.
+    """
+    citations: list[Citation] = []
+    header_re = re.compile(r"Financial metrics for\s+([A-Z]{1,6})\b", re.IGNORECASE)
+    fy_block_re = re.compile(r"(?:^|\n)\s*FY(\d{4})(?:\s+Q([1-4]))?\s*:\s*\n([\s\S]*?)(?=\n\s*FY\d{4}|\Z)", re.IGNORECASE)
+    pending: list[dict[str, Any]] = []
+    for m in msgs:
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") == "assistant":
+            for tc in m.get("tool_calls") or []:
+                fn = (tc or {}).get("function") or {}
+                pending.append({"name": str(fn.get("name") or "tool")})
+            continue
+        if m.get("role") != "tool" or not pending:
+            continue
+        rec = pending.pop(0)
+        name = rec.get("name") or "tool"
+        content = str(m.get("content") or "")
+        if name not in ("get_company_metrics", "get_quarterly_metrics"):
+            continue
+        ticker: Optional[str] = None
+        h = header_re.search(content)
+        if h:
+            ticker = h.group(1).upper()
+        is_quarterly = (name == "get_quarterly_metrics")
+        filing_type = "10-Q" if is_quarterly else "10-K"
+        for fy_m in fy_block_re.finditer(content):
+            try:
+                fy = int(fy_m.group(1))
+            except (TypeError, ValueError):
+                continue
+            block_text = (fy_m.group(0) or "").strip()
+            section_name = "metrics"
+            try:
+                citations.append(Citation(
+                    ticker=ticker,
+                    fiscal_year=fy,
+                    filing_type=filing_type,
+                    section_name=section_name,
+                    chunk_text=block_text,
+                    score=None,
+                ))
+            except Exception:
+                continue
+    return citations
+
+
+def _dedupe_citations(cites: list[Citation]) -> list[Citation]:
+    """Collapse duplicate citations by (ticker, fy, filing_type, section_name).
+    Keeps the entry with the longest chunk_text per group so the modal still
+    has substantive content to render. Order-preserving."""
+    seen: dict[tuple, int] = {}
+    out: list[Citation] = []
+    for c in cites:
+        key = (
+            (c.ticker or "").upper(),
+            c.fiscal_year,
+            (c.filing_type or "").upper() or None,
+            c.section_name,
+        )
+        if key in seen:
+            idx = seen[key]
+            if len(c.chunk_text or "") > len(out[idx].chunk_text or ""):
+                out[idx] = c
+            continue
+        seen[key] = len(out)
+        out.append(c)
+    return out
 
 
 def _infer_filing_type_from_text(text: str) -> Optional[str]:
@@ -596,6 +696,13 @@ def query_agent(messages: list[dict]) -> AgentResponse:
         msgs: list[dict] = [m for m in raw_messages if isinstance(m, dict)]
         if not citations and msgs:
             citations = _citations_from_search_tool_outputs(msgs)
+        # Always merge metrics-tool citations on top of search citations so
+        # the Sources strip shows one card per fiscal year for a metrics call,
+        # then dedupe identical filing chunks (when multi-query search returns
+        # near-identical Risk Factors passages, they collapse into one card).
+        if msgs:
+            citations = citations + _citations_from_metrics_tool_outputs(msgs)
+        citations = _dedupe_citations(citations)
         return AgentResponse(content=content, citations=citations, messages=msgs)
 
     def _used_search_filings(msgs: list[dict]) -> bool:

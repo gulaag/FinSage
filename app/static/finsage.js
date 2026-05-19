@@ -274,6 +274,43 @@ function transformCitations(content, citations) {
     // end of the answer in a dedicated Sources section.
     return "";
   });
+  // Backfill structured citations from the backend that the prose did not
+  // explicitly tag with [Source: ...]. This restores the multi-card Sources
+  // strip when the agent retrieves multiple per-year metrics or filings but
+  // only references a subset by name in its narrative. Caps at 8 cards.
+  if (Array.isArray(citations) && citations.length) {
+    const labelFor = (c) => {
+      const bits = [];
+      if (c.ticker) bits.push(String(c.ticker).toUpperCase());
+      if (c.fiscal_year) bits.push(`FY${parseInt(c.fiscal_year, 10)}`);
+      if (c.filing_type) bits.push(String(c.filing_type).toUpperCase());
+      if (c.section_name) bits.push(c.section_name);
+      return bits.join(" | ");
+    };
+    const existingLabels = new Set(Object.values(cites).map(c => labelFor(c)));
+    for (const c of citations) {
+      if (n > 8) break;
+      const lbl = labelFor(c);
+      if (!lbl || existingLabels.has(lbl)) continue;
+      existingLabels.add(lbl);
+      const sourceKind = c.section_name === "metrics"
+        ? "metrics"
+        : (c.section_name ? "section" : "unknown");
+      cites[n] = {
+        label:        lbl,
+        quote:        c.chunk_text || "",
+        location:     c.section_name || "",
+        ticker:       c.ticker || null,
+        fiscal_year:  c.fiscal_year || null,
+        fiscal_quarter: null,
+        filing_type:  c.filing_type || null,
+        section_name: c.section_name || null,
+        chunk_text:   c.chunk_text || "",
+        source_kind:  sourceKind,
+      };
+      n++;
+    }
+  }
   return { html, cites };
 }
 
