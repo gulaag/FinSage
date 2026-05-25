@@ -23,10 +23,6 @@ print(f"[CONFIG] catalog={CATALOG} | env={ENV} | start_date={START_DATE} | ticke
 
 # COMMAND ----------
 
-# MAGIC %pip install langchain
-
-# COMMAND ----------
-
 # MAGIC %pip install langchain-text-splitters tiktoken
 # MAGIC dbutils.library.restartPython()
 
@@ -168,8 +164,16 @@ def chunk_sections_udf(
 
 # --- Build chunk dataframe ---
 run_id    = str(uuid.uuid4())
-df_source = spark.table(SOURCE_TABLE).select(
-    "filing_id", "ticker", "fiscal_year", "section_name", "section_text"
+# filing_type is new on filing_sections (added when 10-Q support landed in notebook 03);
+# coalesce to '10-K' so backfilled rows that predate the column retain the legacy semantics.
+df_source = (
+    spark.table(SOURCE_TABLE)
+    .withColumn(
+        "filing_type",
+        F.coalesce(F.col("filing_type"), F.lit("10-K")) if "filing_type" in spark.table(SOURCE_TABLE).columns
+        else F.lit("10-K"),
+    )
+    .select("filing_id", "ticker", "fiscal_year", "filing_type", "section_name", "section_text")
 )
 
 df_chunks = (
@@ -183,6 +187,7 @@ df_chunks = (
         F.col("filing_id"),
         F.col("ticker"),
         F.col("fiscal_year"),
+        F.col("filing_type"),
         F.col("section_name"),
         F.col("chunk.chunk_index").alias("chunk_index"),
         F.col("chunk.chunk_text").alias("chunk_text"),
@@ -218,15 +223,29 @@ if bad_rows > 0:
     raise RuntimeError("Invalid chunk rows detected. Aborting write.")
 
 # --- Idempotent write ---
+# autoMerge ensures the new filing_type column lands on the existing table
+spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
+
 if spark.catalog.tableExists(TARGET_TABLE):
+    # chunk_id is hashed over chunk_text, so any upstream silver change (e.g. the
+    # sec-parser swap) produces entirely new chunk_ids for the same section. A plain
+    # MERGE on chunk_id would insert the new chunks without deleting the prior-run
+    # rows, leaving stale orphans side-by-side in the index. Instead, delete every
+    # target chunk whose (filing_id, section_name) pair is being rewritten, then
+    # append the fresh chunks. This keeps unrelated filings (e.g. during a
+    # ticker-filtered run) untouched.
     target = DeltaTable.forName(spark, TARGET_TABLE)
+    affected_pairs = df_chunks.select("filing_id", "section_name").distinct()
     (
         target.alias("t")
-        .merge(df_chunks.alias("s"), "t.chunk_id = s.chunk_id")
-        .whenMatchedUpdateAll()
-        .whenNotMatchedInsertAll()
+        .merge(
+            affected_pairs.alias("p"),
+            "t.filing_id = p.filing_id AND t.section_name = p.section_name",
+        )
+        .whenMatchedDelete()
         .execute()
     )
+    df_chunks.write.format("delta").mode("append").saveAsTable(TARGET_TABLE)
 else:
     df_chunks.write.format("delta").mode("overwrite").saveAsTable(TARGET_TABLE)
 
@@ -403,12 +422,7 @@ def wait_for_index_ready(vsc, endpoint_name, index_name, timeout_sec):
         indexed_rows = _nested_get(desc, ("status", "indexed_row_count"), ("indexed_row_count",))
         total_rows   = _nested_get(desc, ("status", "total_row_count"),   ("total_row_count",))
         log.info("Index state=%s indexed=%s total=%s message=%s", state, indexed_rows, total_rows, msg)
-        # FIND THIS BLOCK IN YOUR wait_for_index_ready FUNCTION:
-        if state in {"ONLINE", "READY", "ONLINE_NO_PENDING_UPDATE"} or state.startswith("ONLINE"):
-            return desc
-
-        # REPLACE IT WITH THIS:
-        if state in {"ONLINE", "READY", "ONLINE_NO_PENDING_UPDATE"} or state.startswith("ONLINE") or "succeeded" in msg.lower():
+        if state in {"ONLINE", "READY", "ONLINE_NO_PENDING_UPDATE"} or state.startswith("ONLINE") or (msg and "succeeded" in msg.lower()):
             log.info("Success detected via state or message. Proceeding...")
             return desc
         if state in {"FAILED", "ERROR", "UNHEALTHY"}:
@@ -418,16 +432,45 @@ def wait_for_index_ready(vsc, endpoint_name, index_name, timeout_sec):
             )
         time.sleep(POLL_SEC)
 
-def trigger_sync_if_needed(vsc, endpoint_name, index_name, pipeline_type):
+def trigger_sync_if_needed(vsc, endpoint_name, index_name, pipeline_type,
+                           sync_timeout_sec: int = 10):
+    """Fire a TRIGGERED-pipeline sync via the REST API instead of idx.sync().
+
+    The Vector Search Python SDK's idx.sync() has a long-standing bug where the
+    underlying HTTP call returns 200 but the wrapper never receives the
+    completion signal — the call blocks forever even though the server has
+    accepted the request. We bypass the SDK entirely and POST to
+    /api/2.0/vector-search/indexes/{name}/sync directly, with an explicit
+    socket-level timeout. This is bounded and provably non-hanging.
+    """
     if pipeline_type.upper() != "TRIGGERED":
         log.info("Pipeline type is %s; explicit sync not required.", pipeline_type)
         return
-    idx = _retryable_call(lambda: vsc.get_index(endpoint_name=endpoint_name, index_name=index_name))
-    if hasattr(idx, "sync"):
-        log.info("Triggering index sync for TRIGGERED pipeline.")
-        _retryable_call(lambda: idx.sync())
-    else:
-        log.warning("Index object has no sync() method in this SDK version; skip explicit trigger.")
+
+    import os
+    import requests
+    from databricks.sdk import WorkspaceClient
+
+    cfg = WorkspaceClient().config
+    headers = cfg.authenticate()
+    base = cfg.host.rstrip("/")
+    url = f"{base}/api/2.0/vector-search/indexes/{index_name}/sync"
+
+    try:
+        log.info("Firing sync via REST POST %s (timeout=%ss).", url, sync_timeout_sec)
+        r = requests.post(url, headers=headers, timeout=sync_timeout_sec)
+        log.info("Sync POST status=%s body=%s", r.status_code, r.text[:300])
+        if r.status_code >= 400:
+            log.warning("Sync POST returned non-2xx — index may not have started syncing.")
+    except requests.exceptions.Timeout:
+        log.warning("Sync POST exceeded %ss socket timeout. The pipeline may still have accepted it; "
+                    "polling state to verify.", sync_timeout_sec)
+    except Exception as e:
+        log.warning("Sync POST raised %r. Falling back to state poll.", e)
+
+    desc = _retryable_call(lambda: vsc.get_index(endpoint_name=endpoint_name, index_name=index_name))
+    state = _normalize_state(_nested_get(desc, ("status", "state"), ("state",)))
+    log.info("Post-sync index state=%s", state)
 
 def run_vector_index_setup():
     vsc = VectorSearchClient(disable_notice=True)

@@ -32,11 +32,6 @@ print(f"[CONFIG] catalog={CATALOG} | env={ENV} | start_date={START_DATE} | ticke
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC DROP TABLE IF EXISTS main.finsage_gold.company_metrics;
-
-# COMMAND ----------
-
 from pyspark.sql.functions import (
     col, when, lit, row_number, coalesce, current_timestamp, lag,
     datediff, to_date, year, month, lower, trim,
@@ -210,6 +205,11 @@ df_metrics = (
     df_base
     .withColumn("gross_profit",     coalesce(col("gross_profit_raw"), col("revenue") - col("cost_of_revenue")))
     .withColumn("total_liabilities", coalesce(col("total_liabilities_raw"), col("total_assets") - col("equity")))
+    # book_equity: prefer tagged StockholdersEquity; fall back to A − L. Keeps D/E
+    # populated for tickers whose XBRL omits a StockholdersEquity concept.
+    .withColumn("total_equity",
+        coalesce(col("equity"), col("total_assets") - col("total_liabilities"))
+    )
     .withColumn("total_debt",
         when(col("short_term_debt").isNull() & col("long_term_debt").isNull(), lit(None).cast("double"))
         .otherwise(coalesce(col("short_term_debt"), lit(0.0)) + coalesce(col("long_term_debt"), lit(0.0)))
@@ -231,8 +231,8 @@ df_metrics = (
         )
     )
     .withColumn("debt_to_equity",
-        when(col("equity").isNotNull() & (col("equity") != 0) & col("total_debt").isNotNull(),
-             col("total_debt") / col("equity"))
+        when(col("total_equity").isNotNull() & (col("total_equity") != 0) & col("total_debt").isNotNull(),
+             col("total_debt") / col("total_equity"))
     )
 )
 
@@ -257,11 +257,14 @@ df_gold = (
         "ticker", "company_name", "fiscal_year", "fiscal_quarter",
         "revenue", "net_income", "gross_profit", "operating_income",
         "operating_cash_flow", "total_assets", "total_liabilities",
-        "total_debt", "rd_expense", "gross_margin_pct",
+        "total_equity", "total_debt", "rd_expense", "gross_margin_pct",
         "revenue_yoy_growth_pct", "debt_to_equity",
         "data_quality_score", "updated_at",
     )
 )
+
+# Enable schema autoMerge so adding total_equity doesn't require a table rebuild
+spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
 
 if spark.catalog.tableExists(gold_table):
     dt = DeltaTable.forName(spark, gold_table)
