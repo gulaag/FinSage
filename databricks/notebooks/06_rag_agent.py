@@ -1430,21 +1430,17 @@ resources = [
     DatabricksVectorSearchIndex(index_name=VS_INDEX_NAME),
 ]
 
-# When this notebook runs as a job task (vs. interactively in a Git Folder),
-# MLflow has no implicit experiment context — start_run() then fails with
-# "Could not find experiment with ID None". Bind to a stable workspace
-# experiment path before opening the run; create it on first execution.
-EXPERIMENT_PATH = f"/Users/digvijay@arsaga.jp/finsage_rag_agent_{ENV}"
-try:
-    mlflow.set_experiment(EXPERIMENT_PATH)
-except Exception:
-    from mlflow.tracking import MlflowClient
-    _client = MlflowClient()
-    _exp = _client.get_experiment_by_name(EXPERIMENT_PATH)
-    _exp_id = _exp.experiment_id if _exp else _client.create_experiment(EXPERIMENT_PATH)
-    mlflow.set_experiment(experiment_id=_exp_id)
+# Resolve a durable experiment id explicitly and pass it to start_run().
+# This avoids reliance on implicit notebook context (which is missing in some
+# job runs) and avoids mlflow.set_experiment() in Git Folder notebooks.
+from mlflow.tracking import MlflowClient
 
-with mlflow.start_run(run_name=f"finsage_rag_agent_{ENV}") as run:
+EXPERIMENT_PATH = f"/Users/digvijay@arsaga.jp/finsage_rag_agent_{ENV}"
+_mlflow_client = MlflowClient()
+_exp = _mlflow_client.get_experiment_by_name(EXPERIMENT_PATH)
+_exp_id = _exp.experiment_id if _exp else _mlflow_client.create_experiment(EXPERIMENT_PATH)
+
+with mlflow.start_run(run_name=f"finsage_rag_agent_{ENV}", experiment_id=_exp_id) as run:
     mlflow.log_params({
         "llm_endpoint":          LLM_ENDPOINT,
         "vs_index":              VS_INDEX_NAME,
