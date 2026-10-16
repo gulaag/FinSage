@@ -15,6 +15,8 @@ dbutils.widgets.text("catalog",       "main",       "Unity Catalog catalog")
 dbutils.widgets.text("env",           "dev",        "Environment (dev/prod)")
 dbutils.widgets.text("start_date",    "2020-01-01", "Earliest filing date")
 dbutils.widgets.text("ticker_filter", "",           "Comma-separated tickers (empty=all)")
+dbutils.widgets.dropdown("allow_regex_only", "false", ["false", "true"],
+                         "Allow merge when sec-parser covers <50% of sections")
 
 CATALOG       = dbutils.widgets.get("catalog")
 ENV           = dbutils.widgets.get("env")
@@ -595,6 +597,29 @@ extract_udf_schema = StructType([
 ])
 extract_udf = udf(extract_sections, extract_udf_schema)
 
+# ── Pre-flight: sec-parser must import on the executors that run the UDF ─────
+# extract_sections() swallows per-filing exceptions into the `error` column and
+# falls back to regex, so a missing package degrades silently into regex-only
+# rows (2026-06-11: ModuleNotFoundError on every filing, 1,457 silver rows
+# overwritten with regex output). Fail the run here instead.
+def _probe_sec_parser(_):
+    try:
+        import sec_parser as sp
+        return "ok" if hasattr(sp, "Edgar10QParser") else "missing Edgar10QParser"
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
+
+_probe_udf = udf(_probe_sec_parser, StringType())
+_probe_results = {
+    r[0] for r in spark.range(8).repartition(8).select(_probe_udf(col("id"))).distinct().collect()
+}
+if _probe_results != {"ok"}:
+    raise RuntimeError(
+        f"sec-parser unavailable on executors: {sorted(_probe_results)}. "
+        "Re-run the `%pip install` cell; do not proceed on the regex fallback."
+    )
+print("[PREFLIGHT] sec-parser import OK on executors")
+
 df_bronze = (
     spark.table(f"{CATALOG}.finsage_bronze.filings")
     .filter(col("filing_type").isin("10-K", "10-Q"))
@@ -634,6 +659,18 @@ if extractor_stats:
     print("[EXTRACTOR USAGE — per section]")
     for row in extractor_stats:
         print(f"  {row['extractor_used']:<16}: {row['n_sections']:>5} sections")
+
+# Gate: regex is a per-section backup, never the primary path. If sec-parser
+# covers under half the extracted sections, something upstream is broken —
+# stop before the MERGE can touch the silver table.
+_n_total = sum(r["n_sections"] for r in extractor_stats)
+_n_sp = sum(r["n_sections"] for r in extractor_stats if r["extractor_used"] == "sec-parser")
+if _n_total and _n_sp / _n_total < 0.5 and dbutils.widgets.get("allow_regex_only") != "true":
+    raise RuntimeError(
+        f"sec-parser produced only {_n_sp}/{_n_total} sections "
+        f"({_n_sp / _n_total:.0%}); refusing to merge. Inspect parse_failure errors, "
+        "or set allow_regex_only=true for a deliberately regex-heavy ticker subset (e.g. MCD)."
+    )
 
 df_errors = df_extracted.filter(col("error").isNotNull())
 n_errors = df_errors.count()
@@ -681,7 +718,11 @@ filing_sections_table = f"{CATALOG}.finsage_silver.filing_sections"
 if spark.catalog.tableExists(filing_sections_table):
     DeltaTable.forName(spark, filing_sections_table).alias("t").merge(
         df_final_sections.alias("s"), "t.section_id = s.section_id"
-    ).whenMatchedUpdateAll().whenNotMatchedInsertAll().execute()
+    ).whenMatchedUpdateAll(
+        # A regex-fallback row must never overwrite a sec-parser row.
+        condition="NOT (coalesce(t.extractor_used, '') = 'sec-parser' "
+                  "AND coalesce(s.extractor_used, '') = 'regex-fallback')"
+    ).whenNotMatchedInsertAll().execute()
     print("Silver filing_sections merge complete.")
 else:
     df_final_sections.write.format("delta").saveAsTable(filing_sections_table)
