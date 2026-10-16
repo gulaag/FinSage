@@ -44,10 +44,10 @@ TICKER_SUBSET = [t.strip() for t in TICKER_FILTER.split(",") if t.strip()] if TI
 from pyspark.sql import Row
 from pyspark.sql.functions import (
     col, row_number, current_timestamp, lit, when,
-    sha2, concat_ws, coalesce,
+    sha2, concat_ws, coalesce, udf, explode,
 )
 from pyspark.sql.types import (
-    StructType, StructField, StringType, IntegerType,
+    ArrayType, StructType, StructField, StringType, IntegerType,
     DoubleType, TimestampType,
 )
 from pyspark.sql.window import Window
@@ -164,8 +164,22 @@ facts_schema = StructType([
     StructField("source_fetched_at",  TimestampType(), True),
 ])
 
-df_facts = spark.createDataFrame(
-    bronze_api.rdd.flatMap(flatten_companyfacts), schema=facts_schema
+# UDF + explode instead of rdd.flatMap: the RDD API is unavailable on serverless
+# (Spark Connect). Same flatten function, same output schema and field order.
+def _flatten_companyfacts_cols(raw_json, ticker, cik, entity_name, source_url, fetched_at):
+    return flatten_companyfacts(Row(
+        raw_json=raw_json, ticker=ticker, cik=cik, entity_name=entity_name,
+        source_url=source_url, fetched_at=fetched_at,
+    ))
+
+flatten_udf = udf(_flatten_companyfacts_cols, ArrayType(facts_schema))
+df_facts = (
+    bronze_api
+    .select(explode(flatten_udf(
+        col("raw_json"), col("ticker"), col("cik"), col("entity_name"),
+        col("source_url"), col("fetched_at"),
+    )).alias("f"))
+    .select("f.*")
 )
 
 df_financials = (
@@ -270,6 +284,8 @@ import re
 # Defensive widget re-read so Section B can be run in isolation after
 # restartPython wipes state.
 CATALOG = dbutils.widgets.get("catalog")
+TICKER_FILTER = dbutils.widgets.get("ticker_filter")
+TICKER_SUBSET = [t.strip() for t in TICKER_FILTER.split(",") if t.strip()] if TICKER_FILTER else []
 
 
 # ── Canonical section taxonomy (mirrors VALID_SECTION_NAMES in 06_rag_agent) ─
@@ -629,6 +645,9 @@ df_bronze = (
     .filter(col("rn") == 1)
     .drop("rn")
 )
+if TICKER_SUBSET:
+    df_bronze = df_bronze.filter(col("ticker").isin(TICKER_SUBSET))
+    print(f"[SCOPE] section extraction limited to tickers: {TICKER_SUBSET}")
 
 # The UDF now consumes raw BINARY content directly — all SGML unwrap, entity
 # decoding, and iXBRL tree parsing happens inside sec-parser, so the earlier
@@ -642,19 +661,28 @@ df_extracted = (
         col("udf_result.error").alias("error"),
     )
 )
-df_extracted.cache()
+# No cache()/persist() — not supported on serverless. One summary pass pulls only
+# small per-filing fields (file_path, error, extractor per section) to the driver;
+# the section text itself is recomputed once more by the MERGE below.
+from collections import Counter
+from pyspark.sql.functions import transform
+
+_summary = (
+    df_extracted
+    .select(
+        "file_path", "error",
+        transform(col("sections"), lambda s: s["extractor_used"]).alias("extractors"),
+    )
+    .collect()
+)
 
 # Observability: section-level breakdown (not filing-level, because a single
 # filing can now produce a mix — sec-parser wins for the sections it finds,
-# regex-fallback fills the still-missing required sections). explode on a
-# zero-length array drops the row cleanly, so error-only filings are excluded.
-extractor_stats = (
-    df_extracted
-    .withColumn("sec", explode("sections"))
-    .groupBy(col("sec.extractor_used").alias("extractor_used"))
-    .agg(spark_count("*").alias("n_sections"))
-    .collect()
-)
+# regex-fallback fills the still-missing required sections).
+_extractor_counts = Counter(e for r in _summary for e in (r["extractors"] or []))
+extractor_stats = [
+    {"extractor_used": k, "n_sections": v} for k, v in sorted(_extractor_counts.items())
+]
 if extractor_stats:
     print("[EXTRACTOR USAGE — per section]")
     for row in extractor_stats:
@@ -672,10 +700,11 @@ if _n_total and _n_sp / _n_total < 0.5 and dbutils.widgets.get("allow_regex_only
         "or set allow_regex_only=true for a deliberately regex-heavy ticker subset (e.g. MCD)."
     )
 
-df_errors = df_extracted.filter(col("error").isNotNull())
-n_errors = df_errors.count()
+_error_rows = [(r["file_path"], r["error"]) for r in _summary if r["error"] is not None]
+n_errors = len(_error_rows)
 if n_errors > 0:
     print(f"Warning: {n_errors} filings hit section extraction errors. Logging to ingestion_errors.")
+    df_errors = spark.createDataFrame(_error_rows, "file_path string, error string")
     (
         df_errors.select(
             sha2(concat_ws("||", col("file_path"), col("error")), 256).alias("error_id"),
@@ -712,7 +741,10 @@ df_final_sections = (
     )
 )
 
-spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
+try:
+    spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
+except Exception as e:  # serverless rejects this conf; target columns already exist
+    print(f"[serverless] autoMerge conf unavailable ({type(e).__name__}); using existing table schema")
 
 filing_sections_table = f"{CATALOG}.finsage_silver.filing_sections"
 if spark.catalog.tableExists(filing_sections_table):
@@ -729,7 +761,6 @@ else:
     spark.sql(f"ALTER TABLE {filing_sections_table} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)")
     print("Silver filing_sections table created with CDF enabled.")
 
-df_extracted.unpersist()
 
 # COMMAND ----------
 

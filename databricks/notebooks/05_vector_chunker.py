@@ -42,6 +42,9 @@ from pyspark.sql import types as T
 from delta.tables import DeltaTable
 
 # --- Configuration ---
+# restartPython() above wipes state; widgets persist, so re-read them here.
+TICKER_FILTER         = dbutils.widgets.get("ticker_filter")
+TICKER_SUBSET         = [t.strip() for t in TICKER_FILTER.split(",") if t.strip()] if TICKER_FILTER else []
 SOURCE_TABLE          = f"main.finsage_silver.filing_sections"
 TARGET_TABLE          = f"main.finsage_gold.filing_section_chunks"
 EMBEDDING_MODEL       = "text-embedding-3-large"
@@ -175,6 +178,16 @@ df_source = (
     )
     .select("filing_id", "ticker", "fiscal_year", "filing_type", "section_name", "section_text")
 )
+# Never chunk rows that predate the extractor_used column (stale, unattributed).
+if "extractor_used" in spark.table(SOURCE_TABLE).columns:
+    df_source = df_source.join(
+        spark.table(SOURCE_TABLE).filter(F.col("extractor_used").isNotNull())
+        .select("filing_id", "section_name"),
+        ["filing_id", "section_name"], "left_semi",
+    )
+if TICKER_SUBSET:
+    df_source = df_source.filter(F.col("ticker").isin(TICKER_SUBSET))
+    print(f"[SCOPE] chunking limited to tickers: {TICKER_SUBSET}")
 
 df_chunks = (
     df_source
@@ -224,7 +237,10 @@ if bad_rows > 0:
 
 # --- Idempotent write ---
 # autoMerge ensures the new filing_type column lands on the existing table
-spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
+try:
+    spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
+except Exception as e:  # serverless rejects this conf; target columns already exist
+    print(f"[serverless] autoMerge conf unavailable ({type(e).__name__}); using existing table schema")
 
 if spark.catalog.tableExists(TARGET_TABLE):
     # chunk_id is hashed over chunk_text, so any upstream silver change (e.g. the
